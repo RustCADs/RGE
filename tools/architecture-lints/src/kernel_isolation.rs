@@ -41,10 +41,18 @@ use anyhow::Result;
 
 use crate::common::{cargo_metadata, relativize, workspace_members, LintReport, Violation};
 
-/// Identify `io-*` packages: name starts with `io-`, or manifest lives under
-/// `crates/io-*/Cargo.toml`.
+/// Identify `io-*` packages: name starts with `rge-io-` (canonical workspace
+/// prefix; e.g. `rge-io-gltf` / `rge-io-step` / `rge-io-stl`) or with bare `io-`
+/// (synthetic fixture-test convention; see `tools/architecture-lints/tests/`),
+/// or manifest lives under `crates/io-*/Cargo.toml`.
+///
+/// Per audit-5 carryover (deep audit 2026-05-09): the prior name-prefix check
+/// was `pkg.name.starts_with("io-")` only — dead code against the real
+/// workspace because all member names carry the `rge-` prefix. The
+/// manifest-path fallback below saved the lint from being entirely broken in
+/// the real workspace. Both name-prefix paths are now active.
 fn is_io_crate(pkg: &cargo_metadata::Package, workspace_root: &Path) -> bool {
-    if pkg.name.starts_with("io-") {
+    if pkg.name.starts_with("rge-io-") || pkg.name.starts_with("io-") {
         return true;
     }
     // Fallback: check manifest path component.

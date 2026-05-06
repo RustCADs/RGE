@@ -10,6 +10,7 @@ authors.workspace      = true
 publish                = false
 
 [dependencies]
+rge-kernel-graph-foundation = { workspace = true }
 blake3    = { workspace = true }
 serde     = { workspace = true }
 thiserror = { workspace = true }

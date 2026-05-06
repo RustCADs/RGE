@@ -3874,6 +3874,7 @@ version = "0.0.1"
 dependencies = [
  "blake3",
  "rge-kernel-asset",
+ "rge-kernel-graph-foundation",
  "serde",
  "tempfile",
  "thiserror 2.0.18",
@@ -3885,6 +3886,8 @@ version = "0.0.1"
 dependencies = [
  "kira",
  "mint",
+ "rge-kernel-diagnostics",
+ "rge-kernel-plugin-host",
  "serde",
  "thiserror 2.0.18",
 ]
@@ -4117,6 +4120,7 @@ dependencies = [
  "glam 0.30.10",
  "pollster",
  "rge-kernel-diagnostics",
+ "rge-kernel-plugin-host",
  "serde",
  "thiserror 2.0.18",
  "tracing",
@@ -4193,6 +4197,7 @@ name = "rge-kernel-asset"
 version = "0.0.1"
 dependencies = [
  "blake3",
+ "rge-kernel-graph-foundation",
  "ron",
  "serde",
  "thiserror 2.0.18",
@@ -4353,6 +4358,8 @@ name = "rge-physics"
 version = "0.0.1"
 dependencies = [
  "rapier3d",
+ "rge-kernel-diagnostics",
+ "rge-kernel-plugin-host",
  "serde",
 ]
 

@@ -23,7 +23,7 @@
 
 use rapier3d::math::Vector;
 
-use crate::stubs::audit_ledger::{AuditLedger, PhysicsInput};
+use crate::physics_input_ledger::{PhysicsInput, PhysicsInputLedger};
 use crate::world::{PhysicsHandle, World};
 
 /// Physics tick rate.
@@ -42,7 +42,7 @@ pub const FIXED_DT: f32 = 1.0 / PHYSICS_HZ as f32;
 /// [`apply_recorded_inputs`].
 pub fn apply_force(
     world: &mut World,
-    ledger: &mut AuditLedger,
+    ledger: &mut PhysicsInputLedger,
     handle: PhysicsHandle,
     force: [f32; 3],
 ) {
@@ -62,7 +62,7 @@ pub fn apply_force(
 /// Apply an instantaneous impulse and record it.
 pub fn apply_impulse(
     world: &mut World,
-    ledger: &mut AuditLedger,
+    ledger: &mut PhysicsInputLedger,
     handle: PhysicsHandle,
     impulse: [f32; 3],
 ) {
@@ -85,7 +85,7 @@ pub fn apply_impulse(
 /// here so the input doesn't get dropped. This makes the order
 /// `apply_*` → `physics_step` safe and the order
 /// `physics_step` → `apply_*` (next tick) also safe.
-fn record_current(ledger: &mut AuditLedger, tick: u64, input: PhysicsInput) {
+fn record_current(ledger: &mut PhysicsInputLedger, tick: u64, input: PhysicsInput) {
     let needs_begin = ledger.records.last().map_or(true, |r| r.tick != tick);
     if needs_begin {
         ledger.begin_tick(tick);
@@ -104,7 +104,7 @@ fn record_current(ledger: &mut AuditLedger, tick: u64, input: PhysicsInput) {
 /// trajectory matches the original run.
 pub fn apply_recorded_inputs(
     world: &mut World,
-    ledger: &AuditLedger,
+    ledger: &PhysicsInputLedger,
     body_lookup: impl Fn(u64) -> Option<PhysicsHandle>,
 ) {
     let Some(record) = ledger.for_tick(world.tick) else {
@@ -144,7 +144,7 @@ pub fn apply_recorded_inputs(
 /// Post-condition: `world.tick` is incremented; per-tick contact events are
 /// available on the broadphase/narrowphase pair channels for [`crate::events`]
 /// to drain.
-pub fn physics_step(world: &mut World, ledger: &mut AuditLedger) {
+pub fn physics_step(world: &mut World, ledger: &mut PhysicsInputLedger) {
     // Ensure the current tick has a ledger record even if no inputs landed,
     // so tick indices line up perfectly with replay walkers.
     let needs_begin = ledger.records.last().map_or(true, |r| r.tick != world.tick);

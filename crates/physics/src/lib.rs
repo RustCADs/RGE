@@ -1,5 +1,7 @@
 //! `rge-physics` — `Rapier3D` wrap, ECS schedule integration, deterministic replay.
 //!
+//! Failure class: snapshot-recoverable
+//!
 //! Wave **W11** deliverable per [`tasks/W11/PLAN.md`](../../tasks/W11/PLAN.md);
 //! architecture per [PLAN.md §6.10](../../plans/PLAN.md) and determinism mode
 //! [§1.6.8](../../plans/PLAN.md) ("Replay-Stable v1.0", same-machine
@@ -47,6 +49,8 @@
 pub mod character;
 pub mod events;
 pub mod joint;
+pub mod physics_input_ledger;
+pub mod plugin_adapter;
 pub mod step;
 pub mod stubs;
 pub mod sync;
@@ -57,6 +61,7 @@ pub use events::{
     CollisionEnded, CollisionStarted, ContactEventChannel, TriggerEntered, TriggerExited,
 };
 pub use joint::{Joint, JointHandle, JointKind};
+pub use plugin_adapter::{PhysicsPlugin, PHYSICS_PLUGIN_ID};
 pub use step::{physics_step, FIXED_DT, PHYSICS_HZ};
 pub use stubs::components_physics::{BodyKind, Collider, ColliderShape, RigidBody, Velocity};
 pub use sync::{post_physics, pre_physics, Transform};
@@ -82,7 +87,7 @@ pub fn run_tick(
     transforms: &mut [(PhysicsHandle, Transform)],
     velocities: &mut [(PhysicsHandle, Velocity)],
     events: &ContactEventChannel,
-    ledger: &mut stubs::audit_ledger::AuditLedger,
+    ledger: &mut physics_input_ledger::PhysicsInputLedger,
 ) {
     pre_physics(world, transforms, velocities);
     physics_step(world, ledger);

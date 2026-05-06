@@ -241,3 +241,189 @@ pub type EdgeId = u64;
         "expected 'PLAN §1.14' in violation message:\n{stdout}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Test 6 — Check 2 Positive: BTreeMap<K, BTreeSet<K>> adjacency-map shape
+//          in a domain crate produces a violation. Audit-2 carryover: this is
+//          the canonical "I'm reinventing graph storage" pattern that
+//          `kernel/asset::DependencyGraph` had silently rolled before the
+//          adjacency-map detector was added.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_adjacency_map_btreemap_btreeset_same_type_triggers_violation() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let root = dir.path();
+
+    write_file(root, "Cargo.toml", workspace_toml());
+    write_file(
+        root,
+        "crates/asset/src/lib.rs",
+        r#"
+use std::collections::{BTreeMap, BTreeSet};
+
+pub struct MyId(u64);
+
+/// Adjacency map — forbidden outside graph-foundation.
+pub struct DepGraph {
+    pub adj: BTreeMap<MyId, BTreeSet<MyId>>,
+}
+"#,
+    );
+
+    let (code, stdout, stderr) = run_lint(root);
+    assert_eq!(
+        code, 1,
+        "BTreeMap<K, BTreeSet<K>> adjacency shape in domain crate should be \
+         a violation (exit 1); stdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        stdout.contains("FAIL"),
+        "expected FAIL in output:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("adjacency-map shape"),
+        "expected 'adjacency-map shape' in violation message:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("BTreeMap<K, BTreeSet<K>>"),
+        "expected rendered shape 'BTreeMap<K, BTreeSet<K>>' in message:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("PLAN §1.14"),
+        "expected 'PLAN §1.14' in violation message:\n{stdout}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Test 7 — Check 2 Positive: HashMap<K, HashSet<K>> shape — same pattern,
+//          different concrete map/set types. Both MUST be detected.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_adjacency_map_hashmap_hashset_same_type_triggers_violation() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let root = dir.path();
+
+    write_file(root, "Cargo.toml", workspace_toml());
+    write_file(
+        root,
+        "crates/scene-graph/src/lib.rs",
+        r#"
+use std::collections::{HashMap, HashSet};
+
+pub struct MyId(u64);
+
+/// Adjacency map via hash-based collections — also forbidden.
+pub struct DepGraph {
+    pub adj: HashMap<MyId, HashSet<MyId>>,
+}
+"#,
+    );
+
+    let (code, stdout, stderr) = run_lint(root);
+    assert_eq!(
+        code, 1,
+        "HashMap<K, HashSet<K>> adjacency shape in domain crate should be \
+         a violation (exit 1); stdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        stdout.contains("FAIL"),
+        "expected FAIL in output:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("adjacency-map shape"),
+        "expected 'adjacency-map shape' in violation message:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("HashMap<K, HashSet<K>>"),
+        "expected rendered shape 'HashMap<K, HashSet<K>>' in message:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("PLAN §1.14"),
+        "expected 'PLAN §1.14' in violation message:\n{stdout}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Test 8 — Check 2 Negative (false-positive guard): a permissions map of
+//          shape `BTreeMap<UserId, BTreeSet<Permission>>` (where the key
+//          and value-element types DIFFER) is NOT an adjacency map and
+//          must pass. Without the key==elem comparison, the detector would
+//          flag every `BTreeMap<K, BTreeSet<V>>` indiscriminately.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_permission_map_different_key_value_types_passes() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let root = dir.path();
+
+    write_file(root, "Cargo.toml", workspace_toml());
+    write_file(
+        root,
+        "crates/auth/src/lib.rs",
+        r#"
+use std::collections::{BTreeMap, BTreeSet};
+
+pub struct UserId(u64);
+pub struct Permission(u32);
+
+/// Permissions: each user has a SET of permissions.
+/// Key type (UserId) differs from inner-set element type (Permission)
+/// — NOT an adjacency map; must pass.
+pub struct Permissions {
+    pub caps: BTreeMap<UserId, BTreeSet<Permission>>,
+}
+"#,
+    );
+
+    let (code, stdout, stderr) = run_lint(root);
+    assert_eq!(
+        code, 0,
+        "BTreeMap<K, BTreeSet<V>> with K != V is NOT an adjacency map and \
+         should pass (exit 0); stdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        stdout.contains("PASS"),
+        "expected PASS in output:\n{stdout}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Test 9 — Check 2 Negative (substrate exemption): an adjacency map shape
+//          INSIDE `kernel/graph-foundation/` is allowed — that crate IS the
+//          substrate and is permitted to use the pattern internally.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_adjacency_map_inside_graph_foundation_passes() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let root = dir.path();
+
+    write_file(root, "Cargo.toml", workspace_toml());
+    write_file(
+        root,
+        "kernel/graph-foundation/src/internals.rs",
+        r#"
+use std::collections::{BTreeMap, BTreeSet};
+
+pub struct NodeId(u64);
+
+/// Internal adjacency storage — substrate is allowed to use this shape.
+pub struct Internals {
+    pub adj: BTreeMap<NodeId, BTreeSet<NodeId>>,
+}
+"#,
+    );
+
+    let (code, stdout, stderr) = run_lint(root);
+    assert_eq!(
+        code, 0,
+        "adjacency-map shape inside kernel/graph-foundation should pass \
+         (exit 0); stdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        stdout.contains("PASS"),
+        "expected PASS in output:\n{stdout}"
+    );
+}

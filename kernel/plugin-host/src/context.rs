@@ -128,6 +128,18 @@ impl<'a> PluginContext<'a> {
         drop(self.insert(value));
         self
     }
+
+    /// Snapshot of [`TypeId`]s currently held in the resource registry.
+    ///
+    /// Used by [`crate::PluginHost`] to verify resource preservation across
+    /// plugin lifecycle calls (per Pairing-3 / N1 panic-safety): the host
+    /// snapshots before invoking the plugin and again after the call returns
+    /// (or its panic is caught), then diffs to detect leaks. A
+    /// [`std::collections::BTreeSet`] is returned for deterministic iteration
+    /// ordering matching the workspace convention.
+    pub(crate) fn snapshot_resource_ids(&self) -> std::collections::BTreeSet<TypeId> {
+        self.resources.keys().copied().collect()
+    }
 }
 
 #[cfg(test)]

@@ -17,12 +17,41 @@
 //! propagation. Persisting it across runs is a future concern (would
 //! sit alongside the cache `.index` file).
 //!
+//! # Substrate
+//!
+//! Backed by [`rge_kernel_graph_foundation::Graph<AssetId, ()>`] per PLAN §1.14
+//! (graph-foundation substrate doctrine — asset-store is a Tier-2 graph
+//! consumer that must build on the substrate rather than reinvent
+//! `BTreeMap<K, BTreeSet<K>>` adjacency). Mirrors the migration applied to
+//! `kernel/asset::DependencyGraph` (audit-1 followup, 2026-05-09).
+//!
+//! Each [`AssetId`] used as an endpoint of [`add_edge`](DepGraph::add_edge)
+//! is auto-promoted to a graph node, with its [`NodeId`] derived via
+//! [`NodeId::from_bytes`] over the `AssetId`'s raw 32-byte blake3 digest. The
+//! mapping is therefore deterministic and reversible: we recover the `AssetId`
+//! from a `NodeId` by looking up the node payload in the underlying `Graph`.
+//!
+//! # Idempotence vs. graph-foundation's stricter contract
+//!
+//! `Graph::insert_node` errors on duplicate ids and `Graph::insert_edge` errors
+//! on duplicate edge ids. The original `DepGraph::add_edge` semantics are
+//! idempotent — calling twice with the same pair has no extra effect — so the
+//! wrappers below swallow `DuplicateNode` / `DuplicateEdge` rather than
+//! propagating them.
+//!
 //! # Cycles
 //!
 //! Cycles are a configuration error — an asset can't depend on
 //! itself, directly or transitively. [`DepGraph::add_edge`] checks for
 //! self-edges; transitive cycles are caught by
-//! [`DepGraph::transitive_closure`] returning a [`DepError::Cycle`].
+//! [`DepGraph::transitive_closure`] / [`DepGraph::invalidation_cascade`]
+//! returning a [`DepError::Cycle`].
+//!
+//! graph-foundation's `Graph<N, E>` does NOT itself detect cycles (consistent
+//! with `cad-core::OperatorGraph` and `kernel/asset::DependencyGraph`, which
+//! both implement their own cycle detection on top of the substrate). We
+//! preserve the existing iterative walks below, swapping only the underlying
+//! adjacency storage.
 //!
 //! # Anti-pattern check
 //!
@@ -32,7 +61,9 @@
 //! would re-create the kind of "store paralleling cad-core or ECS"
 //! that PLAN §1.4 anti-patterns warn against.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
+
+use rge_kernel_graph_foundation::{EdgeId, Graph, NodeId};
 
 use crate::AssetId;
 
@@ -51,18 +82,28 @@ pub enum DepError {
 
 /// Directed graph of "consumer depends on producer" edges.
 ///
-/// Stored as adjacency sets in both directions so both forward
-/// (`who do I depend on?`) and reverse (`who depends on me?`) queries
-/// are O(degree) rather than O(N).
-///
-/// `BTreeMap`/`BTreeSet` over the `Hash` variants for stable iteration
-/// order — important for tests and for diffing two cached graphs.
-#[derive(Debug, Default, Clone)]
+/// Backed by [`rge_kernel_graph_foundation::Graph<AssetId, ()>`]; iteration
+/// order is deterministic (BTreeMap-backed in the substrate). Both forward
+/// (`who do I depend on?`) and reverse (`who depends on me?`) queries are
+/// O(degree) via the substrate's `outgoing` / `incoming` adjacency caches.
+#[derive(Debug, Clone)]
 pub struct DepGraph {
-    /// `consumer → {producers it depends on}`.
-    forward: BTreeMap<AssetId, BTreeSet<AssetId>>,
-    /// `producer → {consumers that depend on it}`.
-    reverse: BTreeMap<AssetId, BTreeSet<AssetId>>,
+    /// Substrate-backed directed graph: nodes carry the original [`AssetId`]
+    /// payload, edges are unit (no per-edge metadata).
+    inner: Graph<AssetId, ()>,
+}
+
+// Manual `Default` impl: graph-foundation's `Graph<N, E>` derives `Default`
+// which the macro expands into a `where N: Default` bound. `AssetId` has no
+// `Default` (a default 32-byte hash would be meaningless), so we construct
+// the empty inner graph directly via `Graph::new` instead. Mirrors the
+// equivalent impl in `kernel/asset::DependencyGraph`.
+impl Default for DepGraph {
+    fn default() -> Self {
+        Self {
+            inner: Graph::new(),
+        }
+    }
 }
 
 impl DepGraph {
@@ -87,43 +128,74 @@ impl DepGraph {
         if consumer == producer {
             return Err(DepError::SelfEdge(consumer));
         }
-        self.forward.entry(consumer).or_default().insert(producer);
-        self.reverse.entry(producer).or_default().insert(consumer);
+        let consumer_id = node_id_for(consumer);
+        let producer_id = node_id_for(producer);
+        // Auto-promote both endpoints to nodes if not yet present. Both
+        // `insert_node` calls swallow `DuplicateNode` because re-adding is a
+        // no-op in the original API.
+        let _ = self.inner.insert_node(consumer_id, consumer);
+        let _ = self.inner.insert_node(producer_id, producer);
+        // Edge id derived from endpoints so the same pair always produces the
+        // same EdgeId; `insert_edge` swallows `DuplicateEdge` so a second
+        // `add_edge(consumer, producer)` is a no-op.
+        let edge_id = edge_id_for(consumer_id, producer_id);
+        let _ = self
+            .inner
+            .insert_edge(edge_id, consumer_id, producer_id, ());
         Ok(())
     }
 
     /// Remove a single edge. No-op if the edge isn't present.
     pub fn remove_edge(&mut self, consumer: AssetId, producer: AssetId) {
-        if let Some(set) = self.forward.get_mut(&consumer) {
-            set.remove(&producer);
-            if set.is_empty() {
-                self.forward.remove(&consumer);
-            }
-        }
-        if let Some(set) = self.reverse.get_mut(&producer) {
-            set.remove(&consumer);
-            if set.is_empty() {
-                self.reverse.remove(&producer);
-            }
-        }
+        let consumer_id = node_id_for(consumer);
+        let producer_id = node_id_for(producer);
+        let edge_id = edge_id_for(consumer_id, producer_id);
+        // Swallow `EdgeNotFound`: the original API silently no-ops on absent
+        // edges. Endpoint nodes are intentionally left in the graph; the
+        // original `BTreeMap`-backed impl pruned empty adjacency entries so
+        // they re-emerged on the next `add_edge`. The substrate-backed impl
+        // keeps zero-degree nodes resident (the public `forget`/`is_empty`
+        // surface is unaffected because `edge_count()` is the canonical
+        // emptiness measure).
+        let _ = self.inner.remove_edge(edge_id);
     }
 
     /// All assets that `consumer` directly depends on.
+    ///
+    /// Returned in deterministic [`AssetId`] sort order so test snapshots and
+    /// graph diffs are reproducible.
     #[must_use]
     pub fn direct_dependencies(&self, consumer: &AssetId) -> Vec<AssetId> {
-        self.forward
-            .get(consumer)
-            .map(|s| s.iter().copied().collect())
-            .unwrap_or_default()
+        let node_id = node_id_for(*consumer);
+        // Collect through a BTreeSet to match the original BTreeSet-backed
+        // ordering (sorted by AssetId, deduplicated).
+        let mut out: BTreeSet<AssetId> = BTreeSet::new();
+        for eid in self.inner.outgoing(node_id) {
+            if let Some(rec) = self.inner.edge(eid) {
+                if let Some(asset) = self.inner.node(rec.dst) {
+                    out.insert(*asset);
+                }
+            }
+        }
+        out.into_iter().collect()
     }
 
     /// All assets that directly depend on `producer`.
+    ///
+    /// Returned in deterministic [`AssetId`] sort order so test snapshots and
+    /// graph diffs are reproducible.
     #[must_use]
     pub fn direct_dependents(&self, producer: &AssetId) -> Vec<AssetId> {
-        self.reverse
-            .get(producer)
-            .map(|s| s.iter().copied().collect())
-            .unwrap_or_default()
+        let node_id = node_id_for(*producer);
+        let mut out: BTreeSet<AssetId> = BTreeSet::new();
+        for eid in self.inner.incoming(node_id) {
+            if let Some(rec) = self.inner.edge(eid) {
+                if let Some(asset) = self.inner.node(rec.src) {
+                    out.insert(*asset);
+                }
+            }
+        }
+        out.into_iter().collect()
     }
 
     /// All assets transitively reachable from `consumer` via the
@@ -188,7 +260,7 @@ impl DepGraph {
     /// Total number of edges. Useful for tests.
     #[must_use]
     pub fn edge_count(&self) -> usize {
-        self.forward.values().map(BTreeSet::len).sum()
+        self.inner.edge_count()
     }
 
     /// Whether the graph has zero edges.
@@ -201,30 +273,35 @@ impl DepGraph {
     /// producer). Used when an asset is permanently evicted from the
     /// cache and shouldn't surface in cascade results anymore.
     pub fn forget(&mut self, id: &AssetId) {
-        // Remove forward entries where `id` is the consumer; for each
-        // producer touched, also drop the reverse mirror.
-        if let Some(producers) = self.forward.remove(id) {
-            for p in producers {
-                if let Some(set) = self.reverse.get_mut(&p) {
-                    set.remove(id);
-                    if set.is_empty() {
-                        self.reverse.remove(&p);
-                    }
-                }
-            }
-        }
-        // Then remove reverse entries where `id` is the producer.
-        if let Some(consumers) = self.reverse.remove(id) {
-            for c in consumers {
-                if let Some(set) = self.forward.get_mut(&c) {
-                    set.remove(id);
-                    if set.is_empty() {
-                        self.forward.remove(&c);
-                    }
-                }
-            }
-        }
+        let node_id = node_id_for(*id);
+        // `Graph::remove_node` cascades all edges that touch the node and
+        // returns `Err(NodeNotFound)` if the node isn't present — both
+        // outcomes match the original semantics (no-op when absent).
+        let _ = self.inner.remove_node(node_id);
     }
+}
+
+// ---------------------------------------------------------------------------
+// AssetId ↔ NodeId / EdgeId derivation
+// ---------------------------------------------------------------------------
+
+/// Derive a stable [`NodeId`] for an [`AssetId`].
+///
+/// Uses [`NodeId::from_bytes`] over the raw 32-byte blake3 digest so the
+/// mapping is deterministic across processes and platforms. Mirrors the
+/// derivation used in `kernel/asset::DependencyGraph`.
+fn node_id_for(asset_id: AssetId) -> NodeId {
+    NodeId::from_bytes(asset_id.raw())
+}
+
+/// Derive a stable [`EdgeId`] for a `(consumer, producer)` `NodeId` pair so
+/// re-adding the same edge produces the same id (and thus a `DuplicateEdge`
+/// we silently swallow — matching the original idempotence).
+fn edge_id_for(src: NodeId, dst: NodeId) -> EdgeId {
+    let mut bytes = [0u8; 32];
+    bytes[..16].copy_from_slice(&src.0.to_le_bytes());
+    bytes[16..].copy_from_slice(&dst.0.to_le_bytes());
+    EdgeId::from_bytes(&bytes)
 }
 
 // ---------------------------------------------------------------------------

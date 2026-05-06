@@ -99,6 +99,20 @@ impl Operator for TransformOp {
             OpError::InvalidParameter(format!("TransformOp produced invalid tessellation: {e}"))
         })
     }
+
+    /// `TransformOp::evaluate` calls [`Tessellation::new`] on the transformed
+    /// positions, which produces an unlabeled output regardless of whether
+    /// the upstream input carried `face_labels`. The current Phase-7.1
+    /// implementation strips labels (positions-only — labels would need
+    /// per-triangle pass-through, deferred to a future dispatch).
+    ///
+    /// Until that dispatch lands, override the default [`Operator::output_is_labeled`]
+    /// (which would propagate the input's labeled-state under the
+    /// `iter().any` rule) to return `false` so the cache-key prediction
+    /// matches reality.
+    fn output_is_labeled(&self, _inputs_labeled: &[bool]) -> bool {
+        false
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -177,5 +191,18 @@ mod tests {
         };
         assert_eq!(a.structural_hash(), b.structural_hash());
         assert_ne!(a.structural_hash(), c.structural_hash());
+    }
+
+    /// `TransformOp::evaluate` strips labels (calls `Tessellation::new`,
+    /// which always produces an unlabeled mesh) — so [`Operator::output_is_labeled`]
+    /// must return `false` regardless of the input's labeled-state.
+    /// Overrides the trait default which would propagate via `iter().any`.
+    #[test]
+    fn transform_output_is_labeled_strips() {
+        let op = TransformOp::default();
+        // Unlabeled input → unlabeled output (matches default).
+        assert!(!op.output_is_labeled(&[false]));
+        // Labeled input → STILL unlabeled output (overrides default).
+        assert!(!op.output_is_labeled(&[true]));
     }
 }

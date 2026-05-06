@@ -7,7 +7,7 @@
 //! capsule has settled.
 
 use rge_physics::character::capsule_collider;
-use rge_physics::stubs::audit_ledger::AuditLedger;
+use rge_physics::physics_input_ledger::PhysicsInputLedger;
 use rge_physics::stubs::components_physics::{
     BodyKind, Collider, ColliderShape, RigidBody, Velocity,
 };
@@ -44,7 +44,7 @@ fn character_walks_on_flat_ground() {
         [0.0, 0.0, 0.0, 1.0],
     );
 
-    let mut ledger = AuditLedger::new();
+    let mut ledger = PhysicsInputLedger::new();
     let event_channel = ContactEventChannel::new();
     let mut transforms = vec![(character_body, Transform::at([0.0, 1.5, 0.0]))];
     let mut velocities = vec![(character_body, Velocity::default())];

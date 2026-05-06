@@ -6,7 +6,7 @@
 //! Strategy: build the same scene twice, step it 1000 ticks each time, and
 //! assert `World::serialize_state()` matches at every checkpoint.
 
-use rge_physics::stubs::audit_ledger::AuditLedger;
+use rge_physics::physics_input_ledger::PhysicsInputLedger;
 use rge_physics::stubs::components_physics::{
     BodyKind, Collider, ColliderShape, RigidBody, Velocity,
 };
@@ -65,7 +65,7 @@ fn build_scene() -> (
 
 fn run_for(ticks: u64) -> Vec<u8> {
     let (mut world, mut transforms, mut velocities) = build_scene();
-    let mut ledger = AuditLedger::new();
+    let mut ledger = PhysicsInputLedger::new();
     let events = ContactEventChannel::new();
     for _ in 0..ticks {
         pre_physics(&mut world, &mut transforms, &mut velocities);
@@ -105,7 +105,7 @@ fn replay_byte_identical_at_1000_ticks() {
 #[test]
 fn ledger_records_every_tick() {
     let (mut world, mut transforms, mut velocities) = build_scene();
-    let mut ledger = AuditLedger::new();
+    let mut ledger = PhysicsInputLedger::new();
     let events = ContactEventChannel::new();
     for _ in 0..50 {
         pre_physics(&mut world, &mut transforms, &mut velocities);
@@ -134,7 +134,7 @@ fn ledger_replay_with_external_force_matches() {
     // Run 1: apply a sideways force every tick for the first 20 ticks, record
     // the trajectory.
     let (mut world1, mut t1, mut v1) = build_scene();
-    let mut ledger1 = AuditLedger::new();
+    let mut ledger1 = PhysicsInputLedger::new();
     let events1 = ContactEventChannel::new();
     let cube_a = t1[0].0;
     for tick in 0..60 {
@@ -150,7 +150,7 @@ fn ledger_replay_with_external_force_matches() {
 
     // Run 2: replay using the recorded ledger only.
     let (mut world2, mut t2, mut v2) = build_scene();
-    let mut ledger2 = AuditLedger::new();
+    let mut ledger2 = PhysicsInputLedger::new();
     let events2 = ContactEventChannel::new();
     let cube_a2 = t2[0].0;
     // Build a body-id → handle map so the replay can resolve recorded ids.

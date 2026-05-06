@@ -247,7 +247,59 @@ fn test_multi_format_partial_overlap_is_violation() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 6 — Negative (Option B): io-* crate with NO metadata → exit 0, but
+// Test 6 — Positive: rge-io-* (canonical workspace prefix) overlap → violation.
+//          Audit-5 carryover regression: the name-prefix check
+//          `pkg.name.starts_with("rge-io-")` must fire against real-workspace
+//          names. Prior `starts_with("io-")` only path was dead code in
+//          production; this test covers the rge-prefixed path explicitly.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_rge_prefixed_io_crates_overlap_detected_via_name_path() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let root = tmp.path();
+
+    // Note: package directories are NOT named `io-*` here (they live under
+    // `pkgs/`), so the manifest-path fallback can't catch this. Only the
+    // name-prefix `starts_with("rge-io-")` check will fire.
+    write(
+        root,
+        "Cargo.toml",
+        &workspace_toml(&["pkgs/foo", "pkgs/bar"]),
+    );
+
+    write(
+        root,
+        "pkgs/foo/Cargo.toml",
+        &pkg_toml_with_formats("rge-io-foo", &["gltf"]),
+    );
+    write(root, "pkgs/foo/src/lib.rs", "");
+
+    write(
+        root,
+        "pkgs/bar/Cargo.toml",
+        &pkg_toml_with_formats("rge-io-bar", &["gltf"]),
+    );
+    write(root, "pkgs/bar/src/lib.rs", "");
+
+    let (code, stdout, _stderr) = run_lint(root);
+    assert_eq!(
+        code, 1,
+        "rge-io-* gltf overlap should exit 1 via name-path; stdout:\n{stdout}"
+    );
+    assert!(stdout.contains("FAIL"), "expected FAIL; stdout:\n{stdout}");
+    assert!(
+        stdout.contains("gltf"),
+        "expected 'gltf' in violation message; stdout:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("rge-io-foo") && stdout.contains("rge-io-bar"),
+        "expected both rge-io- crate names in message; stdout:\n{stdout}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Test 7 — Negative (Option B): io-* crate with NO metadata → exit 0, but
 //           a warning is printed to stderr.
 // ---------------------------------------------------------------------------
 
@@ -278,5 +330,63 @@ fn test_missing_metadata_is_warning_not_violation() {
     assert!(
         stderr.contains("package.metadata.rge.formats"),
         "expected the missing-metadata key name in stderr:\n{stderr}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Test 8 — Positive: manifest-path fallback ALONE detects io-* crates.
+//          Audit-2 carryover: every prior fixture used bare `io-*` package
+//          names, so both the name-prefix AND manifest-path branches fired
+//          simultaneously. A regression in the manifest-path-only branch
+//          (lines 59-69 of `is_io_crate`) could go undetected without this
+//          test. Here the package names (`rge-loader`, `rge-saver`) start
+//          with neither `io-` NOR `rge-io-`, so ONLY the manifest-path
+//          fallback can identify these as io-crates.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_manifest_path_fallback_alone_detects_io_crate() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let root = tmp.path();
+
+    // Note: package directories ARE under `crates/io-*/` (so the manifest
+    // path-component fallback can fire), but the crate NAMES intentionally
+    // do NOT start with `io-` or `rge-io-`. Only the manifest-path fallback
+    // can identify these as io-crates.
+    write(
+        root,
+        "Cargo.toml",
+        &workspace_toml(&["crates/io-foo", "crates/io-bar"]),
+    );
+
+    write(
+        root,
+        "crates/io-foo/Cargo.toml",
+        &pkg_toml_with_formats("rge-loader", &["gltf"]),
+    );
+    write(root, "crates/io-foo/src/lib.rs", "");
+
+    write(
+        root,
+        "crates/io-bar/Cargo.toml",
+        &pkg_toml_with_formats("rge-saver", &["gltf"]),
+    );
+    write(root, "crates/io-bar/src/lib.rs", "");
+
+    let (code, stdout, _stderr) = run_lint(root);
+    assert_eq!(
+        code, 1,
+        "gltf overlap detected via manifest-path fallback alone should exit 1; \
+         stdout:\n{stdout}"
+    );
+    assert!(stdout.contains("FAIL"), "expected FAIL; stdout:\n{stdout}");
+    assert!(
+        stdout.contains("gltf"),
+        "expected 'gltf' in violation message; stdout:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("rge-loader") && stdout.contains("rge-saver"),
+        "expected both crate names in message (manifest-path identification); \
+         stdout:\n{stdout}"
     );
 }

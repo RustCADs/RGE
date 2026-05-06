@@ -23,10 +23,13 @@
 //! * [`Tolerance`] — tessellation tolerance (Copy; defaulted to 0.001 if
 //!   the caller doesn't supply one).
 //!
-//! Missing `World` or `CadGraph` resources surface as [`PluginError::Runtime`]
-//! and the projection state is preserved (idempotent failure semantics —
-//! whatever resources WERE supplied are put back into the context before the
-//! error propagates).
+//! Missing `World` or `CadGraph` resources surface as
+//! [`PluginError::ContractViolation`] (caller-supplied resource missing —
+//! not a plugin-side bug; auto-emit downgrades to a warning). Genuine
+//! tick-time errors from the projection itself surface as
+//! [`PluginError::RuntimeFault`]. The projection state is preserved
+//! (idempotent failure semantics — whatever resources WERE supplied are put
+//! back into the context before the error propagates).
 
 use rge_cad_core::{CadGraph, Tolerance};
 use rge_kernel_ecs::World;
@@ -107,17 +110,20 @@ impl Plugin for CadProjectionPlugin {
         // immediately so the next `take` / `insert` is unhindered. If a
         // required resource is missing, restore whatever we already took
         // before erroring (idempotent failure semantics).
-        let mut world = ctx.take::<World>().ok_or_else(|| {
-            PluginError::runtime("CadProjectionPlugin.tick: missing World resource")
-        })?;
+        //
+        // Missing-resource cases are CONTRACT violations (caller didn't
+        // stage prerequisites) — distinct from RUNTIME faults coming out
+        // of the projection itself. The host's auto-emit downgrades
+        // ContractViolation to a warning per audit-2 A5.1.
+        let mut world = ctx
+            .take::<World>()
+            .ok_or_else(|| PluginError::contract_violation("World"))?;
         let Some(cad) = ctx.take::<CadGraph>() else {
             // Put World back before erroring out so the orchestrator can
             // recover its handle.
             let replaced = ctx.insert(world);
             debug_assert!(replaced.is_none(), "World slot was empty after take");
-            return Err(PluginError::runtime(
-                "CadProjectionPlugin.tick: missing CadGraph resource",
-            ));
+            return Err(PluginError::contract_violation("CadGraph"));
         };
         // Tolerance is optional — fall back to a default 0.001m if the
         // caller didn't supply one. This matches the convention used in
@@ -138,7 +144,7 @@ impl Plugin for CadProjectionPlugin {
         let _ = ctx.insert(tolerance);
 
         result.map(|_report| ()).map_err(|e| {
-            PluginError::runtime(format!("CadProjectionPlugin.tick: projection failed: {e}"))
+            PluginError::runtime_fault(format!("CadProjectionPlugin.tick: projection failed: {e}"))
         })
     }
 

@@ -1,5 +1,9 @@
 //! Phase 7.3 integration smoke tests for `cad-projection`.
 //!
+//! Substrate-level smoke tests for `CadProjection` itself. The Tier-2
+//! `CadProjectionPlugin` canary tests live in the sibling
+//! `plugin_adapter_smoke.rs` (matching the audio/gfx/physics convention).
+//!
 //! Scenarios:
 //!
 //! 1. **`invalidation_within_one_tick`** — exit criterion from PLAN.md /
@@ -26,32 +30,15 @@
 //!    panicking. Demonstrates the safety net for callers who fail to honor
 //!    the co-restore convention.
 //!
-//! 5. **`cad_projection_plugin_lifecycle_via_plugin_host`** — Pairing-3 closure
-//!    (post-2026-05-07 audit CRITICAL #2): wraps `CadProjection` in
-//!    `CadProjectionPlugin`, registers via `PluginHost`, drives init+tick
-//!    through the unified plugin lifecycle, and verifies the projection
-//!    actually ran end-to-end (`BRepHandle`'s `mesh_id` updated post-tick).
-//!    First real Tier-2 plugin canary — proves the v1 `PluginContext`
-//!    capability registry composes.
-//!
-//! 6. **`cad_projection_plugin_tick_returns_error_when_world_missing`** —
-//!    runtime safety: missing required resources surface as `PluginError` +
-//!    plugin state Failed (not panic).
-//!
-//! 7. **`cad_projection_plugin_tick_puts_resources_back`** — invariant: after
-//!    a successful tick, all three resources (`World` / `CadGraph` /
-//!    `Tolerance`) are still in the context, so the orchestrator can
-//!    retrieve them.
+//! 5. **Pairing-6 BRepHandle SSoT regression tests** — guard the
+//!    post-2026-05-08 invariant that `BRepHandle` does NOT carry the cad-node
+//!    FK; the FK lives exclusively in `EntityCadMap`. Cover the
+//!    `node_for` / `entity_for` / `remap_entity` accessors.
 
 use rge_cad_core::{CadGraph, CuboidOp, OperatorNode, Tolerance};
-use rge_cad_projection::{
-    BRepHandle, CadProjection, CadProjectionPlugin, ProjectedMesh, ProjectionError,
-    CAD_PROJECTION_PLUGIN_ID,
-};
-use rge_kernel_diagnostics::DiagnosticAggregator;
+use rge_cad_projection::{BRepHandle, CadProjection, ProjectedMesh, ProjectionError};
 use rge_kernel_ecs::{ParticipantId, PieSnapshot, SnapshotParticipate, World};
 use rge_kernel_graph_foundation::NodeId;
-use rge_kernel_plugin_host::{PluginContext, PluginHost, PluginId, PluginState};
 
 fn tol() -> Tolerance {
     Tolerance::new(0.001).expect("tol")
@@ -437,204 +424,6 @@ fn validate_handles_detects_orphan_after_partial_restore() {
         }
         other => panic!("expected ProjectionError::NodeNotInGraph, got {other:?}"),
     }
-}
-
-// ===========================================================================
-// CadProjectionPlugin canary — first real Tier-2 plugin via the §10.4 dogfood
-// rule. Closes Pairing-3 of the 2026-05-07 deep audit (post-audit CRITICAL #2).
-// ===========================================================================
-
-/// Pairing-3 closure: the `CadProjectionPlugin` adapter drives a real
-/// Tier-2 subsystem (cad-projection) end-to-end through the unified
-/// `Plugin` trait + `PluginHost` lifecycle. Verifies that:
-///
-/// 1. The plugin registers successfully under its canonical id.
-/// 2. `init_all` advances the plugin from `Pending` → `Initialized`.
-/// 3. `tick_all` extracts World+CadGraph+Tolerance from the context, drives
-///    the projection, and reports a successful tick.
-/// 4. Post-tick, the `BRepHandle` component in `World` has its `mesh_id`
-///    field populated — proof that the projection actually ran.
-/// 5. `shutdown_all` LIFO-shuts the plugin down without error.
-#[test]
-fn cad_projection_plugin_lifecycle_via_plugin_host() {
-    let mut world = World::new();
-    world.register_snapshot_component::<BRepHandle>();
-
-    let mut cad = CadGraph::new();
-    let node = add_cuboid(&mut cad, 1.0, 1.0, 1.0, "cuboid for plugin smoke");
-
-    // Build a projection, spawn the BRepHandle entity, then wrap in plugin.
-    let mut projection = CadProjection::new();
-    let entity = projection
-        .spawn_brep_entity(&mut world, node)
-        .expect("spawn");
-    let plugin = CadProjectionPlugin::from_projection(projection);
-    // Sanity: the wrapped projection's mapping persisted.
-    assert_eq!(plugin.projection().node_for(entity), Some(node));
-
-    // Build the host + register the plugin.
-    let plugin_id = PluginId::new(CAD_PROJECTION_PLUGIN_ID);
-    let mut host = PluginHost::new();
-    host.register(plugin_id.clone(), Box::new(plugin))
-        .expect("register");
-    assert_eq!(host.state(&plugin_id), Some(PluginState::Pending));
-
-    // Build the context. The diagnostic aggregator outlives the context.
-    let mut diags = DiagnosticAggregator::new();
-    let mut ctx = PluginContext::new(&mut diags);
-
-    // Init.
-    let init_report = host.init_all(&mut ctx);
-    assert_eq!(init_report.initialized, vec![plugin_id.clone()]);
-    assert!(
-        init_report.failed.is_empty(),
-        "init failed: {:?}",
-        init_report.failed
-    );
-    assert_eq!(host.state(&plugin_id), Some(PluginState::Initialized));
-
-    // Insert resources for the tick. The orchestrator pattern: take owned
-    // resources from somewhere, hand them to ctx, drive ticks, take them
-    // back when done.
-    assert!(ctx.insert(world).is_none());
-    assert!(ctx.insert(cad).is_none());
-    let _ = ctx.insert(tol());
-    assert_eq!(ctx.resource_count(), 3);
-
-    // Tick.
-    let tick_report = host.tick_all(&mut ctx);
-    assert_eq!(
-        tick_report.ticked, 1,
-        "ticked count: {:?}",
-        tick_report.failed
-    );
-    assert!(
-        tick_report.failed.is_empty(),
-        "tick failed: {:?}",
-        tick_report.failed
-    );
-    // Plugin state stays Initialized after a successful tick.
-    assert_eq!(host.state(&plugin_id), Some(PluginState::Initialized));
-
-    // Take resources back from ctx — they MUST be present after a successful
-    // tick (the plugin contract requires putting them back).
-    let world_back: World = ctx.take().expect("World present after tick");
-    let _cad_back: CadGraph = ctx.take().expect("CadGraph present after tick");
-    let _tolerance_back: Tolerance = ctx.take().expect("Tolerance present after tick");
-    assert_eq!(ctx.resource_count(), 0);
-
-    // Verify the projection actually ran: BRepHandle's mesh_id must be set.
-    let er = world_back.entity(entity).expect("entity preserved");
-    let handle = er.get::<BRepHandle>().expect("brep handle present");
-    assert!(
-        handle.mesh_id.is_some(),
-        "BRepHandle.mesh_id must be Some after a successful tick"
-    );
-    assert!(
-        handle.last_projected_checkpoint.is_some(),
-        "BRepHandle.last_projected_checkpoint must be Some after a successful tick"
-    );
-
-    // Shutdown LIFO. No plugin-level error expected.
-    let shutdown_report = host.shutdown_all(&mut ctx);
-    assert_eq!(shutdown_report.shutdown.len(), 1);
-    assert!(shutdown_report.failed.is_empty());
-    assert_eq!(host.count(), 0);
-}
-
-/// Runtime safety: a tick with the World resource missing surfaces as
-/// `PluginError::Runtime` and marks the plugin Failed (per plugin-fatal
-/// isolation), without panicking.
-#[test]
-fn cad_projection_plugin_tick_returns_error_when_world_missing() {
-    let plugin = CadProjectionPlugin::new();
-    let plugin_id = PluginId::new(CAD_PROJECTION_PLUGIN_ID);
-    let mut host = PluginHost::new();
-    host.register(plugin_id.clone(), Box::new(plugin))
-        .expect("register");
-
-    let mut diags = DiagnosticAggregator::new();
-    let mut ctx = PluginContext::new(&mut diags);
-
-    let init_report = host.init_all(&mut ctx);
-    assert!(init_report.failed.is_empty());
-
-    // Deliberately do NOT insert World. Tick must fail cleanly.
-    let mut cad = CadGraph::new();
-    let _node = add_cuboid(&mut cad, 1.0, 1.0, 1.0, "missing-World canary");
-    assert!(ctx.insert(cad).is_none());
-    let _ = ctx.insert(tol());
-    // Note: World absent.
-
-    let tick_report = host.tick_all(&mut ctx);
-    assert_eq!(tick_report.ticked, 0);
-    assert_eq!(
-        tick_report.failed.len(),
-        1,
-        "missing World must surface as a failed tick"
-    );
-    let (failed_id, failed_msg) = &tick_report.failed[0];
-    assert_eq!(*failed_id, plugin_id);
-    assert!(
-        failed_msg.contains("missing World"),
-        "error message must mention missing World; got: {failed_msg}"
-    );
-    // Per plugin-fatal isolation, the plugin is now Failed.
-    assert_eq!(host.state(&plugin_id), Some(PluginState::Failed));
-}
-
-/// After a successful tick, all three resources (World/CadGraph/Tolerance)
-/// must be back in the context — the plugin is responsible for returning
-/// them so the orchestrator can retrieve them.
-#[test]
-fn cad_projection_plugin_tick_puts_resources_back() {
-    let mut world = World::new();
-    world.register_snapshot_component::<BRepHandle>();
-
-    let mut cad = CadGraph::new();
-    let node = add_cuboid(&mut cad, 1.0, 1.0, 1.0, "resources-back canary");
-
-    let mut projection = CadProjection::new();
-    let _entity = projection
-        .spawn_brep_entity(&mut world, node)
-        .expect("spawn");
-    let plugin = CadProjectionPlugin::from_projection(projection);
-
-    let plugin_id = PluginId::new(CAD_PROJECTION_PLUGIN_ID);
-    let mut host = PluginHost::new();
-    host.register(plugin_id.clone(), Box::new(plugin))
-        .expect("register");
-
-    let mut diags = DiagnosticAggregator::new();
-    let mut ctx = PluginContext::new(&mut diags);
-
-    let _init_report = host.init_all(&mut ctx);
-
-    // Stage resources.
-    assert!(ctx.insert(world).is_none());
-    assert!(ctx.insert(cad).is_none());
-    let _ = ctx.insert(tol());
-    assert!(ctx.contains::<World>());
-    assert!(ctx.contains::<CadGraph>());
-    assert!(ctx.contains::<Tolerance>());
-    assert_eq!(ctx.resource_count(), 3);
-
-    let tick_report = host.tick_all(&mut ctx);
-    assert_eq!(tick_report.ticked, 1);
-    assert!(tick_report.failed.is_empty());
-
-    // The invariant: after a successful tick, every resource we staged is
-    // still present.
-    assert!(ctx.contains::<World>(), "World must be put back after tick");
-    assert!(
-        ctx.contains::<CadGraph>(),
-        "CadGraph must be put back after tick"
-    );
-    assert!(
-        ctx.contains::<Tolerance>(),
-        "Tolerance must be put back after tick"
-    );
-    assert_eq!(ctx.resource_count(), 3);
 }
 
 // ===========================================================================

@@ -3,7 +3,7 @@
 //! Acceptance per `tasks/W11/PLAN.md`: lands and comes to rest within 60
 //! ticks (1 second at 60 Hz).
 
-use rge_physics::stubs::audit_ledger::AuditLedger;
+use rge_physics::physics_input_ledger::PhysicsInputLedger;
 use rge_physics::stubs::components_physics::{
     BodyKind, Collider, ColliderShape, RigidBody, Velocity,
 };
@@ -54,7 +54,7 @@ fn make_scene() -> (
 #[test]
 fn falling_cube_lands_and_rests_within_60_ticks() {
     let (mut world, _ground, cube) = make_scene();
-    let mut ledger = AuditLedger::new();
+    let mut ledger = PhysicsInputLedger::new();
     let events = ContactEventChannel::new();
 
     let mut transforms = vec![(cube, Transform::at([0.0, 5.0, 0.0]))];
@@ -98,7 +98,7 @@ fn falling_cube_lands_and_rests_within_60_ticks() {
 #[test]
 fn collision_events_fire_on_landing() {
     let (mut world, _ground, cube) = make_scene();
-    let mut ledger = AuditLedger::new();
+    let mut ledger = PhysicsInputLedger::new();
     let events = ContactEventChannel::new();
 
     let mut transforms = vec![(cube, Transform::at([0.0, 5.0, 0.0]))];

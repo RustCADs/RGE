@@ -14,7 +14,13 @@ wgpu                   = { workspace = true }
 pollster               = "0.4"
 bytemuck               = { version = "1", features = ["derive"] }
 glam                   = { version = "0.30", features = ["bytemuck"] }
-rge-kernel-diagnostics = { path = "../../kernel/diagnostics" }
+rge-kernel-diagnostics = { workspace = true }
+# Tier-1 plugin substrate — gfx hosts a Tier-2 plugin canary
+# (`GfxPlugin`, the second canary after cad-projection per ADR-114).
+# Tier-2 → Tier-1 dep is allowed under the `forbidden-dep` lint (rule 6
+# only forbids game-domain crates for renderers; plugin-host is Tier-1
+# kernel substrate, not game-domain).
+rge-kernel-plugin-host = { workspace = true }
 serde                  = { workspace = true }
 thiserror              = { workspace = true }
 tracing                = { workspace = true }

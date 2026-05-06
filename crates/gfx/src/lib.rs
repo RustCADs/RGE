@@ -46,6 +46,7 @@ pub mod material;
 pub mod mesh;
 pub mod mesh_pipeline;
 pub mod pipeline;
+pub mod plugin_adapter;
 pub mod target;
 pub mod transform;
 pub mod vertex;
@@ -63,6 +64,7 @@ pub use material::{upload_rgba8_srgb_2d, Material, MaterialError, TextureUploadE
 pub use mesh::Mesh;
 pub use mesh_pipeline::{MeshPipeline, MeshPipelineError};
 pub use pipeline::{PipelineError, TrianglePipeline};
+pub use plugin_adapter::{GfxPlugin, GFX_PLUGIN_ID};
 pub use target::{HeadlessTarget, TargetError};
 pub use transform::{Transform, TransformError};
 pub use vertex::Vertex;

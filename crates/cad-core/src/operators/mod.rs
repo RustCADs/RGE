@@ -132,6 +132,32 @@ pub trait Operator: std::fmt::Debug + Send + Sync {
     /// * [`OpError::EmptyResult`] if evaluation succeeded but produced no
     ///   geometry (operator-specific — Cuboid/Transform never raise this).
     fn evaluate(&self, inputs: &[&Tessellation]) -> Result<Tessellation, OpError>;
+
+    /// Predict whether this operator's output [`Tessellation`] will carry
+    /// `face_labels` given the labeled-state of each input.
+    ///
+    /// `inputs_labeled[i]` corresponds to port `i`. The slice length equals
+    /// [`Self::arity`].
+    ///
+    /// Used by [`crate::OperatorGraph::evaluate`] to fold upstream-labeled
+    /// state into the cache key, so that two evaluations with identical
+    /// operator config but distinct input-label states cache separately.
+    /// Defense in depth against operator implementations that forget to
+    /// reflect label-emitting parameters in [`Self::structural_hash`]
+    /// (audit-2 finding A1.4 / A5.2 / Pairing N2 — "latent-but-explosive"
+    /// cache-collision bug).
+    ///
+    /// **Default**: `inputs_labeled.iter().any(|b| *b)` — labels propagate
+    /// through any operator that takes labeled input. Operators that
+    /// strip labels OR that emit labels regardless of input must override.
+    ///
+    /// **Contract**: this method's return value MUST match the actual
+    /// `evaluate(...)` output's [`Tessellation::is_labeled`] for the same
+    /// inputs. If the prediction diverges from reality, the cache key
+    /// becomes inconsistent and stale entries may surface.
+    fn output_is_labeled(&self, inputs_labeled: &[bool]) -> bool {
+        inputs_labeled.iter().any(|b| *b)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -187,6 +213,10 @@ impl Operator for OperatorNode {
 
     fn evaluate(&self, inputs: &[&Tessellation]) -> Result<Tessellation, OpError> {
         self.as_operator().evaluate(inputs)
+    }
+
+    fn output_is_labeled(&self, inputs_labeled: &[bool]) -> bool {
+        self.as_operator().output_is_labeled(inputs_labeled)
     }
 }
 
@@ -257,5 +287,30 @@ mod tests {
                 got: 0
             }
         ));
+    }
+
+    /// Default trait-level [`Operator::output_is_labeled`] returns `false` on
+    /// an empty `inputs_labeled` slice — `Iterator::any` over empty is `false`,
+    /// which is the desired arity-0 semantics (primitive operators emit
+    /// unlabeled tessellation by default).
+    #[test]
+    fn output_is_labeled_default_returns_false_on_empty_inputs() {
+        // CuboidOp uses the default impl; arity 0 ⇒ inputs_labeled = &[].
+        let op = CuboidOp::default();
+        assert!(!op.output_is_labeled(&[]));
+    }
+
+    /// Default trait-level [`Operator::output_is_labeled`] propagates `true`
+    /// when ANY input slot is labeled. `BooleanOp`'s actual evaluate semantics
+    /// (`lhs.is_labeled() || rhs.is_labeled()`) match this default exactly.
+    #[test]
+    fn output_is_labeled_default_propagates_any_labeled_input() {
+        // BooleanOp is arity 2 and uses the default impl (which matches the
+        // actual evaluate dispatch).
+        let op = BooleanOp::union();
+        assert!(!op.output_is_labeled(&[false, false]));
+        assert!(op.output_is_labeled(&[true, false]));
+        assert!(op.output_is_labeled(&[false, true]));
+        assert!(op.output_is_labeled(&[true, true]));
     }
 }

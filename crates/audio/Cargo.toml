@@ -20,6 +20,11 @@ thiserror = { workspace = true }
 # `mint` is also a kira dep — pin to the same minor here so we can hand
 # Vector3/Quaternion to Kira's spatial API without a re-export hop.
 mint      = "0.5"
+# Tier-1 plugin host substrate — fourth Tier-2 canary per ADR-114 amendment
+# 2026-05-08 (three-substrate validation). Tier-2 → Tier-1 deps are allowed
+# per the `forbidden-dep` architecture lint.
+rge-kernel-plugin-host = { workspace = true }
+rge-kernel-diagnostics = { workspace = true }
 
 [dev-dependencies]
 

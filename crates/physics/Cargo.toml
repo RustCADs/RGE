@@ -19,6 +19,13 @@ publish                = false
 # SIMD; determinism is non-negotiable for §1.6.8 so we accept the perf cost.
 rapier3d = { workspace = true, features = ["enhanced-determinism"] }
 serde    = { workspace = true }
+# Tier-1 plugin substrate — physics hosts a Tier-2 plugin canary
+# (`PhysicsPlugin`, the third canary after cad-projection + gfx per ADR-114).
+# Tier-2 → Tier-1 dep is allowed under the `forbidden-dep` lint (rule 1
+# only forbids the reverse direction; plugin-host is Tier-1 kernel
+# substrate).
+rge-kernel-plugin-host = { workspace = true }
+rge-kernel-diagnostics = { workspace = true }
 
 [lints]
 workspace = true

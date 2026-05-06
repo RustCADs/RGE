@@ -12,6 +12,9 @@ publish                = false
 [dependencies]
 # AssetId canonical owner (Phase 4.1). blake3 still needed for cache internals.
 rge-kernel-asset = { workspace = true }
+# Graph substrate for DepGraph (PLAN §1.14 — Tier-2 graph consumer; mirrors
+# the kernel/asset::DependencyGraph migration completed 2026-05-09).
+rge-kernel-graph-foundation = { workspace = true }
 blake3     = { workspace = true, features = ["std"] }
 serde      = { workspace = true }
 thiserror  = { workspace = true }

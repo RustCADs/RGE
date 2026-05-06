@@ -13,7 +13,13 @@
 //! |---|---|
 //! | `stubs::components_physics::RigidBody` | `rge_components_physics::RigidBody` |
 //! | `stubs::kernel_events::Channel<T>` | `rge_kernel_events::Channel<T>` |
-//! | `stubs::audit_ledger::AuditLedger` | `rge_kernel_audit_ledger::AuditLedger` |
+//!
+//! `stubs::audit_ledger::AuditLedger` was promoted out of `stubs` 2026-05-09
+//! audit-debt closure and renamed to [`crate::physics_input_ledger::PhysicsInputLedger`]
+//! — it was never structurally compatible with the kernel/audit-ledger
+//! generic event substrate (different domain, different API). Physics
+//! intentionally owns its own per-tick input ledger; the rename makes that
+//! explicit. See [`crate::physics_input_ledger`] module-level docs.
 
 /// Mirror of the to-be-W01 `components-physics` surface.
 pub mod components_physics {
@@ -193,96 +199,7 @@ pub mod kernel_events {
     }
 }
 
-/// Mirror of the to-be `kernel/audit-ledger`. Records per-tick simulation
-/// inputs so a replay run can reproduce the trajectory.
-///
-/// Per PLAN.md §1.6.8 the full ledger spec includes content-addressed framing
-/// + signed segments; for W11 we only need the **gameplay-input recording**
-/// surface that the physics step calls into.
-pub mod audit_ledger {
-    use serde::{Deserialize, Serialize};
-
-    /// One simulation input applied during a tick.
-    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-    pub enum PhysicsInput {
-        /// External force applied to a body for one tick.
-        Force {
-            /// Stable body identity (handle.0).
-            body: u64,
-            /// Force vector (N).
-            force: [f32; 3],
-        },
-        /// Instantaneous impulse (units of N·s).
-        Impulse {
-            /// Stable body identity.
-            body: u64,
-            /// Impulse vector.
-            impulse: [f32; 3],
-        },
-        /// Joint motor torque target.
-        JointMotor {
-            /// Joint index.
-            joint: u64,
-            /// Target velocity for the motor (rad/s or m/s depending on kind).
-            target_vel: f32,
-            /// Stiffness factor.
-            factor: f32,
-        },
-    }
-
-    /// One tick's record: tick index plus the inputs that landed on it.
-    #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-    pub struct TickRecord {
-        /// Monotonic tick index from epoch 0.
-        pub tick: u64,
-        /// Inputs in solver-application order.
-        pub inputs: Vec<PhysicsInput>,
-    }
-
-    /// Append-only ledger. Replay drives a fresh world from this stream.
-    #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-    pub struct AuditLedger {
-        /// Records, ordered by tick.
-        pub records: Vec<TickRecord>,
-    }
-
-    impl AuditLedger {
-        /// Construct an empty ledger.
-        pub fn new() -> Self {
-            Self::default()
-        }
-
-        /// Begin a tick. The returned mutable record accumulates inputs until
-        /// the tick is ended; if you don't push any inputs we still record an
-        /// empty entry so tick indices line up with replay.
-        ///
-        /// # Panics
-        /// Will not panic — the `expect` after the push is unreachable
-        /// because `Vec::push` followed by `last_mut` is always `Some`. The
-        /// `expect` is there to make the invariant explicit.
-        pub fn begin_tick(&mut self, tick: u64) -> &mut TickRecord {
-            self.records.push(TickRecord {
-                tick,
-                inputs: Vec::new(),
-            });
-            self.records
-                .last_mut()
-                .expect("Vec::push leaves Vec non-empty")
-        }
-
-        /// Look up the recorded inputs for a tick (for replay).
-        pub fn for_tick(&self, tick: u64) -> Option<&TickRecord> {
-            self.records.iter().find(|r| r.tick == tick)
-        }
-
-        /// Total tick count.
-        pub fn len(&self) -> usize {
-            self.records.len()
-        }
-
-        /// Whether the ledger has any records.
-        pub fn is_empty(&self) -> bool {
-            self.records.is_empty()
-        }
-    }
-}
+// `audit_ledger` module moved to `crate::physics_input_ledger` 2026-05-09
+// (audit-debt MEDIUM closure: type renamed AuditLedger → PhysicsInputLedger
+// to stop presenting it as a "stub" of the kernel substrate; see
+// physics_input_ledger.rs module-level docs for full rationale).

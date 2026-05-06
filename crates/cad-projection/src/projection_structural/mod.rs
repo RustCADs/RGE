@@ -404,7 +404,10 @@ mod tests {
         let mut map = EntityCadMap::new();
         let mut entities: Vec<EntityId> = (0..5).map(|_| EntityId::new()).collect();
         for (i, e) in entities.iter().enumerate() {
-            #[allow(clippy::cast_possible_truncation)]
+            #[allow(
+                clippy::cast_possible_truncation,
+                reason = "test fixture; i is bounded by `entities.len() == 5`"
+            )]
             map.insert(*e, n((i as u128) + 1)).expect("ins");
         }
         // Sort our local list by EntityId so we can compare.

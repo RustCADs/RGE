@@ -183,4 +183,14 @@ mod tests {
         let err = op.evaluate(&[]).unwrap_err();
         assert!(matches!(err, OpError::InvalidParameter(_)));
     }
+
+    /// `CuboidOp` is arity 0 and emits an unlabeled `Tessellation::new(...)`
+    /// — so the trait-default [`Operator::output_is_labeled`] (which returns
+    /// `false` on an empty `inputs_labeled` slice via `iter().any`) matches
+    /// the actual `evaluate` semantics. No override needed.
+    #[test]
+    fn cuboid_output_is_labeled_returns_false() {
+        let op = CuboidOp::default();
+        assert!(!op.output_is_labeled(&[]));
+    }
 }

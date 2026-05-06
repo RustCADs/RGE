@@ -1,5 +1,7 @@
 //! `rge-audio` — Kira wrap, ECS-integrated audio source/listener, mixer.
 //!
+//! Failure class: recoverable
+//!
 //! Wave **W12** deliverable per [`tasks/W12/PLAN.md`](../../tasks/W12/PLAN.md).
 //! Subsystem owner per [`PLAN.md`](../../plans/PLAN.md) §6 (Phase 5+).
 //!
@@ -46,6 +48,7 @@ pub mod components;
 pub mod falloff;
 pub mod listener;
 pub mod manager;
+pub mod plugin_adapter;
 pub mod schedule;
 pub mod source;
 pub mod test_support;
@@ -57,5 +60,8 @@ pub use falloff::AudioFalloff;
 pub use kira;
 pub use listener::ListenerState;
 pub use manager::{AudioManager, ManagerError};
+pub use plugin_adapter::{
+    AudioFrame, AudioPlugin, FrameRecord, OwnedAudioSchedule, AUDIO_PLUGIN_ID,
+};
 pub use schedule::{audio_schedule_step, AudioSchedule};
 pub use source::{PlaybackState, SourceState};

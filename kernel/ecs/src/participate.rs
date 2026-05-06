@@ -160,6 +160,17 @@ pub enum ParticipateError {
 /// - [`capture`](SnapshotParticipate::capture) followed by
 ///   [`restore`](SnapshotParticipate::restore) on a fresh instance must produce
 ///   a state byte-identical to the original — no randomness, no timestamps.
+///
+/// # Serialization-format policy (workspace convention, not enforced)
+///
+/// The `Vec<u8>` payload is intentionally opaque, but the workspace prefers
+/// **postcard** for compactness in most cases (e.g., `cad-projection`'s
+/// `EntityCadMap` participant payload). Document the exception when an
+/// alternative format is required: `cad-core::CadGraph::SnapshotParticipate`
+/// uses **RON** because postcard rejects `OperatorNode`'s
+/// `#[serde(tag = "kind")]` enum encoding (postcard is non-self-describing).
+/// Future participants should default to postcard and explicitly justify
+/// other choices in the impl's module-level doc.
 pub trait SnapshotParticipate {
     /// Stable identifier for this participant.
     ///

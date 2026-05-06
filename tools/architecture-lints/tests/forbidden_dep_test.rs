@@ -3,6 +3,16 @@
 //! Each test builds a minimal synthetic workspace in a [`tempfile::TempDir`],
 //! then invokes the compiled binary with the `forbidden-dep` subcommand.
 //! Exit code semantics: 0 = pass (no violations), 1 = violations found, 2 = tool error.
+//!
+//! # `rge-` prefix discipline
+//!
+//! All workspace-internal package names in these fixtures carry the `rge-`
+//! prefix, matching the live workspace's naming convention (e.g.
+//! `rge-cad-core`, `rge-physics`). Pre-audit-6 (2026-05-09) the lint matched
+//! against bare names (`"cad-core"`, `"physics"`) and these fixtures used
+//! bare names too, which kept the tests green while masking the production
+//! dead-code bug. The fixtures were updated alongside the lint fix to
+//! exercise the same code paths the real workspace exercises.
 
 use std::fs;
 use std::path::Path;
@@ -76,9 +86,9 @@ fn test_clean_workspace_passes() {
         "Cargo.toml",
         &root_toml(&["kernel/foo", "crates/bar"]),
     );
-    write_file(root, "kernel/foo/Cargo.toml", &pkg_toml("foo", &[]));
+    write_file(root, "kernel/foo/Cargo.toml", &pkg_toml("rge-foo", &[]));
     write_file(root, "kernel/foo/src/lib.rs", "");
-    write_file(root, "crates/bar/Cargo.toml", &pkg_toml("bar", &[]));
+    write_file(root, "crates/bar/Cargo.toml", &pkg_toml("rge-bar", &[]));
     write_file(root, "crates/bar/src/lib.rs", "");
 
     let (code, stdout, _stderr) = run_lint(root);
@@ -106,10 +116,10 @@ fn test_tier1_depends_on_tier2_is_violation() {
     write_file(
         root,
         "kernel/foo/Cargo.toml",
-        &pkg_toml("foo", &[("bar", "../../crates/bar")]),
+        &pkg_toml("rge-foo", &[("rge-bar", "../../crates/bar")]),
     );
     write_file(root, "kernel/foo/src/lib.rs", "");
-    write_file(root, "crates/bar/Cargo.toml", &pkg_toml("bar", &[]));
+    write_file(root, "crates/bar/Cargo.toml", &pkg_toml("rge-bar", &[]));
     write_file(root, "crates/bar/src/lib.rs", "");
 
     let (code, stdout, _stderr) = run_lint(root);
@@ -141,13 +151,16 @@ fn test_cad_core_depends_on_tier2_is_violation() {
     write_file(
         root,
         "crates/cad-core/Cargo.toml",
-        &pkg_toml("cad-core", &[("material-graph", "../material-graph")]),
+        &pkg_toml(
+            "rge-cad-core",
+            &[("rge-material-graph", "../material-graph")],
+        ),
     );
     write_file(root, "crates/cad-core/src/lib.rs", "");
     write_file(
         root,
         "crates/material-graph/Cargo.toml",
-        &pkg_toml("material-graph", &[]),
+        &pkg_toml("rge-material-graph", &[]),
     );
     write_file(root, "crates/material-graph/src/lib.rs", "");
 
@@ -180,10 +193,14 @@ fn test_editor_ui_depends_on_physics_is_violation() {
     write_file(
         root,
         "crates/editor-ui/Cargo.toml",
-        &pkg_toml("editor-ui", &[("physics", "../physics")]),
+        &pkg_toml("rge-editor-ui", &[("rge-physics", "../physics")]),
     );
     write_file(root, "crates/editor-ui/src/lib.rs", "");
-    write_file(root, "crates/physics/Cargo.toml", &pkg_toml("physics", &[]));
+    write_file(
+        root,
+        "crates/physics/Cargo.toml",
+        &pkg_toml("rge-physics", &[]),
+    );
     write_file(root, "crates/physics/src/lib.rs", "");
 
     let (code, stdout, _stderr) = run_lint(root);
@@ -214,13 +231,13 @@ fn test_physics_depends_on_script_host_is_violation() {
     write_file(
         root,
         "crates/physics/Cargo.toml",
-        &pkg_toml("physics", &[("script-host", "../script-host")]),
+        &pkg_toml("rge-physics", &[("rge-script-host", "../script-host")]),
     );
     write_file(root, "crates/physics/src/lib.rs", "");
     write_file(
         root,
         "crates/script-host/Cargo.toml",
-        &pkg_toml("script-host", &[]),
+        &pkg_toml("rge-script-host", &[]),
     );
     write_file(root, "crates/script-host/src/lib.rs", "");
 
@@ -253,13 +270,13 @@ fn test_renderer_depends_on_game_domain_is_violation() {
     write_file(
         root,
         "crates/gfx/Cargo.toml",
-        &pkg_toml("gfx", &[("cad-core", "../cad-core")]),
+        &pkg_toml("rge-gfx", &[("rge-cad-core", "../cad-core")]),
     );
     write_file(root, "crates/gfx/src/lib.rs", "");
     write_file(
         root,
         "crates/cad-core/Cargo.toml",
-        &pkg_toml("cad-core", &[]),
+        &pkg_toml("rge-cad-core", &[]),
     );
     write_file(root, "crates/cad-core/src/lib.rs", "");
 

@@ -64,4 +64,4 @@ pub use context::PluginContext;
 pub use host::{
     InitReport, PluginHost, PluginHostError, PluginRecord, PluginState, ShutdownReport, TickReport,
 };
-pub use plugin::{Plugin, PluginError, PluginId};
+pub use plugin::{Plugin, PluginError, PluginId, PluginPhase};

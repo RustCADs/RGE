@@ -669,4 +669,14 @@ mod tests {
         assert_eq!(op.op_kind(), OpKind::Extrude);
         assert_eq!(op.arity(), 0);
     }
+
+    /// `ExtrudeOp` is arity 0 and emits an unlabeled `Tessellation::new(...)`
+    /// — so the trait-default [`Operator::output_is_labeled`] (which returns
+    /// `false` on an empty `inputs_labeled` slice via `iter().any`) matches
+    /// the actual `evaluate` semantics. No override needed.
+    #[test]
+    fn extrude_output_is_labeled_returns_false() {
+        let op = ExtrudeOp::new(ccw_square(), 1.0).expect("op");
+        assert!(!op.output_is_labeled(&[]));
+    }
 }

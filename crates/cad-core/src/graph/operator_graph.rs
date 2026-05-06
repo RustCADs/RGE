@@ -216,8 +216,14 @@ impl OperatorGraph {
         self.eval_node(target, cache, tolerance, &mut stack)
     }
 
-    /// Recursive helper. `stack` holds the ancestors currently on the
-    /// evaluation path so we can detect cycles.
+    /// Recursive evaluation helper. `stack` holds the ancestors currently on
+    /// the evaluation path so we can detect cycles.
+    ///
+    /// Closes audit-2 finding A1.4 / A5.2 / Pairing N2: `eval_node` calls
+    /// [`Self::effective_hash_and_label`] (which folds the upstream-labeled
+    /// bitmap into the hash) so the cache key distinguishes evaluations whose
+    /// inputs differ in labeled-state, even if the local operator's
+    /// `structural_hash` does not itself encode label-state.
     fn eval_node(
         &self,
         node_id: NodeId,
@@ -225,87 +231,12 @@ impl OperatorGraph {
         tolerance: Tolerance,
         stack: &mut HashSet<NodeId>,
     ) -> Result<Arc<Tessellation>, EvalError> {
-        if !stack.insert(node_id) {
-            return Err(EvalError::Cycle);
-        }
-
-        let result = self.eval_node_inner(node_id, cache, tolerance, stack);
-
-        stack.remove(&node_id);
-        result
-    }
-
-    fn eval_node_inner(
-        &self,
-        node_id: NodeId,
-        cache: &mut TessellationCache,
-        tolerance: Tolerance,
-        stack: &mut HashSet<NodeId>,
-    ) -> Result<Arc<Tessellation>, EvalError> {
-        let node = self
-            .graph
-            .node(node_id)
-            .ok_or(EvalError::NodeNotFound(node_id))?;
-
-        // Collect incoming edges, ordered by port, validating arity + port
-        // uniqueness.
-        let arity = node.arity();
-        let incoming: Vec<EdgeId> = self.graph.incoming(node_id).collect();
-        if incoming.len() != arity {
-            return Err(EvalError::PortMismatch {
-                node: node_id,
-                expected_arity: arity,
-                got: incoming.len(),
-            });
-        }
-
-        // Resolve each incoming edge to (port, src) and sort by port.
-        let mut by_port: Vec<(u8, NodeId)> = Vec::with_capacity(incoming.len());
-        for eid in incoming {
-            let rec: &EdgeRecord<EdgeKind> = self
-                .graph
-                .edge(eid)
-                .ok_or(EvalError::NodeNotFound(node_id))?;
-            let EdgeKind::Input(port) = rec.data;
-            by_port.push((port, rec.src));
-        }
-        by_port.sort_by_key(|(port, _)| *port);
-
-        // Verify ports cover 0..arity exactly once.
-        for (i, (port, _)) in by_port.iter().enumerate() {
-            #[allow(clippy::cast_possible_truncation)]
-            let expected = i as u8;
-            if *port != expected {
-                return Err(EvalError::PortMismatch {
-                    node: node_id,
-                    expected_arity: arity,
-                    got: incoming_count(&by_port),
-                });
-            }
-        }
-
-        // Evaluate each upstream first (recursive). Store both the
-        // tessellation and the upstream's effective hash (so we can fold it
-        // into ours).
-        let mut upstream_tess: Vec<Arc<Tessellation>> = Vec::with_capacity(arity);
-        let mut upstream_hashes: Vec<[u8; 32]> = Vec::with_capacity(arity);
-        for (_, src) in &by_port {
-            let t = self.eval_node(*src, cache, tolerance, stack)?;
-            upstream_hashes.push(self.effective_hash(*src, stack)?);
-            upstream_tess.push(t);
-        }
-
-        // Compute this node's effective hash = BLAKE3(local_hash || each
-        // upstream effective_hash || port_index).
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(&node.structural_hash());
-        for (i, h) in upstream_hashes.iter().enumerate() {
-            #[allow(clippy::cast_possible_truncation)]
-            let port = i as u8;
-            hasher.update(&[port]);
-            hasher.update(h);
-        }
-        let effective_hash = *hasher.finalize().as_bytes();
+        // Compute this node's effective_hash + predicted output_labeled (the
+        // recursion in `effective_hash_and_label` walks the full upstream
+        // subtree and validates ports/arity along the way; the label flag
+        // is discarded here — eval_node only needs the hash for the cache
+        // key).
+        let (effective_hash, _output_labeled) = self.effective_hash_and_label(node_id, stack)?;
 
         let key = CacheKey {
             structural_hash: effective_hash,
@@ -317,39 +248,124 @@ impl OperatorGraph {
         }
         cache.record_miss();
 
-        // Evaluate the operator with its (already-evaluated) inputs.
+        // Cache miss — actually evaluate. Re-resolve the node + ports to
+        // get upstream tessellations (the hash recursion above only needs
+        // hashes, not Arc<Tessellation>).
+        let node = self
+            .graph
+            .node(node_id)
+            .ok_or(EvalError::NodeNotFound(node_id))?;
+        let arity = node.arity();
+        let by_port = self.collect_incoming_by_port(node_id, arity)?;
+
+        // Evaluate each upstream first (recursive).
+        let mut upstream_tess: Vec<Arc<Tessellation>> = Vec::with_capacity(arity);
+        for (_, src) in &by_port {
+            upstream_tess.push(self.eval_node(*src, cache, tolerance, stack)?);
+        }
+
         let inputs: Vec<&Tessellation> = upstream_tess.iter().map(AsRef::as_ref).collect();
         let tess = node.evaluate(&inputs)?;
         Ok(cache.insert(key, tess))
     }
 
-    /// Compute a node's effective recursive structural hash WITHOUT
-    /// triggering evaluation. Used internally so we can fold this node's
-    /// hash into a downstream node's effective hash without double-evaluating.
-    fn effective_hash(
+    /// Compute a node's `(effective_hash, output_is_labeled)` pair, with the
+    /// upstream-labeled-bitmap folded into the hash. Both [`Self::eval_node`]
+    /// and the downstream-hash-only path call this helper to ensure they
+    /// produce identical `effective_hash`es for the same node.
+    ///
+    /// The cycle guard is owned here (the recursive walk of upstream nodes
+    /// happens via the inner method); duplicate guards in the caller would
+    /// be redundant.
+    ///
+    /// # Errors
+    ///
+    /// * [`EvalError::Cycle`] if `node_id` is already on the recursion stack.
+    /// * [`EvalError::NodeNotFound`] / [`EvalError::PortMismatch`] propagated
+    ///   from the recursive walk over upstream nodes.
+    ///
+    /// Exposed `pub` so integration tests (notably
+    /// `tests/labeled_tessellation_pipeline.rs`) can verify the cache-key
+    /// uniqueness contract without piggy-backing on `evaluate`. The cycle
+    /// guard is owned here so callers don't need to manage it separately.
+    pub fn effective_hash_and_label(
         &self,
         node_id: NodeId,
         stack: &mut HashSet<NodeId>,
-    ) -> Result<[u8; 32], EvalError> {
+    ) -> Result<([u8; 32], bool), EvalError> {
         if !stack.insert(node_id) {
             return Err(EvalError::Cycle);
         }
-        let res = self.effective_hash_inner(node_id, stack);
+        let res = self.effective_hash_and_label_inner(node_id, stack);
         stack.remove(&node_id);
         res
     }
 
-    fn effective_hash_inner(
+    fn effective_hash_and_label_inner(
         &self,
         node_id: NodeId,
         stack: &mut HashSet<NodeId>,
-    ) -> Result<[u8; 32], EvalError> {
+    ) -> Result<([u8; 32], bool), EvalError> {
         let node = self
             .graph
             .node(node_id)
             .ok_or(EvalError::NodeNotFound(node_id))?;
 
         let arity = node.arity();
+        let by_port = self.collect_incoming_by_port(node_id, arity)?;
+
+        // Recurse to gather each upstream's `(effective_hash, output_is_labeled)`.
+        let mut upstream_data: Vec<([u8; 32], bool)> = Vec::with_capacity(arity);
+        for (_, src) in &by_port {
+            upstream_data.push(self.effective_hash_and_label(*src, stack)?);
+        }
+
+        // Fold local hash + per-port (port_index, upstream_hash) into the hasher.
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(&node.structural_hash());
+        for (i, (h, _)) in upstream_data.iter().enumerate() {
+            #[allow(
+                clippy::cast_possible_truncation,
+                reason = "i bounded by upstream port count which is u8 by construction"
+            )]
+            let port = i as u8;
+            hasher.update(&[port]);
+            hasher.update(h);
+        }
+        // Defense-in-depth (audit-2 A1.4 / A5.2 / Pairing N2): fold the
+        // upstream-labeled bitmap into the hash so the cache key distinguishes
+        // evaluations whose inputs differ in labeled-state, even if the local
+        // `structural_hash` doesn't encode label-state. One bit per port,
+        // wrapped modulo 32 for ports beyond 32 (no current operator exceeds
+        // arity 2; future ops are unlikely to exceed 32).
+        let upstream_labeled_bitmap: u32 =
+            upstream_data
+                .iter()
+                .enumerate()
+                .fold(0u32, |acc, (i, (_, labeled))| {
+                    if *labeled {
+                        acc | (1u32 << (i % 32))
+                    } else {
+                        acc
+                    }
+                });
+        hasher.update(&upstream_labeled_bitmap.to_le_bytes());
+        let effective_hash = *hasher.finalize().as_bytes();
+
+        // Predict this node's output_is_labeled via the trait method.
+        let inputs_labeled: Vec<bool> = upstream_data.iter().map(|(_, l)| *l).collect();
+        let output_labeled = node.output_is_labeled(&inputs_labeled);
+
+        Ok((effective_hash, output_labeled))
+    }
+
+    /// Collect a node's incoming edges sorted by port, validating arity +
+    /// port-uniqueness (ports must cover `0..arity` exactly once).
+    fn collect_incoming_by_port(
+        &self,
+        node_id: NodeId,
+        arity: usize,
+    ) -> Result<Vec<(u8, NodeId)>, EvalError> {
         let incoming: Vec<EdgeId> = self.graph.incoming(node_id).collect();
         if incoming.len() != arity {
             return Err(EvalError::PortMismatch {
@@ -370,10 +386,11 @@ impl OperatorGraph {
         }
         by_port.sort_by_key(|(port, _)| *port);
 
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(&node.structural_hash());
-        for (i, (port, src)) in by_port.iter().enumerate() {
-            #[allow(clippy::cast_possible_truncation)]
+        for (i, (port, _)) in by_port.iter().enumerate() {
+            #[allow(
+                clippy::cast_possible_truncation,
+                reason = "i bounded by upstream port count which is u8 by construction"
+            )]
             let expected = i as u8;
             if *port != expected {
                 return Err(EvalError::PortMismatch {
@@ -382,11 +399,44 @@ impl OperatorGraph {
                     got: incoming_count(&by_port),
                 });
             }
-            let upstream = self.effective_hash(*src, stack)?;
-            hasher.update(&[*port]);
-            hasher.update(&upstream);
         }
-        Ok(*hasher.finalize().as_bytes())
+
+        Ok(by_port)
+    }
+
+    /// Compute a node's effective recursive structural hash WITHOUT
+    /// triggering evaluation. Wrapper around [`Self::effective_hash_and_label`]
+    /// that discards the predicted-output-label flag.
+    #[cfg(test)]
+    fn effective_hash(
+        &self,
+        node_id: NodeId,
+        stack: &mut HashSet<NodeId>,
+    ) -> Result<[u8; 32], EvalError> {
+        self.effective_hash_and_label(node_id, stack)
+            .map(|(h, _)| h)
+    }
+
+    /// Caller-friendly wrapper around [`Self::effective_hash_and_label`] that
+    /// owns the recursion-stack `HashSet` so callers (notably integration
+    /// tests that don't see `rge-kernel-graph-foundation` as a direct dep
+    /// and therefore can't name `NodeId` for `HashSet<NodeId>`) don't need
+    /// to construct it.
+    ///
+    /// Returns `(effective_hash, predicted_output_is_labeled)` for the
+    /// subgraph rooted at `node_id`.
+    ///
+    /// # Errors
+    ///
+    /// * [`EvalError::NodeNotFound`] if `node_id` is not in the graph.
+    /// * [`EvalError::Cycle`] / [`EvalError::PortMismatch`] propagated from
+    ///   the recursive walk.
+    pub fn effective_hash_and_label_root(
+        &self,
+        node_id: NodeId,
+    ) -> Result<([u8; 32], bool), EvalError> {
+        let mut stack: HashSet<NodeId> = HashSet::new();
+        self.effective_hash_and_label(node_id, &mut stack)
     }
 }
 
@@ -394,7 +444,10 @@ impl OperatorGraph {
 // Helpers
 // ---------------------------------------------------------------------------
 
-#[allow(clippy::cast_possible_truncation)]
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "v.len() bounded by upstream port count; truncation infeasible at expected scale"
+)]
 fn incoming_count(v: &[(u8, NodeId)]) -> usize {
     v.len()
 }
@@ -430,7 +483,7 @@ fn derive_edge_id(src: NodeId, dst: NodeId, port: u8) -> EdgeId {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::operators::{CuboidOp, TransformOp};
+    use crate::operators::{BooleanOp, CuboidOp, TransformOp};
 
     fn make_tol() -> Tolerance {
         Tolerance::new(0.001).expect("tol")
@@ -565,6 +618,110 @@ mod tests {
         let _second = g.evaluate(id, &mut cache, make_tol()).expect("second");
         assert_eq!(cache.misses(), 1, "no new miss");
         assert_eq!(cache.hits(), 1, "one hit recorded");
+    }
+
+    /// Audit-2 A1.4 / A5.2 / Pairing N2 regression: `effective_hash`
+    /// distinguishes evaluations whose inputs differ in labeled-state, even
+    /// when the local operator's `structural_hash` doesn't itself encode
+    /// label-state. Defense in depth against operator implementations that
+    /// forget to fold label-emitting parameters into `structural_hash`.
+    ///
+    /// Today every primitive operator emits unlabeled `Tessellation`, so
+    /// two real graphs cannot diverge in this dimension via the public API
+    /// alone. The regression is exercised by verifying that swapping the
+    /// upstream-labeled bitmap (the direct input to the new fold-in step)
+    /// changes the resulting `effective_hash` bytes.
+    #[test]
+    fn effective_hash_distinguishes_labeled_vs_unlabeled_input_state() {
+        // Build G: BooleanOp(Union) ← [Cuboid@port 0, Cuboid'@port 1].
+        // Both upstreams emit unlabeled output today, so the helper's
+        // bitmap is observed as 0 here.
+        let mut g = OperatorGraph::new();
+        let cu_lhs = g.add_operator(cuboid_node(1.0, 1.0, 1.0)).expect("cu_lhs");
+        let cu_rhs = g
+            .add_operator(cuboid_node(2.0, 1.0, 1.0)) // distinct payload to avoid dedup
+            .expect("cu_rhs");
+        let bool_id = g
+            .add_operator(OperatorNode::Boolean(BooleanOp::union()))
+            .expect("bool");
+        g.connect(cu_lhs, bool_id, 0).expect("lhs->bool port 0");
+        g.connect(cu_rhs, bool_id, 1).expect("rhs->bool port 1");
+
+        // Helper-computed hash: bitmap = 0 (all upstreams unlabeled today).
+        let mut stack: HashSet<NodeId> = HashSet::new();
+        let observed_hash = g
+            .effective_hash(bool_id, &mut stack)
+            .expect("effective_hash unlabeled");
+
+        // Hand-compute the same recipe with bitmap = 0 to confirm the
+        // helper is what we think it is — not strictly required but acts as
+        // an oracle for the bitmap-fold step.
+        let bool_node = g.node(bool_id).expect("bool node present");
+        let lhs_hash = g
+            .effective_hash(cu_lhs, &mut HashSet::new())
+            .expect("cu_lhs hash");
+        let rhs_hash = g
+            .effective_hash(cu_rhs, &mut HashSet::new())
+            .expect("cu_rhs hash");
+        let recompute = |bitmap: u32| -> [u8; 32] {
+            let mut hasher = blake3::Hasher::new();
+            hasher.update(&bool_node.structural_hash());
+            hasher.update(&[0u8]); // port 0
+            hasher.update(&lhs_hash);
+            hasher.update(&[1u8]); // port 1
+            hasher.update(&rhs_hash);
+            hasher.update(&bitmap.to_le_bytes());
+            *hasher.finalize().as_bytes()
+        };
+        let unlabeled_recompute = recompute(0);
+        assert_eq!(
+            observed_hash, unlabeled_recompute,
+            "helper output must match the bitmap=0 recipe for an all-unlabeled graph"
+        );
+
+        // The audit-2 defensive guarantee: swap the bitmap (simulate a
+        // future labeling primitive feeding port 0) → hash MUST differ.
+        let labeled_port_0 = recompute(1);
+        let labeled_port_1 = recompute(2);
+        let labeled_both = recompute(3);
+        assert_ne!(
+            unlabeled_recompute, labeled_port_0,
+            "labeled-port-0 must produce a different effective_hash than all-unlabeled"
+        );
+        assert_ne!(
+            unlabeled_recompute, labeled_port_1,
+            "labeled-port-1 must produce a different effective_hash"
+        );
+        assert_ne!(
+            labeled_port_0, labeled_port_1,
+            "port-0-only-labeled vs port-1-only-labeled must differ"
+        );
+        assert_ne!(
+            unlabeled_recompute, labeled_both,
+            "both-labeled must differ from all-unlabeled"
+        );
+    }
+
+    /// Supporting test: the helper's predicted `output_is_labeled` matches
+    /// each operator's `Operator::output_is_labeled` for the upstream-labeled
+    /// state observed during the recursion. For an all-unlabeled graph
+    /// using only primitives + `BooleanOp`, the predicted output is `false`
+    /// everywhere — verifies the helper is actually invoking the trait
+    /// method (not always returning a fixed value).
+    #[test]
+    fn effective_hash_and_label_predicts_unlabeled_for_primitive_graph() {
+        let mut g = OperatorGraph::new();
+        let cu = g.add_operator(cuboid_node(1.0, 1.0, 1.0)).expect("cu");
+        let tx = g.add_operator(translate_node(0.0)).expect("tx");
+        g.connect(cu, tx, 0).expect("connect");
+        let mut stack: HashSet<NodeId> = HashSet::new();
+        let (_, output_labeled) = g
+            .effective_hash_and_label(tx, &mut stack)
+            .expect("hash+label");
+        assert!(
+            !output_labeled,
+            "Cuboid → TransformOp pipeline emits unlabeled output (Transform overrides default to false)"
+        );
     }
 
     /// Test 7 — KEY CORRECTNESS TEST: when we change an upstream Cuboid
