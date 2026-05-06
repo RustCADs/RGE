@@ -1,0 +1,29 @@
+name: Format check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fmt:
+    name: cargo +nightly fmt --check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      # rustfmt.toml uses `imports_granularity` and `group_imports` (nightly-only).
+      # We install nightly solely for the fmt step; the regular toolchain is
+      # still 1.92.0 per rust-toolchain.toml for build/test/lint.
+      - name: Install nightly rustfmt
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rustfmt
+
+      - name: Check formatting
+        run: cargo +nightly fmt --all -- --check

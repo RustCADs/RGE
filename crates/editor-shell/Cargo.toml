@@ -1,0 +1,40 @@
+[package]
+name        = "rge-editor-shell"
+description = "editor host (winit + lifecycle + PIE)"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+authors.workspace      = true
+publish                = false
+
+# W03: PIE skeleton. Cross-crate deps (kernel/ecs World+Snapshot, editor-state
+# Selection/ActiveTool, kernel/audit-ledger) are stubbed *locally* inside this
+# crate per W03 dispatch non-interference rule. When their owning crates land
+# (W02/Phase 5 integration), the stubs swap for the real types behind a
+# `#[cfg]` feature; the public API of editor-shell is shaped to make that
+# swap a typedef change rather than a callsite rewrite.
+
+[dependencies]
+winit             = { workspace = true }
+tracing           = { workspace = true }
+serde             = { workspace = true, optional = true }
+ron               = { workspace = true, optional = true }
+rge-editor-state  = { path = "../editor-state" }
+rge-kernel-ecs    = { path = "../../kernel/ecs" }
+ulid              = { workspace = true }
+
+[features]
+default = []
+# Optional `ron`-backed scene fixture loader for the round-trip integration
+# test. Off by default so `cargo check -p rge-editor-shell` does not pull
+# serde transitives into the dep tree of every downstream crate.
+fixture-ron = ["serde", "ron"]
+
+[dev-dependencies]
+serde       = { workspace = true }
+ron         = { workspace = true }
+
+[lints]
+workspace = true

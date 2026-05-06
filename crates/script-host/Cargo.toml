@@ -1,0 +1,43 @@
+[package]
+name        = "rge-script-host"
+description = "ECS bridge for WASM scripts — Phase 3.2 (plugin-fatal)"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+authors.workspace      = true
+publish                = false
+
+[dependencies]
+rge-runtime-wasmtime        = { path = "../runtime-wasmtime" }
+rge-runtime-wasmtime-engine = { path = "../runtime-wasmtime-engine", features = ["engine_wasmtime"] }
+rge-kernel-ecs              = { path = "../../kernel/ecs" }
+rge-kernel-events           = { path = "../../kernel/events" }
+rge-kernel-diagnostics      = { path = "../../kernel/diagnostics" }
+rge-kernel-types            = { path = "../../kernel/types" }
+
+wasmtime  = { workspace = true }
+serde     = { workspace = true }
+thiserror = { workspace = true }
+tracing   = { workspace = true }
+ron       = { workspace = true }
+blake3    = { workspace = true }
+
+[dev-dependencies]
+wat = "1"
+
+# Override workspace lints: relax unsafe_code from "forbid" to "deny" so the
+# ECS/wasmtime call-scope bridge (host_state.rs) may use local #[allow(unsafe_code)]
+# with per-site SAFETY proofs. All other workspace lint levels are preserved.
+[lints.rust]
+unsafe_code         = "deny"
+missing_docs        = "warn"
+unreachable_pub     = "warn"
+let_underscore_drop = "warn"
+
+[lints.clippy]
+all                     = { level = "warn", priority = -1 }
+pedantic                = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+must_use_candidate      = "allow"

@@ -1,0 +1,26 @@
+[package]
+name        = "rge-kernel-types"
+description = "RGE Tier-1 kernel substrate: reflection registry (TypeId, FieldDescriptor, Reflect, UiHint, SchemaVersion)"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+authors.workspace      = true
+publish                = false
+
+[dependencies]
+# Workspace-floor only: no blake3 / no hash crate. The TypeId hash is a
+# hand-rolled FNV-1a-extended 128-bit (see src/type_id.rs) — content
+# stability does not need a cryptographic hash, and skipping `blake3`
+# avoids dragging the workspace's `cpufeatures 0.3.0 / edition2024`
+# bottleneck into the architectural root.
+serde      = { workspace = true }
+ron        = { workspace = true }
+thiserror  = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

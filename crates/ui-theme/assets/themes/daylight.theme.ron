@@ -1,0 +1,39 @@
+// daylight — high-luminance light variant for outdoor / sunlight use.
+// adapted from rustforge::apps::editor-app::egui_overlay on 2026-05-05
+// — extracted ThemeRegistry.
+//
+// Inherits from light-default; pushes containers toward pure white
+// and uses a darker, higher-contrast text colour for readability in
+// strong ambient light. Validated against WCAG AA.
+(
+    name: "daylight",
+    version: 1,
+    extends: Some("light-default"),
+    variants: [],
+    tokens: {
+        "color.background":
+            Color((srgb: (252, 253, 255, 255), linear: (0.96991, 0.97917, 1.0, 1.0))),
+        "color.surface":
+            Color((srgb: (255, 255, 255, 255), linear: (1.0, 1.0, 1.0, 1.0))),
+        "color.panel":
+            Color((srgb: (240, 244, 248, 255), linear: (0.87137, 0.90466, 0.93869, 1.0))),
+
+        "color.foreground":
+            Color((srgb: (12, 16, 24, 255), linear: (0.00227, 0.00388, 0.00866, 1.0))),
+        "color.text.muted":
+            Color((srgb: (72, 80, 88, 255), linear: (0.06480, 0.08171, 0.09989, 1.0))),
+
+        "color.accent":
+            Color((srgb: (10, 70, 150, 255), linear: (0.00227, 0.06070, 0.31070, 1.0))),
+        "color.accent.on":
+            Color((srgb: (255, 255, 255, 255), linear: (1.0, 1.0, 1.0, 1.0))),
+
+        // motion at parent rate; daylight does not redefine.
+    },
+    styles: {
+        "Panel": (slots: {
+            "background": TokenRef("color.panel"),
+            "foreground": TokenRef("color.foreground"),
+        }),
+    },
+)

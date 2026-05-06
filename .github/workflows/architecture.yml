@@ -1,0 +1,39 @@
+name: Architecture lints
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  architecture:
+    name: cargo run -p rge-tool-architecture-lints -- all
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain (per rust-toolchain.toml)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          # rust-toolchain.toml pins 1.92.0 + components; the action honors it.
+          toolchain: stable
+
+      - name: Cache cargo registry + target
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: architecture-lints
+          workspaces: ". -> A:/RustCache/target"
+          # Falls back to default target dir on Linux runners.
+
+      - name: Run all architecture lints
+        # Exits 1 if any lint reports violations, 2 on tooling error.
+        run: cargo run -q -p rge-tool-architecture-lints -- all
+
+      - name: Run lint test suite
+        run: cargo test -p rge-tool-architecture-lints --all-targets

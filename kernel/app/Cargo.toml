@@ -1,0 +1,19 @@
+[package]
+name        = "rge-kernel-app"
+description = "RGE Tier-1 kernel substrate: app"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+authors.workspace      = true
+publish                = false
+
+[dependencies]
+rge-kernel-diagnostics = { path = "../diagnostics" }
+serde                   = { workspace = true }
+
+[dev-dependencies]
+
+[lints]
+workspace = true

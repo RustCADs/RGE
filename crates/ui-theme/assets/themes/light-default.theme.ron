@@ -1,0 +1,113 @@
+// light-default — RGE base light theme.
+// adapted from rustforge::apps::editor-app::egui_overlay on 2026-05-05
+// — extracted ThemeRegistry. Cool off-white containers with a deeper
+// blue accent so AA on accent.on / accent still clears on light bg.
+(
+    name: "light-default",
+    version: 1,
+    extends: None,
+    variants: [],
+    tokens: {
+        // -- colour: containers ------------------------------------
+        "color.background":
+            Color((srgb: (245, 246, 248, 255), linear: (0.91310, 0.92158, 0.93869, 1.0))),
+        "color.surface":
+            Color((srgb: (255, 255, 255, 255), linear: (1.0, 1.0, 1.0, 1.0))),
+        "color.panel":
+            Color((srgb: (236, 238, 242, 255), linear: (0.83879, 0.85499, 0.88789, 1.0))),
+
+        // -- colour: typography ------------------------------------
+        "color.foreground":
+            Color((srgb: (24, 28, 36, 255), linear: (0.00866, 0.01171, 0.01761, 1.0))),
+        "color.text.muted":
+            Color((srgb: (88, 96, 104, 255), linear: (0.09989, 0.11953, 0.13950, 1.0))),
+
+        // -- colour: accent ----------------------------------------
+        "color.accent":
+            Color((srgb: (16, 86, 168, 255), linear: (0.00388, 0.09262, 0.39157, 1.0))),
+        "color.accent.on":
+            Color((srgb: (255, 255, 255, 255), linear: (1.0, 1.0, 1.0, 1.0))),
+
+        // -- colour: status ----------------------------------------
+        "color.success":
+            Color((srgb: (32, 132, 76, 255), linear: (0.01444, 0.22323, 0.07036, 1.0))),
+        "color.warning":
+            Color((srgb: (160, 110, 12, 255), linear: (0.34191, 0.16513, 0.00227, 1.0))),
+        "color.error":
+            Color((srgb: (172, 38, 38, 255), linear: (0.39676, 0.01960, 0.01960, 1.0))),
+
+        // -- length: spacing ---------------------------------------
+        "length.spacing.xs": Length(Px(2.0)),
+        "length.spacing.sm": Length(Px(4.0)),
+        "length.spacing.md": Length(Px(8.0)),
+        "length.spacing.lg": Length(Px(12.0)),
+        "length.spacing.xl": Length(Px(16.0)),
+
+        // -- length: radius ----------------------------------------
+        "length.radius.sm": Length(Px(2.0)),
+        "length.radius.md": Length(Px(4.0)),
+        "length.radius.lg": Length(Px(8.0)),
+
+        // -- font --------------------------------------------------
+        "font.body": Font((
+            family: "Inter",
+            size: Pt(11.0),
+            weight: Regular,
+        )),
+        "font.heading": Font((
+            family: "Inter",
+            size: Pt(14.0),
+            weight: SemiBold,
+        )),
+        "font.mono": Font((
+            family: "JetBrains Mono",
+            size: Pt(11.0),
+            weight: Regular,
+        )),
+
+        // -- padding -----------------------------------------------
+        "padding.button": Padding((
+            top: Px(4.0), right: Px(8.0), bottom: Px(4.0), left: Px(8.0),
+        )),
+
+        // -- shadow ------------------------------------------------
+        "shadow.popup": Shadow((
+            offset_x: 0.0,
+            offset_y: 4.0,
+            blur: 12.0,
+            spread: 0.0,
+            color: (
+                srgb: (16, 24, 40, 32),
+                linear: (0.00388, 0.00866, 0.02125, 0.125),
+            ),
+        )),
+
+        // -- motion ------------------------------------------------
+        "motion.fade.in":     Animation((duration_ms: 180, curve: EaseOut)),
+        "motion.fade.out":    Animation((duration_ms: 120, curve: EaseIn)),
+        "motion.menu.expand": Animation((duration_ms: 140, curve: EaseOut)),
+        "motion.tab.switch":  Animation((duration_ms: 100, curve: Linear)),
+
+        // -- opacity -----------------------------------------------
+        "opacity.disabled": Opacity(0.40),
+        "opacity.hover":    Opacity(0.94),
+    },
+    styles: {
+        "Button": (slots: {
+            "background": TokenRef("color.surface"),
+            "foreground": TokenRef("color.foreground"),
+            "padding":    TokenRef("padding.button"),
+            "radius":     TokenRef("length.radius.md"),
+        }),
+        "Button.Primary": (slots: {
+            "background": TokenRef("color.accent"),
+            "foreground": TokenRef("color.accent.on"),
+            "padding":    TokenRef("padding.button"),
+            "radius":     TokenRef("length.radius.md"),
+        }),
+        "Panel": (slots: {
+            "background": TokenRef("color.panel"),
+            "foreground": TokenRef("color.foreground"),
+        }),
+    },
+)

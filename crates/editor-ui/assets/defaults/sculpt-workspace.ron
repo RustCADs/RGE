@@ -1,0 +1,86 @@
+// Sculpt workspace — large viewport + brush panel + tool settings.
+//
+// Adapted from rustforge::apps::editor-app::ir_bridge on 2026-05-05 — generalized
+// for Workspace.
+(
+    name: "Sculpt",
+    version: "0.2.0",
+    theme: Some("dark"),
+    layout: HSplit(
+        ratio: 0.15,
+        id: Some("root"),
+        left: VSplit(
+            ratio: 0.5,
+            id: Some("left_vsplit"),
+            top: Stack(
+                id: Some("brushes"),
+                tabs: [
+                    "tab/brush_palette",
+                ],
+            ),
+            bottom: Stack(
+                id: Some("brush_settings"),
+                tabs: [
+                    "tab/brush_settings",
+                ],
+            ),
+        ),
+        right: HSplit(
+            ratio: 0.85,
+            id: Some("center_split"),
+            left: Stack(
+                id: Some("viewport"),
+                tabs: [
+                    "tab/viewport",
+                ],
+            ),
+            right: Stack(
+                id: Some("inspector"),
+                tabs: [
+                    "tab/inspector",
+                    "tab/layers",
+                ],
+            ),
+        ),
+    ),
+    main_menu: [
+        (
+            id: "menu.file",
+            label: "File",
+        ),
+        (
+            id: "menu.edit",
+            label: "Edit",
+        ),
+        (
+            id: "menu.sculpt",
+            label: "Sculpt",
+        ),
+        (
+            id: "menu.window",
+            label: "Window",
+        ),
+        (
+            id: "menu.help",
+            label: "Help",
+        ),
+    ],
+    toolbars: [
+        (
+            id: "toolbar.main",
+            position: Top,
+            extension_point: "toolbar.main",
+            visible: true,
+        ),
+        (
+            id: "toolbar.sculpt",
+            position: Left,
+            extension_point: "toolbar.sculpt",
+            visible: true,
+        ),
+    ],
+    shortcuts_overlay: (
+        enabled: true,
+        extension_point: Some("shortcuts.sculpt"),
+    ),
+)

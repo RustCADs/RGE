@@ -1,0 +1,19 @@
+[package]
+name        = "rge-components-networking"
+description = "ECS components: Replicated, NetworkOwner, Authoritative, RemotePeer (markers, stub at v1.0)"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+authors.workspace      = true
+publish                = false
+
+[dependencies]
+serde = { workspace = true }
+
+[dev-dependencies]
+ron = { workspace = true }
+
+[lints]
+workspace = true

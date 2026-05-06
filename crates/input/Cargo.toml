@@ -1,0 +1,25 @@
+[package]
+name        = "rge-input"
+description = "winit + gilrs input fan-in"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+authors.workspace      = true
+publish                = false
+
+# W13: winit + gilrs fan-in. Unified `InputEvent` enum across mouse / keyboard /
+# gamepad / touch / stylus, plus `Input<T>` ECS-resource for "is currently
+# pressed" queries. XR variant reserved for Phase 5+. Per W13 dispatch §
+# non-interference: only this crate is touched; sibling `input-gestures`
+# (touch/stylus gesture recognizer) remains stubbed.
+
+[dependencies]
+winit  = { workspace = true }
+gilrs  = { workspace = true }
+
+[dev-dependencies]
+
+[lints]
+workspace = true

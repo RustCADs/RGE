@@ -1,0 +1,32 @@
+[package]
+name        = "rge-expr-wasm"
+description = "inline-expression compiler"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+authors.workspace      = true
+publish                = false
+
+[dependencies]
+# Workspace deps now (toolchain 1.92, wasmtime 44 — cache feature drop
+# stays at workspace level for windows-sys 0.52 reasons; expr-wasm
+# inherits that already).
+wasmtime     = { workspace = true, features = ["parallel-compilation"] }
+wasm-encoder = { workspace = true }
+thiserror    = { workspace = true }
+
+[dev-dependencies]
+criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
+
+[lints]
+workspace = true
+
+[[bench]]
+name = "eval_speed"
+harness = false
+
+[[bench]]
+name = "compile_speed"
+harness = false

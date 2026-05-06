@@ -1,0 +1,281 @@
+[workspace]
+resolver = "2"
+
+members = [
+    # Tier 1 — Kernel
+    "kernel/app",
+    "kernel/ecs",
+    "kernel/schedule",
+    "kernel/asset",
+    "kernel/asset-view",
+    "kernel/asset-streaming",
+    "kernel/io-scheduler",
+    "kernel/job-system",
+    "kernel/plugin-host",
+    "kernel/diagnostics",
+    "kernel/events",
+    "kernel/types",
+    "kernel/audit-ledger",
+    "kernel/graph-foundation",
+    "kernel/shared",
+
+    # Tier 2 — Reusable types
+    "crates/components-spatial",
+    "crates/components-identity",
+    "crates/components-visibility",
+    "crates/components-lifecycle",
+    "crates/components-interaction",
+    "crates/components-render",
+    "crates/components-physics",
+    "crates/components-animation",
+    "crates/components-audio",
+    "crates/components-networking",
+    "crates/components-editor",
+    "crates/resources",
+    "crates/math",
+    "crates/errors",
+
+    # Tier 2 — Rendering
+    "crates/gfx",
+    "crates/gfx-ir",
+    "crates/brep-render",
+
+    # Tier 2 — CAD core
+    "crates/cad-core",
+    "crates/cad-projection",
+    "crates/cad-native",
+    "crates/cad-occt",
+
+    # Tier 2 — Material
+    "crates/material-graph",
+    "crates/material-runtime",
+    "crates/material-graph-editor",
+
+    # Tier 2 — Animation
+    "crates/anim-clip",
+    "crates/anim-graph",
+    "crates/anim-graph-editor",
+    "crates/anim-ik",
+    "crates/anim-retarget",
+    "crates/anim-events",
+
+    # Tier 2 — Physics / audio / input
+    "crates/physics",
+    "crates/physics-debug",
+    "crates/audio",
+    "crates/input",
+    "crates/input-gestures",
+
+    # Tier 2 — Scripting
+    "crates/runtime-wasmtime",
+    "crates/runtime-wasmtime-engine",
+    "crates/script-host",
+    "crates/script-graph",
+    "crates/script-aot",
+    "crates/expr-wasm",
+    "crates/script-bench",
+
+    # Tier 2 — Editor
+    "crates/editor-shell",
+    "crates/editor-actions",
+    "crates/editor-state",
+    "crates/editor-ui",
+
+    # Tier 2 — UI substrate
+    "crates/ui-theme",
+    "crates/ui-icons",
+    "crates/ui-fonts",
+
+    # Tier 2 — Asset pipeline
+    "crates/asset-store",
+    "crates/asset-pipeline",
+    "crates/pak-format",
+    "crates/rge-data",
+
+    # Tier 2 — Importers / exporters
+    "crates/io-gltf",
+    "crates/io-step",
+    "crates/io-stl",
+    "crates/io-obj",
+    "crates/io-image",
+    "crates/io-audio",
+
+    # Tier 2 — Marketplace
+    "crates/marketplace",
+    "crates/marketplace-server",
+
+    # Tier 2 — Plugin substrate
+    "crates/plugin-discovery",
+    "crates/hot-reload-watcher",
+
+    # Tier 2 — Build / cook / replication
+    "crates/build-pipeline",
+    "crates/replication",
+
+    # Tier 2 — Reflection
+    "crates/macros-reflect",
+
+    # Runtime targets
+    "runtime/runtime-desktop",
+    "runtime/runtime-mobile",
+    "runtime/runtime-web",
+    "runtime/runtime-headless",
+
+    # Editor app
+    "editor/rge-editor",
+
+    # Tools (architecture enforcement + CI) — all binary crates
+    "tools/architecture-lints",
+    "tools/dependency-auditor",
+    "tools/graph-metrics",
+    "tools/invalidation-profiler",
+    "tools/snapshot-debugger",
+    "tools/schema-diff",
+    "tools/wasm-bench",
+    "tools/topology-debugger",
+    # Note: `tools/ci/` is a workflow-definitions folder, NOT a crate (no Cargo.toml).
+]
+
+# Examples and golden-projects are excluded from default workspace builds; opted in per-crate.
+exclude = [
+    "examples",
+    "golden-projects",
+    "third_party",
+]
+
+[workspace.package]
+version      = "0.0.1"
+edition      = "2021"
+rust-version = "1.78"
+license      = "MIT OR Apache-2.0"
+repository   = "https://github.com/halilibrahim/rge"
+authors      = ["RGE contributors"]
+
+[workspace.dependencies]
+# Pinned versions — bump deliberately, never on minor.
+# Last full audit vs crates.io: 2026-05-05. Toolchain pinned at 1.92.0.
+
+# Substrate
+serde       = { version = "1", features = ["derive"] }   # latest 1.0.228 (Sep 2025) MSRV 1.31
+serde_json  = "1"
+ron         = "0.12"                                      # bumped 0.8 → 0.12.1 (Mar 2026)
+postcard    = { version = "1", features = ["alloc"] }     # binary serde format; used by kernel/ecs snapshot payloads
+toml        = "1"                                         # bumped 0.8 → 1.1 (MSRV 1.85, edition2024)
+thiserror   = "2"                                         # bumped 1 → 2.0.18 (rename: From-derive syntax)
+anyhow      = "1"                                         # latest 1.0.102
+tracing     = "0.1"                                       # latest 0.1.44
+tracing-subscriber = "0.3"
+
+# Hashing / IDs
+blake3      = "1.8"                                       # bumped 1.5 → 1.8.5 (cpufeatures 0.3 OK at 1.92 toolchain)
+ulid        = "1"                                         # latest 1.2.1
+
+# Async
+tokio       = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", "time"] }   # latest 1.52.2
+
+# Filesystem / hot-reload
+notify      = "8"                                         # bumped 6 → 8.2.0 (API: ConfigBuilder shape changed)
+
+# Compression
+zstd        = "0.13"                                      # latest 0.13.3
+
+# WASM substrate (activated per W04 — ADR-077 escape clause discipline)
+wasmtime    = { version = "44", default-features = false, features = ["cranelift", "runtime", "std"] }   # bumped 23 → 44.0.1; "cache" feature dropped (broke w/ windows-sys 0.52, see W04/W19 reports)
+wit-bindgen = "0.57"                                      # bumped 0.30 → 0.57.1 (paired with wasmtime 44)
+wasm-encoder = "0.248"                                    # paired with wasmtime 44 / wit-bindgen 0.57 release train
+
+# Graphics
+wgpu        = "29"                                        # bumped 22 → 29.0.3
+naga        = "29"                                        # bumped 22 → 29.0.3 (matches wgpu)
+
+# UI (egui release-train: all four crates pin to the same minor family)
+egui        = "0.34"                                      # bumped 0.27 → 0.34.2
+egui-winit  = "0.34"                                      # matches egui 0.34
+egui-wgpu   = "0.34"                                      # FIXED: was mispinned at 0.31; now 0.34 + wgpu 29
+egui_dock   = "0.19"                                      # bumped 0.12 → 0.19.1 (MSRV 1.92 — toolchain floor)
+cosmic-text = "0.19"                                      # bumped 0.12 → 0.19.0
+
+# Window / input
+winit       = "0.30"                                      # latest stable 0.30.13 (held; 0.31 is beta-only)
+gilrs       = "0.11"                                      # bumped 0.10 → 0.11.1
+
+# Physics / audio
+rapier3d    = "0.32"                                      # bumped 0.22 → 0.32.0
+kira        = "0.12"                                      # bumped 0.9 → 0.12.0
+
+# Asset formats
+gltf        = { version = "1.4", default-features = false }   # latest 1.4.1; default-features off — io-gltf adds "utils" + "names" but never pulls `image` (per §1.6.4 one-importer-per-format rule)
+image       = { version = "0.25", default-features = false }   # was =0.25.6 exact-pin; now 0.25.x (latest 0.25.10; 0.25.7 yanked)
+exr         = "1.74"                                      # bumped 1.73 → 1.74.0
+
+# Diagnostics
+miette      = "7"                                         # latest 7.6.0
+
+# Proc-macro support
+proc-macro2 = "1"
+quote       = "1"
+syn         = { version = "2", features = ["full", "extra-traits"] }   # latest 2.0.117
+
+# Crypto (marketplace signing — Phase 4-Authoring)
+ed25519-dalek = "2.2"                                     # bumped 2 → 2.2.0 (3.0 is pre-release)
+
+# Internal crate references — resolve via workspace
+rge-kernel-app              = { path = "kernel/app" }
+rge-kernel-ecs              = { path = "kernel/ecs" }
+rge-kernel-schedule         = { path = "kernel/schedule" }
+rge-kernel-asset            = { path = "kernel/asset" }
+rge-kernel-asset-view       = { path = "kernel/asset-view" }
+rge-kernel-asset-streaming  = { path = "kernel/asset-streaming" }
+rge-kernel-io-scheduler     = { path = "kernel/io-scheduler" }
+rge-kernel-job-system       = { path = "kernel/job-system" }
+rge-kernel-plugin-host      = { path = "kernel/plugin-host" }
+rge-kernel-diagnostics      = { path = "kernel/diagnostics" }
+rge-kernel-events           = { path = "kernel/events" }
+rge-kernel-types            = { path = "kernel/types" }
+rge-kernel-audit-ledger     = { path = "kernel/audit-ledger" }
+rge-kernel-graph-foundation = { path = "kernel/graph-foundation" }
+rge-kernel-shared           = { path = "kernel/shared" }
+
+[workspace.lints.rust]
+unsafe_code               = "forbid"
+missing_docs              = "warn"
+unreachable_pub           = "warn"
+let_underscore_drop       = "warn"
+
+[workspace.lints.clippy]
+all                  = { level = "warn", priority = -1 }
+pedantic             = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+must_use_candidate   = "allow"
+
+[profile.dev]
+opt-level     = 0
+debug         = true
+incremental   = true
+
+[profile.release]
+opt-level     = 3
+lto           = "thin"
+codegen-units = 1
+strip         = "symbols"
+debug         = false
+
+[profile.bench]
+opt-level     = 3
+lto           = "thin"
+debug         = true
+
+# ---------------------------------------------------------------------------
+# [patch.crates-io] — registry overrides
+# ---------------------------------------------------------------------------
+#
+# `core2` (a transitive dependency of `csgrs 0.20.1` per ADR-112 / Phase 7
+# D-Boolean) had ALL of its versions yanked from crates.io on 2026-04-14 by
+# its maintainer (the crate is deprecated in favor of `core3`). csgrs 0.20.1
+# pre-dates that yank and still pins `core2 = "^0.4"` directly — without an
+# override, `cargo` refuses to resolve the dependency. The patch redirects
+# `core2` to its archived GitHub source at the v0.4.0-content commit so the
+# dependency continues to resolve until csgrs cuts a 0.21.x release that
+# migrates off `core2`. Tracked as a follow-up to ADR-112.
+[patch.crates-io]
+core2 = { git = "https://github.com/bbqsrc/core2.git", rev = "545e84bcb0f235b12e21351e0c69767958efe2a7" }

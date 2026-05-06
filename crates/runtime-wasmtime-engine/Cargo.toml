@@ -1,0 +1,49 @@
+[package]
+name        = "rge-runtime-wasmtime-engine"
+description = "WASM bytecode execution engine — Phase 3 critical path. ACTIVATED at W04: engine_wasmtime is default-on, pulling wasmtime + wat."
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+authors.workspace      = true
+publish                = false
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# Sibling cap-gate crate — consumed unchanged. Both gate paths
+# (compile-time const-generic / runtime grant_check) stay engine-
+# independent.
+rge-runtime-wasmtime = { path = "../runtime-wasmtime" }
+
+# Pulled-in workspace deps.
+serde     = { workspace = true }
+thiserror = { workspace = true }
+tracing   = { workspace = true }
+blake3    = { workspace = true }
+
+# WASM substrate — W04 ACTIVATES these. The `engine_wasmtime` feature
+# below is now default-on, fulfilling the Phase 3 spec ("activate the
+# deferred engine_wasmtime feature flag").
+#
+# Workspace dep used since 2026-05-05 (wasmtime 44, cache feature already
+# off at workspace level for windows-sys 0.52 reasons).
+wasmtime    = { workspace = true, optional = true }
+wit-bindgen = { workspace = true, optional = true }
+
+[dev-dependencies]
+# wat is needed only to compile .wat source to .wasm bytes inside the
+# integration tests; the engine itself only ever sees compiled .wasm.
+wat = "1"
+
+[features]
+# W04 — engine_wasmtime is now ON by default (Phase 3 critical bet).
+default = ["engine_wasmtime"]
+# Pull cranelift's transitive cone (~50 deps). The escape clause in
+# PLAN.md §1.4 means we may revisit if hot-reload p95 misses budget.
+engine_wasmtime = ["dep:wasmtime", "dep:wit-bindgen"]
+
+[lints]
+workspace = true

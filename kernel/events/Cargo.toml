@@ -1,0 +1,20 @@
+[package]
+name        = "rge-kernel-events"
+description = "RGE Tier-1 kernel substrate: events"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+authors.workspace      = true
+publish                = false
+
+[dependencies]
+rge-kernel-diagnostics = { path = "../diagnostics" }
+serde = { workspace = true }
+
+[dev-dependencies]
+rge-kernel-diagnostics = { path = "../diagnostics" }
+
+[lints]
+workspace = true

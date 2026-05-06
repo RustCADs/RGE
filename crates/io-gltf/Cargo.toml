@@ -1,0 +1,28 @@
+[package]
+name        = "rge-io-gltf"
+description = "glTF 2.0 import/export — adapts ECS scene to/from glTF, asset-store-backed mesh/material/animation/skeleton handles."
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+authors.workspace      = true
+publish                = false
+
+[dependencies]
+# gltf 1.4.x: drop the `import` feature deliberately. Architectural
+# reason (per PLAN.md §1.6.4 "one importer per format"): if we enabled
+# default features, gltf would transitively pull `image`, violating the
+# rule that `crates/io-image` is the sole authority for raster formats.
+# We do our own GLB I/O via `Gltf::from_slice` + the BIN blob.
+gltf       = { workspace = true, default-features = false, features = ["utils", "names"] }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+thiserror  = { workspace = true }
+blake3     = { workspace = true }
+
+[dev-dependencies]
+ron = { workspace = true }
+
+[lints]
+workspace = true

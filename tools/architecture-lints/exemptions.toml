@@ -1,0 +1,345 @@
+# Architecture-lint exemptions registry.
+#
+# Each `[[exemption]]` entry suppresses a specific lint against a specific
+# workspace-relative file path. Exemptions live here, in one place, so adding
+# one requires a code-review trail rather than being scattered as inline
+# annotations across the workspace.
+#
+# Adding an exemption is a deliberate architectural decision and SHOULD be
+# accompanied by a follow-up task (see `reason` field). Removing an exemption
+# is encouraged whenever the underlying issue is resolved.
+#
+# Schema:
+#   lint   = "<lint-name>"   # one of the kebab-case lint names emitted by main.rs
+#   file   = "<path>"        # workspace-relative, forward slashes (POSIX-style)
+#   reason = "<why>"         # human-readable justification + follow-up plan
+
+[[exemption]]
+lint = "graph-foundation"
+file = "crates/editor-ui/src/layout/node.rs"
+reason = """
+Layout-tree NodeId is a string-based reconciler ID (PartialEq across hot-reload \
+to match panes whose ids did not change), conceptually distinct from \
+kernel/graph-foundation's graph-substrate NodeId (handle into graph storage). \
+The lint matches by bare name; the underlying PLAN.md §1.14 rule (graph \
+systems must not reinvent NodeId/EdgeId/StableHash primitives) does not apply \
+because the layout reconciler is not a graph system. \
+Follow-up: rename to LayoutNodeId in a future cleanup pass to remove the false \
+positive entirely.\
+"""
+
+# --------------------------------------------------------------------------
+# Phase 1.x rollout debt for the failure-class lint (PLAN §1.13).
+#
+# All 81 Tier-1 + Tier-2 crates currently lack the `//! Failure class: <kind>`
+# declaration in their lib.rs. The lint was introduced 2026-05-05 as part of
+# Phase 0.2 architecture enforcement; the declarations land per crate as each
+# gets its first real implementation per IMPLEMENTATION.md phase order.
+#
+# To clear an exemption: add `//! Failure class: <kind>` (one of recoverable,
+# snapshot-recoverable, plugin-fatal, session-fatal, kernel-fatal) to the
+# crate's `src/lib.rs` doc-comment block, then delete the matching entry
+# below. The lint will start enforcing the rule on that crate immediately.
+# --------------------------------------------------------------------------
+
+[[exemption]]
+lint = "failure-class"
+file = "crates/anim-clip/Cargo.toml"
+reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
+
+[[exemption]]
+lint = "failure-class"
+file = "crates/anim-events/Cargo.toml"
+reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
+
+[[exemption]]
+lint = "failure-class"
+file = "crates/anim-graph/Cargo.toml"
+reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
+
+[[exemption]]
+lint = "failure-class"
+file = "crates/anim-graph-editor/Cargo.toml"
+reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
+
+[[exemption]]
+lint = "failure-class"
+file = "crates/anim-ik/Cargo.toml"
+reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
+
+[[exemption]]
+lint = "failure-class"
+file = "crates/anim-retarget/Cargo.toml"
+reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
+
+[[exemption]]
+lint = "failure-class"
+file = "crates/asset-pipeline/Cargo.toml"
+reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
+
+[[exemption]]
+lint = "failure-class"
+file = "crates/asset-store/Cargo.toml"
+reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
+
+[[exemption]]
+lint = "failure-class"
+file = "crates/audio/Cargo.toml"
+reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
+
+[[exemption]]
+lint = "failure-class"
+file = "crates/brep-render/Cargo.toml"
+reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
+
+[[exemption]]
+lint = "failure-class"
+file = "crates/build-pipeline/Cargo.toml"
+reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
+
+[[exemption]]
+lint = "failure-class"
+file = "crates/cad-native/Cargo.toml"
+reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
+
+[[exemption]]
+lint = "failure-class"
+file = "crates/cad-occt/Cargo.toml"
+reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
+
+[[exemption]]
+lint = "failure-class"
+file = "crates/components-editor/Cargo.toml"
+reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
+
+[[exemption]]
+lint = "failure-class"
+file = "crates/components-interaction/Cargo.toml"
+reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
+
+[[exemption]]
+lint = "failure-class"
+file = "crates/components-lifecycle/Cargo.toml"
+reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
+
+[[exemption]]
+lint = "failure-class"
+file = "crates/components-networking/Cargo.toml"
+reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
+
+[[exemption]]
+lint = "failure-class"
+file = "crates/components-physics/Cargo.toml"
+reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
+
+[[exemption]]
+lint = "failure-class"
+file = "crates/components-spatial/Cargo.toml"
+reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
+
+[[exemption]]
+lint = "failure-class"
+file = "crates/components-visibility/Cargo.toml"
+reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
+
+[[exemption]]
+lint = "failure-class"
+file = "crates/editor-shell/Cargo.toml"
+reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
+
+[[exemption]]
+lint = "failure-class"
+file = "crates/editor-ui/Cargo.toml"
+reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
+
+[[exemption]]
+lint = "failure-class"
+file = "crates/errors/Cargo.toml"
+reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
+
+[[exemption]]
+lint = "failure-class"
+file = "crates/expr-wasm/Cargo.toml"
+reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
+
+[[exemption]]
+lint = "failure-class"
+file = "crates/gfx-ir/Cargo.toml"
+reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
+
+[[exemption]]
+lint = "failure-class"
+file = "crates/hot-reload-watcher/Cargo.toml"
+reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
+
+[[exemption]]
+lint = "failure-class"
+file = "crates/input/Cargo.toml"
+reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
+
+[[exemption]]
+lint = "failure-class"
+file = "crates/input-gestures/Cargo.toml"
+reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
+
+[[exemption]]
+lint = "failure-class"
+file = "crates/io-audio/Cargo.toml"
+reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
+
+[[exemption]]
+lint = "failure-class"
+file = "crates/io-gltf/Cargo.toml"
+reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
+
+[[exemption]]
+lint = "failure-class"
+file = "crates/io-image/Cargo.toml"
+reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
+
+[[exemption]]
+lint = "failure-class"
+file = "crates/io-obj/Cargo.toml"
+reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
+
+[[exemption]]
+lint = "failure-class"
+file = "crates/io-step/Cargo.toml"
+reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
+
+[[exemption]]
+lint = "failure-class"
+file = "crates/io-stl/Cargo.toml"
+reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
+
+[[exemption]]
+lint = "failure-class"
+file = "crates/macros-reflect/Cargo.toml"
+reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
+
+[[exemption]]
+lint = "failure-class"
+file = "crates/marketplace/Cargo.toml"
+reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
+
+[[exemption]]
+lint = "failure-class"
+file = "crates/marketplace-server/Cargo.toml"
+reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
+
+[[exemption]]
+lint = "failure-class"
+file = "crates/material-graph/Cargo.toml"
+reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
+
+[[exemption]]
+lint = "failure-class"
+file = "crates/material-graph-editor/Cargo.toml"
+reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
+
+[[exemption]]
+lint = "failure-class"
+file = "crates/material-runtime/Cargo.toml"
+reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
+
+[[exemption]]
+lint = "failure-class"
+file = "crates/math/Cargo.toml"
+reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
+
+[[exemption]]
+lint = "failure-class"
+file = "crates/pak-format/Cargo.toml"
+reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
+
+[[exemption]]
+lint = "failure-class"
+file = "crates/physics/Cargo.toml"
+reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
+
+[[exemption]]
+lint = "failure-class"
+file = "crates/physics-debug/Cargo.toml"
+reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
+
+[[exemption]]
+lint = "failure-class"
+file = "crates/plugin-discovery/Cargo.toml"
+reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
+
+[[exemption]]
+lint = "failure-class"
+file = "crates/replication/Cargo.toml"
+reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
+
+[[exemption]]
+lint = "failure-class"
+file = "crates/resources/Cargo.toml"
+reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
+
+[[exemption]]
+lint = "failure-class"
+file = "crates/rge-data/Cargo.toml"
+reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
+
+[[exemption]]
+lint = "failure-class"
+file = "crates/runtime-wasmtime/Cargo.toml"
+reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
+
+[[exemption]]
+lint = "failure-class"
+file = "crates/runtime-wasmtime-engine/Cargo.toml"
+reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
+
+[[exemption]]
+lint = "failure-class"
+file = "crates/script-aot/Cargo.toml"
+reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
+
+[[exemption]]
+lint = "failure-class"
+file = "crates/script-bench/Cargo.toml"
+reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
+
+[[exemption]]
+lint = "failure-class"
+file = "crates/script-graph/Cargo.toml"
+reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
+
+[[exemption]]
+lint = "failure-class"
+file = "crates/ui-fonts/Cargo.toml"
+reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
+
+[[exemption]]
+lint = "failure-class"
+file = "crates/ui-icons/Cargo.toml"
+reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
+
+
+[[exemption]]
+lint = "failure-class"
+file = "kernel/asset-streaming/Cargo.toml"
+reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
+
+[[exemption]]
+lint = "failure-class"
+file = "kernel/asset-view/Cargo.toml"
+reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
+
+[[exemption]]
+lint = "failure-class"
+file = "kernel/io-scheduler/Cargo.toml"
+reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
+
+[[exemption]]
+lint = "failure-class"
+file = "kernel/job-system/Cargo.toml"
+reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
+
+[[exemption]]
+lint = "failure-class"
+file = "kernel/shared/Cargo.toml"
+reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
+

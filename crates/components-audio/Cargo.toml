@@ -1,0 +1,20 @@
+[package]
+name        = "rge-components-audio"
+description = "ECS components: AudioSource, AudioListener, AudioFalloff"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+authors.workspace      = true
+publish                = false
+
+[dependencies]
+rge-kernel-asset = { workspace = true }
+serde = { workspace = true }
+
+[dev-dependencies]
+ron = { workspace = true }
+
+[lints]
+workspace = true

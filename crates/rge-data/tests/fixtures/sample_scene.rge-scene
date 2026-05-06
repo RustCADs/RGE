@@ -1,0 +1,35 @@
+Scene(
+    version: "0.1.0",
+    name: "main-menu",
+    entities: [
+        Entity(
+            id: "0000000000000G000000000000",
+            name: "Camera",
+            components: [
+                ComponentValue(
+                    type_id: "rge::components::Transform",
+                    data: "(translation:(0.0,0.0,5.0),rotation:(0.0,0.0,0.0,1.0),scale:(1.0,1.0,1.0))",
+                ),
+            ],
+            relations: [],
+        ),
+        Entity(
+            id: "00000000000010000000000000",
+            name: "ChildLight",
+            components: [
+                ComponentValue(
+                    type_id: "rge::components::Transform",
+                    data: "(translation:(1.0,2.0,3.0),rotation:(0.0,0.0,0.0,1.0),scale:(1.0,1.0,1.0))",
+                ),
+            ],
+            relations: [
+                ChildOf(
+                    parent: "0000000000000G000000000000",
+                ),
+            ],
+        ),
+    ],
+    root_entities: [
+        "0000000000000G000000000000",
+    ],
+)

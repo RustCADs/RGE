@@ -1,0 +1,30 @@
+[package]
+name        = "rge-tool-architecture-lints"
+description = "Architecture enforcement lints (forbidden-dep DAG, line-cap, ownership rules)"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+authors.workspace      = true
+publish                = false
+
+[[bin]]
+name = "rge-tool-architecture-lints"
+path = "src/main.rs"
+
+[dependencies]
+anyhow         = { workspace = true }
+syn            = { workspace = true, features = ["full", "extra-traits", "visit"] }
+proc-macro2    = { workspace = true, features = ["span-locations"] }
+cargo_metadata = "0.18"
+walkdir        = "2"
+clap           = { version = "4", features = ["derive"] }
+toml           = { workspace = true }
+serde          = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

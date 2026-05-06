@@ -1,0 +1,22 @@
+[package]
+name        = "rge-kernel-audit-ledger"
+description = "RGE Tier-1 kernel substrate: audit-ledger"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+authors.workspace      = true
+publish                = false
+
+[dependencies]
+blake3    = { version = "1.8", default-features = false }
+serde     = { workspace = true }
+thiserror = { workspace = true }
+tracing   = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

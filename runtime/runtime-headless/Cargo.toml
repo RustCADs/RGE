@@ -1,0 +1,19 @@
+[package]
+name        = "rge-runtime-headless"
+description = "RGE runtime app: headless cook + dedicated server"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+authors.workspace      = true
+publish                = false
+
+[[bin]]
+name = "rge-runtime-headless"
+path = "src/main.rs"
+
+[dependencies]
+
+[lints]
+workspace = true

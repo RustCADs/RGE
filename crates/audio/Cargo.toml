@@ -1,0 +1,27 @@
+[package]
+name        = "rge-audio"
+description = "Kira wrap"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+authors.workspace      = true
+publish                = false
+
+[dependencies]
+# kira default features include cpal + symphonia (mp3/ogg/flac/wav). In W12
+# we use Kira's `MockBackend` for headless tests, but cpal stays enabled so
+# the production path (W12 schedule + future runtime-desktop wiring) works
+# out of the box.
+kira      = { workspace = true }
+serde     = { workspace = true }
+thiserror = { workspace = true }
+# `mint` is also a kira dep — pin to the same minor here so we can hand
+# Vector3/Quaternion to Kira's spatial API without a re-export hop.
+mint      = "0.5"
+
+[dev-dependencies]
+
+[lints]
+workspace = true

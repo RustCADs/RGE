@@ -1,0 +1,41 @@
+[package]
+name        = "rge-script-bench"
+description = "scripting benchmark suite — harness, native-Rust baseline, output format"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+authors.workspace      = true
+publish                = false
+
+[dependencies]
+serde       = { workspace = true }
+serde_json  = { workspace = true }
+
+[dev-dependencies]
+# v0.0.1: criterion is a local dep until promoted to a workspace pin.
+# Bench harness only — does not flow to downstream crates.
+criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support", "plotters"] }
+
+[lib]
+bench = false
+
+[[bench]]
+name    = "script_tick_1m"
+harness = false
+
+[[bench]]
+name    = "cold_start"
+harness = false
+
+[[bench]]
+name    = "memory_overhead"
+harness = false
+
+[[bench]]
+name    = "hot_reload_swap"
+harness = false
+
+[lints]
+workspace = true

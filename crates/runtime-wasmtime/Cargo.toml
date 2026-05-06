@@ -1,0 +1,32 @@
+[package]
+name        = "rge-runtime-wasmtime"
+description = "wasmtime cap-gate API: effect specifiers, capability tickets, host state, hand-rolled .wasm header validator. Engine-independent — see sibling rge-runtime-wasmtime-engine for actual bytecode execution."
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+authors.workspace      = true
+publish                = false
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+serde     = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing   = { workspace = true }
+# blake3 powers content-addressable plugin_ids and short-form audit-log
+# keys; already a workspace-pinned crate. No new third-party dep.
+blake3    = { workspace = true }
+# NOTE: wasmtime + wit-bindgen workspace slots are intentionally NOT
+# enabled in this crate. The cap-gate API here is engine-independent
+# by design (Path A compile-time gate + Path B runtime gate via the
+# hand-rolled wasm-header validator). The sibling
+# `rge-runtime-wasmtime-engine` enables those slots when actual
+# bytecode execution lights up — see that crate's `engine_wasmtime`
+# feature (default-on as of W04).
+
+[lints]
+workspace = true

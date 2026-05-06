@@ -1,0 +1,24 @@
+[toolchain]
+channel    = "1.92.0"
+components = ["rustfmt", "clippy", "rust-src", "rust-analyzer"]
+targets    = [
+    "x86_64-pc-windows-msvc",
+    "x86_64-unknown-linux-gnu",
+    "aarch64-apple-darwin",
+    "wasm32-unknown-unknown",
+    "wasm32-wasip1",
+]
+profile    = "default"
+
+# Bumped 2026-05-05 from 1.78.0 → 1.92.0 to align with current ecosystem MSRVs.
+# Floor driven by:
+#   - egui_dock 0.19 requires Rust 1.92
+#   - toml 1.1     requires Rust 1.85 (edition2024)
+#   - blake3 1.8.x requires Rust 1.74 (cpufeatures 0.3 transitive — edition2024)
+#   - rapier3d 0.32, wgpu 29, wasmtime 44 all comfortably under 1.92
+#
+# This eliminates the 9+ Cargo.lock pin-downs accumulated during the W01-W20
+# wave dispatch (blake3 1.5.5, uuid 1.10, rangemap 1.5.1, unicode-segmentation 1.12,
+# half/rayon/rayon-core, indexmap 2.7, spade 2.12, wat 1.220, spdx 0.10.8).
+# Per-crate `cargo update --precise` workarounds in those waves should be removed
+# during the integration pass.

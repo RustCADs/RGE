@@ -1,0 +1,19 @@
+[package]
+name        = "rge-tool-graph-metrics"
+description = "Architecture entropy metrics tracker (per PLAN.md §1.10.4)"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+authors.workspace      = true
+publish                = false
+
+[[bin]]
+name = "rge-tool-graph-metrics"
+path = "src/main.rs"
+
+[dependencies]
+
+[lints]
+workspace = true

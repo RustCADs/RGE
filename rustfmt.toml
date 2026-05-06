@@ -1,0 +1,19 @@
+edition           = "2021"
+max_width         = 100
+hard_tabs         = false
+tab_spaces        = 4
+newline_style     = "Unix"
+use_field_init_shorthand = true
+use_try_shorthand = true
+reorder_imports         = true
+reorder_modules         = true
+
+# Nightly-only options. The existing codebase was formatted with these applied
+# (via `cargo +nightly fmt`). Stable rustfmt silently ignores them, so:
+#   - Local: run `cargo +nightly fmt --all` to match the canonical format.
+#   - CI: `.github/workflows/fmt.yml` installs the nightly toolchain solely
+#         for `cargo fmt --check` so the gate matches the canonical format.
+# If we drop nightly fmt as a policy, remove these and run `cargo fmt --all`
+# once to reformat the workspace under stable rules.
+imports_granularity     = "Module"
+group_imports           = "StdExternalCrate"

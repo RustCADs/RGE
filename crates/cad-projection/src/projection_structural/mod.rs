@@ -1,0 +1,412 @@
+//! `cad_projection::projection_structural` — `BRepHandle` ECS component +
+//! `EntityCadMap` bidirectional `EntityId` ↔ `NodeId` mapping.
+//!
+//! Failure class: snapshot-recoverable
+//!
+//! # Purpose
+//!
+//! This module owns the **structural** half of the CAD ↔ ECS bridge: who-is-who.
+//! It does NOT own geometry (that's [`crate::projection_geometry`]) and it does
+//! NOT own caching / dirty tracking (that's [`crate::projection_cache`]).
+//!
+//! Per [PLAN.md §1.5.4.5](../../../plans/PLAN.md), `projection_structural` MUST
+//! NOT import from `projection_runtime` or `projection_editor`. The
+//! `projection-modules` lint enforces this. Importing from
+//! `projection_geometry` and `projection_cache` is permitted.
+//!
+//! # Components
+//!
+//! * [`BRepHandle`] — ECS component carrying a reference to a `cad-core`
+//!   operator-graph node, plus the most recently projected mesh id and the
+//!   checkpoint at which that mesh was projected. Implements
+//!   [`SnapshotComponent`] so PIE snapshots round-trip the mapping.
+//! * [`EntityCadMap`] — owned by [`crate::CadProjection`]; an
+//!   atomic-bidirectional `BTreeMap` (`EntityId` ↔ `NodeId`).
+//! * [`EntityCadMapError`] — duplicate / not-found errors raised by
+//!   [`EntityCadMap`].
+//!
+//! Note: the [`CheckpointTag`] proxy lives in [`crate::projection_geometry`]
+//! because [`crate::projection_geometry::ProjectedMesh`] also needs it; the
+//! two types share the same provenance metadata.
+
+use std::collections::BTreeMap;
+
+use rge_kernel_ecs::{Component, EntityId, SnapshotComponent};
+use rge_kernel_graph_foundation::NodeId;
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
+
+use crate::projection_geometry::{CheckpointTag, ProjectedMeshId};
+
+// ---------------------------------------------------------------------------
+// EntityIdProxy — serialization bridge for EntityId
+// ---------------------------------------------------------------------------
+//
+// `rge-kernel-ecs` does not enable `ulid`'s optional `serde` feature, so
+// `EntityId` itself has no `Serialize` / `Deserialize` impl. We bridge the
+// gap by serialising via the `Ulid` value (which DOES implement serde when
+// the `ulid/serde` feature is enabled in this crate's Cargo.toml).
+
+/// Internal serde-transparent newtype for round-tripping `EntityId` through
+/// its underlying ulid `u128`.
+///
+/// Used by [`EntityCadMap`]'s manual `Serialize`/`Deserialize` impls.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+struct EntityIdProxy(ulid::Ulid);
+
+impl From<EntityId> for EntityIdProxy {
+    fn from(id: EntityId) -> Self {
+        Self(id.ulid())
+    }
+}
+
+impl From<EntityIdProxy> for EntityId {
+    fn from(p: EntityIdProxy) -> Self {
+        EntityId::from_ulid(p.0)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// BRepHandle
+// ---------------------------------------------------------------------------
+
+/// ECS component holding a reference to a `cad-core` operator-graph node.
+///
+/// Carries the most recently projected mesh id and the checkpoint at which
+/// the projection was last performed. Both are `Option` because a freshly
+/// inserted handle has not been projected yet — the next
+/// [`crate::CadProjection::tick`] call fills them in.
+///
+/// `BRepHandle` implements [`SnapshotComponent`] so its identity (the cad
+/// node it points to) round-trips through PIE snapshots. The
+/// `mesh_id` / `last_projected_checkpoint` fields are stable bookkeeping
+/// metadata; they re-derive on the next tick after restore.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BRepHandle {
+    /// The `cad-core` node this entity tracks.
+    pub cad_node: NodeId,
+    /// Most recently projected mesh id, if any.
+    pub mesh_id: Option<ProjectedMeshId>,
+    /// Checkpoint at which `mesh_id` was projected, if any.
+    pub last_projected_checkpoint: Option<CheckpointTag>,
+}
+
+impl BRepHandle {
+    /// Construct a fresh `BRepHandle` pointing at `cad_node`. No mesh has been
+    /// projected yet — the next tick will fill in `mesh_id` and
+    /// `last_projected_checkpoint`.
+    #[must_use]
+    pub fn new(cad_node: NodeId) -> Self {
+        Self {
+            cad_node,
+            mesh_id: None,
+            last_projected_checkpoint: None,
+        }
+    }
+}
+
+impl Component for BRepHandle {}
+impl SnapshotComponent for BRepHandle {}
+
+// ---------------------------------------------------------------------------
+// EntityCadMapError
+// ---------------------------------------------------------------------------
+
+/// Errors raised by [`EntityCadMap`] when its bidirectional invariant would be
+/// violated, or when an entry is not found.
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum EntityCadMapError {
+    /// Caller attempted to insert a mapping whose `entity` already exists in
+    /// the map (currently bound to a different cad node).
+    #[error("EntityCadMap: entity {entity} already mapped to a different node ({existing_node})")]
+    DuplicateEntity {
+        /// The entity that is already present.
+        entity: EntityId,
+        /// The node it is already bound to.
+        existing_node: NodeId,
+    },
+    /// Caller attempted to insert a mapping whose `node` already exists in the
+    /// map (currently bound to a different entity).
+    #[error("EntityCadMap: node {node} already mapped to a different entity ({existing_entity})")]
+    DuplicateNode {
+        /// The node that is already present.
+        node: NodeId,
+        /// The entity it is already bound to.
+        existing_entity: EntityId,
+    },
+    /// Lookup target not present in the map.
+    #[error("EntityCadMap: key not found")]
+    NotFound,
+}
+
+// ---------------------------------------------------------------------------
+// EntityCadMap
+// ---------------------------------------------------------------------------
+
+/// Bidirectional mapping between ECS entity ids and `cad-core` node ids.
+///
+/// Both forward and reverse maps are mutated atomically by [`Self::insert`]:
+/// either both entries land or neither does, returning a [`EntityCadMapError`]
+/// in the duplicate cases. The internal storage is [`BTreeMap`] so iteration
+/// is deterministic — important for snapshot byte-stability.
+///
+/// `Serialize` / `Deserialize` are implemented manually because
+/// `rge_kernel_ecs::EntityId` lacks a serde impl (`ulid/serde` is not enabled
+/// upstream). The wire format is a single `BTreeMap<EntityIdProxy, NodeId>`
+/// — the reverse direction is rebuilt at deserialization time.
+#[derive(Clone, Debug, Default)]
+pub struct EntityCadMap {
+    entity_to_cad: BTreeMap<EntityId, NodeId>,
+    cad_to_entity: BTreeMap<NodeId, EntityId>,
+}
+
+impl Serialize for EntityCadMap {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        let proxied: BTreeMap<EntityIdProxy, NodeId> = self
+            .entity_to_cad
+            .iter()
+            .map(|(e, n)| (EntityIdProxy::from(*e), *n))
+            .collect();
+        proxied.serialize(s)
+    }
+}
+
+impl<'de> Deserialize<'de> for EntityCadMap {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let proxied = BTreeMap::<EntityIdProxy, NodeId>::deserialize(d)?;
+        let mut entity_to_cad: BTreeMap<EntityId, NodeId> = BTreeMap::new();
+        let mut cad_to_entity: BTreeMap<NodeId, EntityId> = BTreeMap::new();
+        for (proxy, node) in proxied {
+            let entity = EntityId::from(proxy);
+            entity_to_cad.insert(entity, node);
+            cad_to_entity.insert(node, entity);
+        }
+        Ok(Self {
+            entity_to_cad,
+            cad_to_entity,
+        })
+    }
+}
+
+impl EntityCadMap {
+    /// Construct an empty map.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Insert an `(entity, node)` pair atomically.
+    ///
+    /// # Errors
+    ///
+    /// * [`EntityCadMapError::DuplicateEntity`] when `entity` is already
+    ///   mapped to some other node.
+    /// * [`EntityCadMapError::DuplicateNode`] when `node` is already mapped
+    ///   to some other entity.
+    ///
+    /// Re-inserting an identical `(entity, node)` pair is a no-op and
+    /// succeeds.
+    pub fn insert(&mut self, entity: EntityId, node: NodeId) -> Result<(), EntityCadMapError> {
+        if let Some(existing_node) = self.entity_to_cad.get(&entity).copied() {
+            if existing_node == node {
+                debug_assert_eq!(self.cad_to_entity.get(&node).copied(), Some(entity));
+                return Ok(());
+            }
+            return Err(EntityCadMapError::DuplicateEntity {
+                entity,
+                existing_node,
+            });
+        }
+        if let Some(existing_entity) = self.cad_to_entity.get(&node).copied() {
+            return Err(EntityCadMapError::DuplicateNode {
+                node,
+                existing_entity,
+            });
+        }
+        self.entity_to_cad.insert(entity, node);
+        self.cad_to_entity.insert(node, entity);
+        Ok(())
+    }
+
+    /// Remove the entry for `entity`, returning its previously-bound node id
+    /// (or `None` if `entity` was not present).
+    pub fn remove_entity(&mut self, entity: EntityId) -> Option<NodeId> {
+        let node = self.entity_to_cad.remove(&entity)?;
+        let removed = self.cad_to_entity.remove(&node);
+        debug_assert_eq!(
+            removed,
+            Some(entity),
+            "EntityCadMap reverse-direction lost sync"
+        );
+        Some(node)
+    }
+
+    /// Remove the entry for `node`, returning its previously-bound entity id
+    /// (or `None` if `node` was not present).
+    pub fn remove_node(&mut self, node: NodeId) -> Option<EntityId> {
+        let entity = self.cad_to_entity.remove(&node)?;
+        let removed = self.entity_to_cad.remove(&entity);
+        debug_assert_eq!(
+            removed,
+            Some(node),
+            "EntityCadMap forward-direction lost sync"
+        );
+        Some(entity)
+    }
+
+    /// Look up the entity bound to `node`, if any.
+    #[must_use]
+    pub fn entity_for(&self, node: NodeId) -> Option<EntityId> {
+        self.cad_to_entity.get(&node).copied()
+    }
+
+    /// Look up the node bound to `entity`, if any.
+    #[must_use]
+    pub fn node_for(&self, entity: EntityId) -> Option<NodeId> {
+        self.entity_to_cad.get(&entity).copied()
+    }
+
+    /// Iterate over all `(entity, node)` pairs, sorted by `EntityId`.
+    pub fn iter(&self) -> impl Iterator<Item = (EntityId, NodeId)> + '_ {
+        self.entity_to_cad.iter().map(|(e, n)| (*e, *n))
+    }
+
+    /// Number of `(entity, node)` pairs.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.entity_to_cad.len()
+    }
+
+    /// Whether the map is empty.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.entity_to_cad.is_empty()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Unit tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn n(raw: u128) -> NodeId {
+        NodeId::from_raw(raw)
+    }
+
+    #[test]
+    fn empty_map_returns_none_both_ways() {
+        let map = EntityCadMap::new();
+        let ent = EntityId::new();
+        assert_eq!(map.entity_for(n(1)), None);
+        assert_eq!(map.node_for(ent), None);
+        assert_eq!(map.len(), 0);
+        assert!(map.is_empty());
+    }
+
+    #[test]
+    fn insert_then_lookup_both_ways() {
+        let mut map = EntityCadMap::new();
+        let e = EntityId::new();
+        let nd = n(0xabcd);
+        map.insert(e, nd).expect("insert");
+        assert_eq!(map.entity_for(nd), Some(e));
+        assert_eq!(map.node_for(e), Some(nd));
+        assert_eq!(map.len(), 1);
+        assert!(!map.is_empty());
+    }
+
+    #[test]
+    fn duplicate_entity_rejected() {
+        let mut map = EntityCadMap::new();
+        let e = EntityId::new();
+        let n1 = n(1);
+        let n2 = n(2);
+        map.insert(e, n1).expect("first");
+        let err = map.insert(e, n2).unwrap_err();
+        assert!(matches!(
+            err,
+            EntityCadMapError::DuplicateEntity { entity, existing_node }
+            if entity == e && existing_node == n1
+        ));
+        // Reverse direction still consistent: n1 maps to e, n2 unmapped.
+        assert_eq!(map.entity_for(n1), Some(e));
+        assert_eq!(map.entity_for(n2), None);
+    }
+
+    #[test]
+    fn duplicate_node_rejected() {
+        let mut map = EntityCadMap::new();
+        let e1 = EntityId::new();
+        let e2 = EntityId::new();
+        let nd = n(7);
+        map.insert(e1, nd).expect("first");
+        let err = map.insert(e2, nd).unwrap_err();
+        assert!(matches!(
+            err,
+            EntityCadMapError::DuplicateNode { node, existing_entity }
+            if node == nd && existing_entity == e1
+        ));
+        // Forward direction still consistent.
+        assert_eq!(map.node_for(e1), Some(nd));
+        assert_eq!(map.node_for(e2), None);
+    }
+
+    #[test]
+    fn remove_entity_clears_both_directions() {
+        let mut map = EntityCadMap::new();
+        let e = EntityId::new();
+        let nd = n(99);
+        map.insert(e, nd).expect("ins");
+        assert_eq!(map.remove_entity(e), Some(nd));
+        assert_eq!(map.node_for(e), None);
+        assert_eq!(map.entity_for(nd), None);
+        assert_eq!(map.remove_entity(e), None, "removing again is None");
+    }
+
+    #[test]
+    fn remove_node_clears_both_directions() {
+        let mut map = EntityCadMap::new();
+        let e = EntityId::new();
+        let nd = n(123);
+        map.insert(e, nd).expect("ins");
+        assert_eq!(map.remove_node(nd), Some(e));
+        assert_eq!(map.node_for(e), None);
+        assert_eq!(map.entity_for(nd), None);
+        assert_eq!(map.remove_node(nd), None, "removing again is None");
+    }
+
+    #[test]
+    fn iter_is_sorted_by_entity_id() {
+        let mut map = EntityCadMap::new();
+        let mut entities: Vec<EntityId> = (0..5).map(|_| EntityId::new()).collect();
+        for (i, e) in entities.iter().enumerate() {
+            #[allow(clippy::cast_possible_truncation)]
+            map.insert(*e, n((i as u128) + 1)).expect("ins");
+        }
+        // Sort our local list by EntityId so we can compare.
+        entities.sort();
+        let collected: Vec<EntityId> = map.iter().map(|(e, _)| e).collect();
+        assert_eq!(collected, entities, "iter must be sorted by EntityId");
+    }
+
+    #[test]
+    fn brep_handle_new_zero_state() {
+        let h = BRepHandle::new(n(42));
+        assert_eq!(h.cad_node, n(42));
+        assert_eq!(h.mesh_id, None);
+        assert_eq!(h.last_projected_checkpoint, None);
+    }
+
+    #[test]
+    fn idempotent_reinsert_is_ok() {
+        let mut map = EntityCadMap::new();
+        let e = EntityId::new();
+        let nd = n(5);
+        map.insert(e, nd).expect("first");
+        map.insert(e, nd).expect("identical re-insert is a no-op");
+        assert_eq!(map.len(), 1);
+    }
+}

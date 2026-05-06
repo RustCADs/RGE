@@ -1,0 +1,87 @@
+// Animation workspace — anim graph editor + timeline below viewport.
+//
+// Adapted from rustforge::apps::editor-app::ir_bridge on 2026-05-05 — generalized
+// for Workspace.
+(
+    name: "Animation",
+    version: "0.2.0",
+    theme: Some("dark"),
+    layout: HSplit(
+        ratio: 0.2,
+        id: Some("root"),
+        left: Stack(
+            id: Some("scene"),
+            tabs: [
+                "tab/scene_outliner",
+            ],
+        ),
+        right: HSplit(
+            ratio: 0.7,
+            id: Some("center_split"),
+            left: VSplit(
+                ratio: 0.6,
+                id: Some("center_vsplit"),
+                top: Stack(
+                    id: Some("viewport"),
+                    tabs: [
+                        "tab/viewport",
+                    ],
+                ),
+                bottom: Stack(
+                    id: Some("timeline"),
+                    tabs: [
+                        "tab/anim_timeline",
+                        "tab/anim_curves",
+                    ],
+                ),
+            ),
+            right: Stack(
+                id: Some("graph"),
+                tabs: [
+                    "tab/anim_graph",
+                    "tab/inspector",
+                ],
+            ),
+        ),
+    ),
+    main_menu: [
+        (
+            id: "menu.file",
+            label: "File",
+        ),
+        (
+            id: "menu.edit",
+            label: "Edit",
+        ),
+        (
+            id: "menu.animation",
+            label: "Animation",
+        ),
+        (
+            id: "menu.window",
+            label: "Window",
+        ),
+        (
+            id: "menu.help",
+            label: "Help",
+        ),
+    ],
+    toolbars: [
+        (
+            id: "toolbar.main",
+            position: Top,
+            extension_point: "toolbar.main",
+            visible: true,
+        ),
+        (
+            id: "toolbar.anim",
+            position: Top,
+            extension_point: "toolbar.animation",
+            visible: true,
+        ),
+    ],
+    shortcuts_overlay: (
+        enabled: true,
+        extension_point: Some("shortcuts.animation"),
+    ),
+)

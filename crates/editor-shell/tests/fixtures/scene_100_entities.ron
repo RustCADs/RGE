@@ -1,0 +1,19 @@
+// Fixture for the W03 PIE round-trip test.
+//
+// 100 entities, each with:
+//   - TickCounter (component_type=1) initialized to entity index
+//   - Position (component_type=2) initialized to (0, 0, 0)
+//
+// The fixture format mirrors what `rge-data` (W14) will eventually emit;
+// for W03 the loader is a tiny RON parser inside the round-trip test so we
+// don't tie the test to a not-yet-shipped scene-loader crate.
+
+(
+    name: "scene_100_entities",
+    entities: 100,
+    components: [
+        // (type_id, blob_size_bytes, init_pattern)
+        (1, 8,  "tick_counter_zeroed"),
+        (2, 12, "position_origin"),
+    ],
+)

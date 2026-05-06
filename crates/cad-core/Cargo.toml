@@ -1,0 +1,45 @@
+[package]
+name        = "rge-cad-core"
+description = "CAD transactional graph core"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+authors.workspace      = true
+publish                = false
+
+[dependencies]
+rge-kernel-ecs              = { path = "../../kernel/ecs" }
+rge-kernel-graph-foundation = { path = "../../kernel/graph-foundation" }
+glam                        = { version = "0.30", features = ["serde"] }
+blake3                      = { workspace = true }
+serde                       = { workspace = true }
+ron                         = { workspace = true }
+thiserror                   = { workspace = true }
+tracing                     = { workspace = true }
+
+# CSG library (per ADR-112). Pure-Rust BSP-tree triangle-mesh CSG.
+# csgrs 0.20.1 has both `f32` and `f64` features but they pull conflicting
+# rapier3d versions: `f32` pulls `rapier3d 0.24` which would conflict with
+# the workspace-pinned `rapier3d 0.32` in `crates/physics`. So we opt in to
+# `f64` (`rapier3d-f64 0.24` is a separate crate, no conflict). The boundary
+# in `boolean.rs::tessellation_to_csgrs` / `csgrs_to_tessellation` performs
+# the f32 → f64 → f32 conversion.
+#
+# Required: at least one of `delaunay` or `earcut`. We pick `earcut` (lighter
+# dep tree than `spade`).
+#
+# All other default features declined: stl-io, dxf-io, obj-io, ply-io,
+# amf-io, chull-io, image-io, metaballs, sdf, offset, delaunay,
+# truetype-text, hershey-text. Per ADR-112 §"csgrs feature flags".
+csgrs                       = { version = "0.20.1", default-features = false, features = ["f64", "earcut"] }
+# nalgebra: csgrs's public API (Mesh / Polygon / Vertex) takes Point3<Real> /
+# Vector3<Real> from nalgebra. We pin to the same version csgrs uses (0.33)
+# so the same nalgebra::Point3 type appears in both surfaces. The boundary
+# layer only sees Point3<f64> + Vector3<f64> — does NOT leak into cad-core's
+# public API (operator graph still uses [f32; 3]).
+nalgebra                    = { version = "0.33", default-features = false, features = ["std"] }
+
+[lints]
+workspace = true

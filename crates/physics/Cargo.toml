@@ -1,0 +1,24 @@
+[package]
+name        = "rge-physics"
+description = "Rapier3D wrap"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+authors.workspace      = true
+publish                = false
+
+[dependencies]
+# Pinned via workspace (`rapier3d = "0.32"`).
+#
+# `enhanced-determinism` enables a deterministic broadphase + solver order
+# that produces the same state on the same architecture across runs
+# ("same-platform replay" per PLAN.md §1.6.8). On rapier 0.32 this feature
+# is not enabled by default and is mutually exclusive with `parallel` and
+# SIMD; determinism is non-negotiable for §1.6.8 so we accept the perf cost.
+rapier3d = { workspace = true, features = ["enhanced-determinism"] }
+serde    = { workspace = true }
+
+[lints]
+workspace = true

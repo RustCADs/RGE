@@ -1,0 +1,31 @@
+[package]
+name        = "rge-editor-ui"
+description = "editor UI subsystem (theme/menus/widgets/layout/dock/workspace)"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+authors.workspace      = true
+publish                = false
+
+[dependencies]
+# Layout submodule (W09): RON workspace files + hot-reload watcher.
+serde     = { workspace = true }
+ron       = { workspace = true }
+thiserror = { workspace = true }
+notify    = { workspace = true }
+blake3    = { workspace = true }
+
+# Dock submodule (W10): egui_dock substrate + JSON persistence fallback.
+egui       = { workspace = true }
+egui_dock  = { workspace = true, features = ["serde"] }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+# Round-trip / migration test fixtures.
+ron      = { workspace = true }
+tempfile = "3"
+
+[lints]
+workspace = true

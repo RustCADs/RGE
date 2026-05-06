@@ -1,0 +1,49 @@
+# Build outputs
+/target/
+**/target/
+*.rlib
+*.rmeta
+
+# One-off cargo command transcripts at workspace root (debugging dumps,
+# not source). Cleanup pass 2026-05-06 removed 4 such files.
+/cargo-*.txt
+/cargo-*.log
+
+# Cargo lockfile is committed at workspace root only
+# (members shouldn't commit their own Cargo.lock)
+**/Cargo.lock
+!/Cargo.lock
+
+# IDE
+/.idea/
+/.vscode/
+*.iml
+.vs/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Profiling / coverage
+/coverage/
+*.profraw
+*.profdata
+flamegraph.svg
+perf.data*
+
+# Logs
+*.log
+
+# Editor user state
+~/.config/rge/
+
+# Cooked artifacts (per-project)
+**/target/cook/
+
+# Vendored third-party (kept in tree explicitly via third_party/)
+# but build artifacts inside vendored copies are ignored
+third_party/**/target/
+
+# Architecture-lints CI artifacts
+/tools/architecture-lints/output/

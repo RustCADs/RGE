@@ -1,0 +1,121 @@
+# RGE — Rust Game Engine
+
+> Architecture frozen at v0.8. **Phases 0.2 / 1 / 2 / 4 / 5 done; Phase 3 substrate done; Phase 6.1 substrate done.** Phase 6 fill-in (PBR-lite, frame-graph, render-snapshot separation, material-runtime, 60fps simple-scene gate) is the active frontier.
+
+## What this is
+
+RGE is a Rust-native game engine + editor with **CAD-native first-class B-Rep**, **deterministic gameplay (Replay-Stable)**, **WASM-scripted authoring**, and a **three-tier kernel + plugin model**.
+
+The moat (per [PLAN.md §0.2](./plans/PLAN.md)):
+
+> **Unified CAD-native deterministic WASM-scripted authoring environment.**
+
+## Status
+
+| Component | State |
+|---|---|
+| Architecture | **Frozen at v0.8** — see [PLAN.md](./plans/PLAN.md) |
+| Workspace skeleton (Phase 0.1) | done — 94 members compile clean |
+| Architecture enforcement (Phase 0.2) | **done** — 9 lints + 3 CI workflows, see [`tools/architecture-lints/`](./tools/architecture-lints) |
+| Wave dispatches (W01–W20) | done — substrate + UI/audio/physics/scripting foundations |
+| Phase 1 — kernel spine | **done** (1.1 types / 1.2 diagnostics / 1.3 events / 1.4 app / 1.5 schedule) |
+| Phase 2 — ECS + Command Bus | **done** (2.1 kernel/ecs / 2.2 editor-actions / 2.3 kernel/audit-ledger; 100k-entity round-trip byte-identical) |
+| Phase 3 substrate — WASM hot-reload | **done** (script-host swap window 0.31ms vs 100ms gate = 320× headroom; formal 1000-entity p95 + 1-hour memory + 100-cycle preservation gates pending) |
+| Phase 4 — Asset & serialization | **done** (4.1 kernel/asset / 4.2 pak-format / 4.3 rge-data; AssetId canonical owner reconciled across 7 consumer crates) |
+| Phase 5 — PIE & editor-state | **done** (5.1 editor-shell migration / 5.2 editor-state / 5.3 PIE refactor on real ECS; 10k-entity snapshot 13.6ms vs 500ms gate = 36× headroom) |
+| Phase 6.1 substrate — gfx wgpu | **done** — wgpu 29 init / headless triangle + colored quad / Vertex+Mesh+Transform UBO / verified pixel-level on real GPU (RTX 4060 Ti / Vulkan) |
+| Phase 6 PBR-lite | **done** — VertexLit (pos+normal+uv) / Camera UBO (view-proj + normal matrix) / DirectionalLight UBO / Material (base-color UBO + Rgba8UnormSrgb texture + sampler) / LitMeshPipeline (Lambert+Phong WGSL) / LitMesh + record_lit_mesh_pass; 18 new tests including pixel-level lit / backlit / checker-texture assertions on real GPU |
+| Phase 6 fill-in | **in progress** — frame-graph, render-snapshot separation (§1.5.2), material-runtime/PSO cache, 60fps simple-scene gate |
+| Phase 7.1 cad-core MVP D-prime | **done** — `OperatorGraph` built on `kernel/graph-foundation::Graph<OperatorNode, EdgeKind>`; 2 operators (CuboidOp, TransformOp) implementing the `Operator` trait (`op_kind`/`structural_hash`/`evaluate`/`arity`); `CadGraph` wrapper with checkpoint API (begin_operation / commit / rollback / restore_to); `TessellationCache` keyed on (recursive structural_hash, Tolerance); 33 tests including end-to-end smoke (Cuboid → Transform → checkpoint → restore_to) |
+| Phase 7.3 cad-projection minimal D-7.3 | **done** — CAD ↔ ECS bridge across 4 of 6 modules per PLAN §1.5.4.5: `projection_structural` (`BRepHandle` ECS component + `EntityCadMap` bidirectional mapping), `projection_geometry` (`ProjectedMesh` + free `project()` fn calling `cad-core` evaluate), `projection_cache` (`ProjectionCache` with dirty-tracking + head-advance detection), top-level `CadProjection` orchestrator + `tick()` + `SnapshotParticipate` impl; 26 tests including PIE round-trip + invalidation-within-one-tick smoke. `projection-modules` lint actively enforces structural↛runtime/editor split. cad-projection promoted PARTIAL → IMPLEMENTED |
+| Phase 7 D-Extrude (first non-trivial operator) | **done** — `Polygon2D` 2D profile type (≥3 finite points + non-degenerate-edge validation; lazy convexity check at evaluate time) + `ExtrudeOp { profile, length }` operator (arity 0; +Z extrusion with fan-triangulated caps + side-wall quads; convexity required, concave rejected with `InvalidParameter`; CW/CCW input both accepted via internal winding correction). 26 new tests including pentagon-prism end-to-end smoke through full CadGraph→evaluate pipeline. Triangle/square/pentagon profile vertex/triangle counts validated (n→2n verts, 4n-4 tris). No external triangulation library |
+| Phase 7 D-Revolve | **done** — `RevolveOp { profile: Polygon2D, segments }` arity 0; full 2π revolution around the Y-axis; reuses `Polygon2D` from D-Extrude; concave profiles ALLOWED (no caps needed for full revolution → no fan-triangulation); validates all `x ≥ 0` (profile lies on +X side of Y-axis); CW/CCW input both accepted; outputs n×segments verts + 2×n×segments tris (no caps; full revolution closes on itself); 19 new tests including square-profile-8-segments integration smoke verifying every output vertex has r² ∈ {1, 4} matching the inner/outer radii of the square cross-section |
+| ADR-112 D-Boolean CSG library scoping | **done** — first ADR landed in workspace at `docs/adr/ADR-112-cad-boolean-csg-library.md` (196 lines); decision: csgrs over parry / truck / roll-our-own; implementation guidance + 7 test fixtures specified inline |
+| Phase 7 D-Boolean | **done** — `BooleanOp { mode: BooleanMode { Union, Intersection, Difference } }` arity 2 backed by `csgrs 0.20.1` (pure-Rust BSP-tree CSG; first cad-core op with Tier-3 dep). Conversion bridge between cad-core `Tessellation` (f32 triangle soup) and `csgrs::Mesh<()>` (f64 polygons via nalgebra Point3/Vector3); right-hand-rule outward normals computed from CCW winding; panic-catch maps csgrs failures → `OpError::InvalidParameter`. 18 new tests: 12 unit (mode dispatch / arity / hash determinism / disjoint-union / overlap-union / disjoint-intersection / overlap-intersection / difference-dent / non-commutativity / near-degenerate / pathological) + 1 OperatorNode dispatch + 3 integration smoke (pipeline_union / pipeline_difference / with_extrude_input) + 2 determinism soak (100 iter × Union/Difference, byte-identical via BLAKE3(positions||indices)). **Capability surface** (per ADR-104): `boolean_robust_under_tolerance: false` (BSP, no exact arithmetic); `deterministic_triangulation: true` (200-iter soak PASS via BTreeMap-keyed dedup). **Phase 7.4 lineage hook (ADR-112 30-min spike)**: csgrs preserves per-polygon metadata through Union/Intersection (clone in plane splits + clip_polygons); Difference retags rhs metadata as lhs's (csgrs quirk; lineage reconstruction must account for it) |
+| Phase 7 D-Partial-Revolve | **done** — extends `RevolveOp` with `pub angle: f32` field + new `partial(profile, segments, angle)` constructor; existing `new(profile, segments)` delegates to `partial(p, segs, 2π)` for backwards compat. Validates `angle ∈ (0, 2π]` finite; clamps near-2π (within 1e-5) to exactly 2π for full-revolution fast-path. Algorithm split: full-revolution path unchanged (no caps; concave allowed); partial-revolution path emits `n*(segments+1)` verts (no ring wrap) + `2*n*segments` side-wall tris + `2*(n-2)` cap tris (start cap fan-triangulated with -Z normal at θ=0; end cap with +tangent normal at θ=angle). **Convexity required for partial-revolution** (caps need fan-triangulation); full-revolution keeps the concave allowance. structural_hash now includes the `angle.to_le_bytes()` (breaking change vs pre-D-Partial-Revolve hashes — cached tessellations recompute on first eval). 20 new tests including pi-radian + half-pi integration smoke + a partial-revolve-through-Boolean pipeline smoke. cad-core 96 → 116 |
+| `CadGraph::SnapshotParticipate` (post-2026-05-07-audit CRITICAL #1) | **done** — closes the silent PIE inconsistency window (Pairing-4 of the deep audit) and PLAN §13.2 gate "all stateful Tier-2 has SnapshotParticipate". `impl SnapshotParticipate for CadGraph` lands in new `crates/cad-core/src/checkpoints/participate.rs` (414L); ParticipantId `cad-core.cad-graph`; serialization via RON (postcard rejected `OperatorNode`'s `#[serde(tag = "kind")]` — non-self-describing format limitation, documented). `Serialize+Deserialize` derives added to CheckpointId / Checkpoint / InProgress / CheckpointHistory / CadGraph / OperatorGraph. New `CadProjection::validate_handles(&self, &CadGraph) -> Vec<(EntityId, NodeId)>` returns orphan handles after divergent-state restore (caller decides recovery: log diagnostic / re-project / error). 9 new tests including PIE full round-trip with both cad + projection participants + divergent-state orphan-detection smoke verifying `tick(&empty_cad)` returns `ProjectionError::NodeNotInGraph` (not panic). New cad-core dep: `rge-kernel-ecs` (Tier-2 → Tier-1, allowed per forbidden-dep) |
+| `PluginContext` v1 + `CadProjectionPlugin` canary (post-audit CRITICAL #2) | **done** — closes Pairing-3 of the 2026-05-07 deep audit. `kernel/plugin-host::PluginContext` extended with type-erased resource registry (`BTreeMap<TypeId, Box<dyn Any + Send>>`) supporting `insert<T>` / `get_mut<T>` / `take<T>` / `contains<T>` / `with_resource<T>` builder. Existing v0 API (`new` / `emit_diagnostic` / `diagnostics`) bit-identical — no breaking changes. **No unsafe code** (owned-resources-handoff design avoids the lifetime-tracking unsafe normally needed for type-erased borrowed references). New `crates/cad-projection/src/plugin_adapter.rs` (~190L) defines `CadProjectionPlugin` (the first real Tier-2 plugin canary): `Plugin::tick` extracts `&mut World`, `&CadGraph`, `Tolerance` via `ctx.take<T>()`, drives `CadProjection::tick`, puts resources back via `ctx.insert<T>(value)`. Missing required resources surface as `PluginError::Runtime`; defaulting `Tolerance` to 0.001m. 16 new tests (10 unit in context.rs + 3 unit in plugin_adapter + 3 integration smoke validating end-to-end lifecycle through PluginHost + missing-resource error path + resources-put-back invariant). New cad-projection dep: `rge-kernel-plugin-host` (Tier-2 → Tier-1, allowed per forbidden-dep) |
+| Phase 7.4 D-7.4 topology lineage prototype | **done** — first prototype of the most-novel-system in the architecture per PLAN §1.5.4.3 (ADR-098). New `crates/cad-core/src/topo_lineage/` module split across 4 sub-files (types.rs / plane.rs / infer.rs / mod.rs orchestrator) all under the 1000-line split-exemption cap. Public types `TopologyFaceId(u64)`, `TopologyEvolution { Preserved, Split, Merged, Deleted, Reinterpreted }`, `LineageEdge { from, to, evolution, confidence }`, `LineageGraph`, `LabeledMesh { positions, indices, face_labels }`, `LineageError`. Plane-equation-matching heuristic (private `QuantizedPlane` quantized to ~1e-4 tolerance, sign-canonicalized so opposite normals hash equal) with `label_by_plane(tess, base_id)` grouping triangles by plane and `infer_lineage(input, output, base_id)` classifying preserved/split/deleted/reinterpreted via plane match + triangle-count heuristic. **Hardened against real csgrs degenerate-triangle output**: zero-area slivers from BSP triangulation get a `TopologyFaceId::DEGENERATE = u64::MAX` sentinel rather than erroring (strict-mode error variants remain reachable through the private `QuantizedPlane::from_triangle`). 21 new tests (10 types + 3 plane + 6 infer + 2 integration smoke). Boolean Union smoke verifies ≥1 Reinterpreted edge surfaces; Boolean Difference smoke verifies ≥1 Split/Deleted/Merged edge + preserved_count < 6. cad-core 116 → 137 |
+| `kernel/plugin-host` (closes §10.4 dogfood-rule carry-over) | **done** — Tier-1 kernel now **10 of 15 implemented**. New `Plugin` trait per PLAN §10.4 (Tier-2 + Tier-3 plugins implement the same trait); `PluginContext` exposes `&mut dyn DiagnosticSink` (EventBus/Commands handles deferred until concrete plugins demand); `PluginHost` manages lifecycle (Pending → Initialized → Failed/Active → ShuttingDown → Shutdown); registration order preserved for deterministic init; LIFO shutdown ordering; **plugin-fatal isolation** (one plugin's failure marks it Failed but doesn't block others). 23 new tests including 2 dogfood-smoke integration (single-plugin lifecycle + 3-plugin LIFO). Failure-class declaration `//! Failure class: plugin-fatal` per PLAN §1.13; exemption cleared from registry |
+| D-7.4 csgrs metadata-passthrough integration | **done** — `BooleanOp::evaluate_labeled(&LabeledMesh, &LabeledMesh) -> LabeledMesh` carries `TopologyFaceId` through csgrs's `Mesh<S>` polygon metadata; conversion helpers made generic over `M: Clone + Send + Sync + Debug + 'static`. New `infer_lineage_labeled(input, output)` consumes labeled output for high-confidence per-face lineage classification: same-label count match → Preserved, mismatch → Split (fixes the v0 plane-only false-positive that classified Difference's surviving faces as Merged). Existing `evaluate(&[&Tessellation])` API kept bit-identical (passes `()` metadata); both paths coexist. 11 new tests including labeled-Difference integration smoke validating Split (not Merged) classification |
+| Tests | **1549 / 1549 pass** (`cargo test --workspace --all-targets --no-fail-fast`) across 200 binaries (2 ignored intentionally) |
+
+Live snapshot of work in progress: [`Status.md`](./Status.md). Running history: [`change.log`](./change.log). Perf baselines: [`plans/BASELINE.md`](./plans/BASELINE.md).
+
+## Quickstart
+
+```bash
+# Build the whole workspace
+cargo check --workspace --all-targets
+
+# Run all tests (1549)
+cargo test --workspace --all-targets --no-fail-fast
+
+# Run all 9 architecture lints against the workspace
+cargo run -q -p rge-tool-architecture-lints -- all
+
+# Run a single lint (kebab-case names)
+cargo run -q -p rge-tool-architecture-lints -- forbidden-dep
+```
+
+CI gates live in [`.github/workflows/`](./.github/workflows): `architecture.yml` (9 lints + lint tests), `deny.yml` (cargo-deny supply-chain matrix: advisories / bans / licenses / sources, weekly cron), `fmt.yml` (nightly rustfmt for the nightly-only `imports_granularity`/`group_imports` options).
+
+## Architecture enforcement (Phase 0.2)
+
+Nine lints catch architectural drift before it merges. See [Status.md](./Status.md#current) for the full table with PASS status; quick summary:
+
+| Lint | Source rule | Detects |
+|---|---|---|
+| `forbidden-dep` | PLAN §1.8 | Tier-1↛Tier-2, cad-core stands alone, editor-ui↛physics/audio/input, renderer↛game-domain |
+| `split-exemption` | PLAN §1.3 R3 | `.rs` >1000 lines without `// SPLIT-EXEMPTION:` annotation |
+| `no-utils` | PLAN §1.3 R3 | `utils.rs` / `helpers.rs` filenames |
+| `graph-foundation` | PLAN §1.14 | Reinventing `NodeId` / `EdgeId` / `StableHash` outside `kernel/graph-foundation` |
+| `editor-state-ownership` | PLAN §1.15 | `Selection`/`Hover`/`ActiveTool`/`ModalState`/`DragDrop` outside `crates/editor-state` + coordination-not-authority imports |
+| `command-bus` | PLAN §6.16 | Direct kernel/ecs mutation surface (`Commands` / `EntityMut` / `Mut` / free fns `insert_component` etc.) imported outside `crates/editor-actions` — **active enforcement since Phase 2.1** |
+| `projection-modules` | PLAN §1.6 / §1.8 | `projection_structural` importing `projection_runtime` / `projection_editor` |
+| `kernel-isolation` | PLAN §1.6.4 | Multiple `io-*` crates claiming the same format extension |
+| `failure-class` | PLAN §1.13 | Tier-1+Tier-2 crates lacking `//! Failure class: <kind>` declaration in lib.rs |
+
+Pre-existing legitimate exceptions are tracked in [`tools/architecture-lints/exemptions.toml`](./tools/architecture-lints/exemptions.toml) — each entry names the file, the lint it suppresses, and the follow-up plan to remove it. **One substantive exemption remains** (graph-foundation editor-ui/LayoutNodeId rename TODO) plus 60 failure-class rollout-debt entries (cleared as each crate gets first real implementation per IMPLEMENTATION.md phase order — 21 of 81 cleared so far).
+
+## Core docs (architecture)
+
+All architecture docs live in [`plans/`](./plans):
+
+- [`plans/PLAN.md`](./plans/PLAN.md) — architecture (v0.8, frozen)
+- [`plans/IMPLEMENTATION.md`](./plans/IMPLEMENTATION.md) — phase ordering and de-risking gates
+- [`plans/fileandfolderstructure.md`](./plans/fileandfolderstructure.md) — workspace layout spec
+- [`plans/BASELINE.md`](./plans/BASELINE.md) — perf baselines (W03 stub-PIE / Phase 3.2 script-host swap / Phase 5.3 real-ECS PIE re-baseline / W04 wasmtime cold-start)
+- [`tasks/`](./tasks) — wave dispatch packages (W01–W20)
+- [`versions.md`](./versions.md) — workspace dep table + MSRV
+
+## Workspace layout
+
+Per [`plans/fileandfolderstructure.md`](./plans/fileandfolderstructure.md):
+
+```
+rge/
+├── kernel/              # Tier 1 — constitutional substrate (15 crates; 10 implemented, 5 stub)
+├── crates/              # Tier 2 — privileged systems (65 crates; 32 implemented, 3 partial, 30 stub)
+├── plugins/             # Tier 3 — sandboxed WASM examples
+├── runtime/             # executable app targets (4 crates; all stub)
+├── editor/              # editor host app (1 crate; stub)
+├── golden-projects/     # regression validation
+├── tools/               # architecture enforcement + CI (8 crates; 1 implemented = architecture-lints, 7 stub)
+├── schemas/             # WIT / reflection / validation
+├── docs/                # ADRs + companion docs (ADR-112 landed 2026-05-06; ADR-097/098/101/104 still to be written)
+├── tests/               # cross-workspace integration
+└── third_party/         # vendored deps
+```
+
+94 workspace members total. **46% implemented** by crate count (43 of 94). Tier classification per [PLAN.md §10](./plans/PLAN.md). Live stub-vs-implemented inventory in [Status.md](./Status.md).
+
+## License
+
+MIT OR Apache-2.0 (dual-licensed; see [`LICENSE-MIT`](./LICENSE-MIT) and [`LICENSE-APACHE`](./LICENSE-APACHE)).
+
+## Contributing
+
+Architecture is frozen at v0.8. Adding new first-class subsystems requires the §0.6 freeze-policy gate (4 conditions). See [`PLAN.md` §0.6](./plans/PLAN.md) and the ADR process in [`docs/adr/`](./docs/adr) — ADR-112 (cad-core Boolean CSG library scoping) is the first ADR landed; ADR-097/098/101/104 are referenced from PLAN.md but still to be authored.
+
+Every PR runs the 9 architecture lints + cargo-deny supply-chain matrix + nightly fmt check via GitHub Actions. Lint failures block the merge; new exemptions require code-review sign-off in `exemptions.toml`.

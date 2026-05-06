@@ -1,0 +1,25 @@
+[package]
+name        = "rge-editor-state"
+description = "editor coordination state (selection/hover/tool/modal/drag-drop)"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+authors.workspace      = true
+publish                = false
+
+[dependencies]
+rge-kernel-ecs = { workspace = true }
+serde          = { workspace = true }
+# ulid is re-imported here only to enable its optional `serde` feature for
+# EntityId round-trip serialisation.  The authoritative EntityId definition
+# lives in rge-kernel-ecs; we never construct one from scratch here (tests
+# use EntityId::new() via the kernel crate).
+ulid           = { version = "1", features = ["serde"] }
+
+[dev-dependencies]
+ron = { workspace = true }
+
+[lints]
+workspace = true

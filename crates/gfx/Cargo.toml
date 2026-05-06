@@ -1,0 +1,26 @@
+[package]
+name        = "rge-gfx"
+description = "wgpu substrate: Instance/Adapter/Device/Queue, headless render target, trivial pipeline"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+authors.workspace      = true
+publish                = false
+
+[dependencies]
+wgpu                   = { workspace = true }
+pollster               = "0.4"
+bytemuck               = { version = "1", features = ["derive"] }
+glam                   = { version = "0.30", features = ["bytemuck"] }
+rge-kernel-diagnostics = { path = "../../kernel/diagnostics" }
+serde                  = { workspace = true }
+thiserror              = { workspace = true }
+tracing                = { workspace = true }
+
+[dev-dependencies]
+# No extra dev deps needed; wgpu is already a dependency.
+
+[lints]
+workspace = true

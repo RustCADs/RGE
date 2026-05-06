@@ -1,0 +1,28 @@
+[package]
+name        = "rge-macros-reflect"
+description = "rge::reflect derive proc-macro — emits Reflect impl from #[derive(Reflect)]"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+authors.workspace      = true
+publish                = false
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = { workspace = true }
+quote       = { workspace = true }
+syn         = { workspace = true }
+
+[dev-dependencies]
+rge-kernel-types = { workspace = true }
+serde            = { workspace = true }
+ron              = { workspace = true }
+# trybuild added in a later wave once compile-fail tests are needed; Phase 1.1
+# verifies negative-path errors via in-line `tt-call` assertion strings.
+
+[lints]
+workspace = true

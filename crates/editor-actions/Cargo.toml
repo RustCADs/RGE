@@ -1,0 +1,21 @@
+[package]
+name        = "rge-editor-actions"
+description = "Command Bus + UndoStack — single mediation layer for editor mutations"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+authors.workspace      = true
+publish                = false
+
+[dependencies]
+rge-kernel-ecs          = { path = "../../kernel/ecs" }
+rge-kernel-audit-ledger = { path = "../../kernel/audit-ledger" }
+rge-kernel-diagnostics  = { path = "../../kernel/diagnostics" }
+serde      = { workspace = true }
+thiserror  = { workspace = true }
+tracing    = { workspace = true }
+
+[lints]
+workspace = true

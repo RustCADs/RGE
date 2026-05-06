@@ -1,0 +1,81 @@
+// Code workspace — script editor + inspector + console.
+//
+// Adapted from rustforge::apps::editor-app::ir_bridge on 2026-05-05 — generalized
+// for Workspace.
+(
+    name: "Code",
+    version: "0.2.0",
+    theme: Some("dark"),
+    layout: HSplit(
+        ratio: 0.2,
+        id: Some("root"),
+        left: Stack(
+            id: Some("project"),
+            tabs: [
+                "tab/project_files",
+            ],
+        ),
+        right: HSplit(
+            ratio: 0.75,
+            id: Some("center_split"),
+            left: VSplit(
+                ratio: 0.7,
+                id: Some("editor_vsplit"),
+                top: Stack(
+                    id: Some("editor"),
+                    tabs: [
+                        "tab/script_editor",
+                    ],
+                ),
+                bottom: Stack(
+                    id: Some("console"),
+                    tabs: [
+                        "tab/console",
+                        "tab/problems",
+                    ],
+                ),
+            ),
+            right: Stack(
+                id: Some("inspector"),
+                tabs: [
+                    "tab/inspector",
+                    "tab/script_outline",
+                ],
+            ),
+        ),
+    ),
+    main_menu: [
+        (
+            id: "menu.file",
+            label: "File",
+        ),
+        (
+            id: "menu.edit",
+            label: "Edit",
+        ),
+        (
+            id: "menu.run",
+            label: "Run",
+        ),
+        (
+            id: "menu.window",
+            label: "Window",
+        ),
+        (
+            id: "menu.help",
+            label: "Help",
+        ),
+    ],
+    toolbars: [
+        (
+            id: "toolbar.main",
+            position: Top,
+            extension_point: "toolbar.main",
+            visible: true,
+        ),
+    ],
+    shortcuts_overlay: (
+        enabled: true,
+        extension_point: Some("shortcuts.code"),
+    ),
+)

@@ -1,0 +1,19 @@
+Project(
+    version: "0.1.0",
+    name: "demo",
+    description: "Sample W14 round-trip fixture.",
+    target_tiers: [
+        desktop,
+        headless,
+    ],
+    plugins: [
+        PluginRef(
+            id: "rge/standard-light",
+            version_req: "0.1",
+        ),
+    ],
+    scenes: [
+        "scenes/main-menu.rge-scene",
+        "scenes/level-1.rge-scene",
+    ],
+)

@@ -1,0 +1,28 @@
+[package]
+name        = "rge-ui-icons"
+description = "Tintable SVG icon registry for RGE editor UI"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+authors.workspace      = true
+publish                = false
+
+[dependencies]
+# RON manifest loading
+serde      = { workspace = true }
+ron        = { workspace = true }
+thiserror  = { workspace = true }
+
+# Lightweight 2D rasterizer for SVG path data (no resvg dep — keeps the
+# crate self-contained and offline-buildable; Lucide icons are simple
+# monochrome stroke paths so this is sufficient).
+tiny-skia  = "0.11"
+
+[dev-dependencies]
+# image is workspace-pinned; used here for golden PNG comparison in tests.
+image      = { workspace = true }
+
+[lints]
+workspace = true

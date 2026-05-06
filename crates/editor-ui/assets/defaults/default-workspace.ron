@@ -1,0 +1,70 @@
+// Default workspace — 3-pane scene + viewport + inspector.
+//
+// Adapted from rustforge::apps::editor-app::ir_bridge on 2026-05-05 — generalized
+// for Workspace. RON conventions match rustforge's `triangle.*.ron` defaults:
+// trailing commas, decimal floats, struct names omitted.
+//
+// Wire format: see crates/editor-ui/src/layout/workspace.rs.
+// Round-trip byte-identical RON is a CI gate (W09 exit criteria).
+(
+    name: "Default",
+    version: "0.2.0",
+    theme: Some("dark"),
+    layout: HSplit(
+        ratio: 0.2,
+        id: Some("root"),
+        left: Stack(
+            id: Some("scene"),
+            tabs: [
+                "tab/scene_outliner",
+            ],
+        ),
+        right: HSplit(
+            ratio: 0.75,
+            id: Some("viewport_split"),
+            left: Stack(
+                id: Some("viewport"),
+                tabs: [
+                    "tab/viewport",
+                ],
+            ),
+            right: Stack(
+                id: Some("inspector"),
+                tabs: [
+                    "tab/inspector",
+                    "tab/asset_browser",
+                ],
+            ),
+        ),
+    ),
+    main_menu: [
+        (
+            id: "menu.file",
+            label: "File",
+        ),
+        (
+            id: "menu.edit",
+            label: "Edit",
+        ),
+        (
+            id: "menu.window",
+            label: "Window",
+        ),
+        (
+            id: "menu.help",
+            label: "Help",
+        ),
+    ],
+    toolbars: [
+        (
+            id: "toolbar.main",
+            position: Top,
+            extension_point: "toolbar.main",
+            visible: true,
+        ),
+    ],
+    shortcuts_overlay: (
+        enabled: true,
+        extension_point: Some("shortcuts.default"),
+    ),
+)

@@ -1,0 +1,19 @@
+[package]
+name        = "rge-tool-schema-diff"
+description = "rge-data schema migration verifier"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+authors.workspace      = true
+publish                = false
+
+[[bin]]
+name = "rge-tool-schema-diff"
+path = "src/main.rs"
+
+[dependencies]
+
+[lints]
+workspace = true

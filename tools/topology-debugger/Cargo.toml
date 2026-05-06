@@ -1,0 +1,19 @@
+[package]
+name        = "rge-tool-topology-debugger"
+description = "cad-topo lineage visualizer"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+authors.workspace      = true
+publish                = false
+
+[[bin]]
+name = "rge-tool-topology-debugger"
+path = "src/main.rs"
+
+[dependencies]
+
+[lints]
+workspace = true

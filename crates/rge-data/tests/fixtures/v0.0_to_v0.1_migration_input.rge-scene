@@ -1,0 +1,5 @@
+Scene(
+    name: "main-menu-v0",
+    entities: [],
+    root_entities: [],
+)

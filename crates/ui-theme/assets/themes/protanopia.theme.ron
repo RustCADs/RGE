@@ -1,0 +1,24 @@
+// protanopia — colour-blind axis overlay (red-deficient).
+// adapted from rustforge::apps::editor-app::egui_overlay on 2026-05-05
+// — extracted ThemeRegistry.
+//
+// Replaces tokens that rely on red/green distinction with hues a
+// protanope can discriminate (blue/orange axis). Status colours move
+// toward yellow-orange for warning/error, blue for success.
+(
+    name: "protanopia",
+    version: 1,
+    extends: None,
+    variants: [
+        ColorBlind(Protanopia),
+    ],
+    tokens: {
+        "color.success":
+            Color((srgb: (24, 138, 224, 255), linear: (0.00729, 0.24620, 0.74435, 1.0))),
+        "color.warning":
+            Color((srgb: (236, 156, 24, 255), linear: (0.83879, 0.32547, 0.00729, 1.0))),
+        "color.error":
+            Color((srgb: (220, 96, 16, 255), linear: (0.69538, 0.10702, 0.00388, 1.0))),
+    },
+    styles: {},
+)

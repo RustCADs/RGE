@@ -1,0 +1,45 @@
+// high-contrast — accessibility overlay activated by the
+// `Accessibility::HighContrast` variant tag.
+// adapted from rustforge::apps::editor-app::egui_overlay on 2026-05-05
+// — extracted ThemeRegistry.
+//
+// This is *not* a base theme: `extends` is None and `variants:` lists
+// the tag(s) that must all be present in the user's `VariantStack`
+// for this overlay to merge in. Tokens here are written conservatively
+// so they layer cleanly over either a dark or light base.
+(
+    name: "high-contrast",
+    version: 1,
+    extends: None,
+    variants: [
+        Accessibility(HighContrast),
+    ],
+    tokens: {
+        // Pure black/white text contrast on every container, plus a
+        // saturated yellow accent that hits AA on both dark and light
+        // backgrounds (yellow has high luminance).
+        "color.foreground":
+            Color((srgb: (255, 255, 255, 255), linear: (1.0, 1.0, 1.0, 1.0))),
+        "color.text.muted":
+            Color((srgb: (220, 220, 220, 255), linear: (0.69538, 0.69538, 0.69538, 1.0))),
+
+        "color.accent":
+            Color((srgb: (255, 224, 0, 255), linear: (1.0, 0.74435, 0.0, 1.0))),
+        "color.accent.on":
+            Color((srgb: (0, 0, 0, 255), linear: (0.0, 0.0, 0.0, 1.0))),
+
+        // Disable shadow blurs in high contrast — they reduce edge
+        // definition.
+        "shadow.popup": Shadow((
+            offset_x: 0.0, offset_y: 0.0, blur: 0.0, spread: 0.0,
+            color: (
+                srgb: (0, 0, 0, 0),
+                linear: (0.0, 0.0, 0.0, 0.0),
+            ),
+        )),
+
+        // Disabled controls keep more contrast.
+        "opacity.disabled": Opacity(0.55),
+    },
+    styles: {},
+)

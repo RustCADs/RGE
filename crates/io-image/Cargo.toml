@@ -1,0 +1,20 @@
+[package]
+name        = "rge-io-image"
+description = "PNG/JPEG/EXR/HDR via image + exr"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+authors.workspace      = true
+publish                = false
+
+[dependencies]
+image     = { workspace = true, features = ["png", "jpeg", "hdr"] }
+exr       = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+
+[lints]
+workspace = true

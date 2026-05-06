@@ -1,0 +1,31 @@
+Prefab(
+    version: "0.1.0",
+    name: "EnemyArcher",
+    parameters: [
+        ParamSpec(
+            name: "max_health",
+            ty: "f32",
+            default: "100.0",
+        ),
+    ],
+    entities: [
+        Entity(
+            id: "00000000000110000000000000",
+            name: "Body",
+            components: [
+                ComponentValue(
+                    type_id: "rge::components::Transform",
+                    data: "(translation:(0.0,0.0,0.0),rotation:(0.0,0.0,0.0,1.0),scale:(1.0,1.0,1.0))",
+                ),
+            ],
+            relations: [],
+        ),
+    ],
+    exposed_overrides: [
+        ExposedOverride(
+            entity: "00000000000110000000000000",
+            component_type: "rge::components::Transform",
+            field_path: "translation",
+        ),
+    ],
+)

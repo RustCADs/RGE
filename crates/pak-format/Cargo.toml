@@ -1,0 +1,62 @@
+[package]
+name        = "rge-pak-format"
+description = ".rge-pak binary format — header, sorted index, zstd-compressed blobs, mmap reader, deterministic writer."
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+authors.workspace      = true
+publish                = false
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# Endian-correct binary I/O for a fixed-layout file format.
+# Per W15 spec the header + index are firmware-style fixed records,
+# so we hand-roll with `byteorder` rather than reaching for a
+# generic codec (matches rustforge::manufacturing-format-ctb prior
+# art — see steal-and-adapt note in `header.rs`).
+byteorder = "1.5"
+
+# zstd-compress each blob; sort by AssetId; deterministic output.
+zstd = { workspace = true }
+
+# AssetId canonical owner (Phase 4.1).
+rge-kernel-asset = { workspace = true }
+
+# mmap'd reader. Lazy decompression on lookup.
+memmap2 = "0.9"
+
+# Phase 5 marketplace integrity stub (§1.6.4 trailing optional Ed25519 signature).
+# Toolchain bumped to 1.92 (2026-05-05); workspace ed25519-dalek = 2.2 OK.
+# `default-features = false` retained: only need raw 64-byte signature surface
+# at v0.0.1; key-encoding (PKCS#8) decisions belong to Phase 5.
+ed25519-dalek = { workspace = true }
+
+# Error plumbing.
+thiserror = { workspace = true }
+
+# cpufeatures + base64ct transitive pins removed (toolchain 1.92 supports edition2024).
+
+[dev-dependencies]
+# Round-trip and determinism-gate tests use tempfile for on-disk
+# byte-comparison.
+tempfile = "3"
+
+[lints.rust]
+# Inherit workspace bans EXCEPT relax `unsafe_code` to `deny`, so the
+# single `memmap2::Mmap::map` call in `reader.rs` is permissible
+# behind a documented `#[allow(unsafe_code)]`. See lib.rs preamble.
+# Bans below mirror the workspace `[lints.rust]` block in root Cargo.toml.
+unsafe_code         = "deny"
+missing_docs        = "warn"
+unreachable_pub     = "warn"
+let_underscore_drop = "warn"
+
+[lints.clippy]
+all                     = { level = "warn", priority = -1 }
+pedantic                = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+must_use_candidate      = "allow"

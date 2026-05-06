@@ -1,0 +1,26 @@
+// reduced-transparency — accessibility overlay.
+// adapted from rustforge::apps::editor-app::egui_overlay on 2026-05-05
+// — extracted ThemeRegistry.
+//
+// Forces full alpha on all colour tokens that could otherwise be
+// drawn translucent (popup shadows, hover overlays, etc.). The
+// registry post-processes alpha bumps for tokens not enumerated here.
+(
+    name: "reduced-transparency",
+    version: 1,
+    extends: None,
+    variants: [
+        Accessibility(ReducedTransparency),
+    ],
+    tokens: {
+        "shadow.popup": Shadow((
+            offset_x: 0.0, offset_y: 2.0, blur: 0.0, spread: 1.0,
+            color: (
+                srgb: (0, 0, 0, 255),
+                linear: (0.0, 0.0, 0.0, 1.0),
+            ),
+        )),
+        "opacity.hover": Opacity(1.0),
+    },
+    styles: {},
+)

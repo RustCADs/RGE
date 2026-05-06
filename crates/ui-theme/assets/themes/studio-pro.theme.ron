@@ -1,0 +1,45 @@
+// studio-pro — opinionated dark variant for long-session authoring.
+// adapted from rustforge::apps::editor-app::egui_overlay on 2026-05-05
+// — extracted ThemeRegistry.
+//
+// Inherits from dark-default; overrides container colours toward a
+// slightly warmer near-black plus a saturated amber accent. Validated
+// to pass WCAG AA on the same critical pairs as the parent.
+(
+    name: "studio-pro",
+    version: 1,
+    extends: Some("dark-default"),
+    variants: [],
+    tokens: {
+        "color.background":
+            Color((srgb: (18, 18, 22, 255), linear: (0.00481, 0.00481, 0.00674, 1.0))),
+        "color.surface":
+            Color((srgb: (28, 28, 32, 255), linear: (0.01134, 0.01134, 0.01444, 1.0))),
+        "color.panel":
+            Color((srgb: (22, 22, 26, 255), linear: (0.00729, 0.00729, 0.00930, 1.0))),
+
+        "color.foreground":
+            Color((srgb: (236, 232, 222, 255), linear: (0.83879, 0.81029, 0.74435, 1.0))),
+        "color.text.muted":
+            Color((srgb: (160, 156, 144, 255), linear: (0.34191, 0.32547, 0.27049, 1.0))),
+
+        "color.accent":
+            Color((srgb: (200, 136, 32, 255), linear: (0.55834, 0.24228, 0.01444, 1.0))),
+        "color.accent.on":
+            Color((srgb: (16, 12, 4, 255), linear: (0.00388, 0.00227, 0.00033, 1.0))),
+
+        // motion sized down a touch — studio-pro is a "stay in flow" theme.
+        "motion.fade.in":     Animation((duration_ms: 140, curve: EaseOut)),
+        "motion.fade.out":    Animation((duration_ms: 100, curve: EaseIn)),
+        "motion.menu.expand": Animation((duration_ms: 120, curve: EaseOut)),
+        "motion.tab.switch":  Animation((duration_ms: 80,  curve: Linear)),
+    },
+    styles: {
+        "Button.Primary": (slots: {
+            "background": TokenRef("color.accent"),
+            "foreground": TokenRef("color.accent.on"),
+            "padding":    TokenRef("padding.button"),
+            "radius":     TokenRef("length.radius.md"),
+        }),
+    },
+)

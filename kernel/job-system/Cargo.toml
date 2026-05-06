@@ -1,0 +1,15 @@
+[package]
+name        = "rge-kernel-job-system"
+description = "RGE Tier-1 kernel substrate: job-system"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+authors.workspace      = true
+publish                = false
+
+[dependencies]
+
+[lints]
+workspace = true

@@ -1,0 +1,29 @@
+[package]
+name        = "rge-cad-projection"
+description = "CAD-to-ECS view layer"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+authors.workspace      = true
+publish                = false
+
+[dependencies]
+rge-cad-core                = { path = "../cad-core" }
+rge-kernel-ecs              = { path = "../../kernel/ecs" }
+rge-kernel-graph-foundation = { path = "../../kernel/graph-foundation" }
+rge-kernel-diagnostics      = { path = "../../kernel/diagnostics" }
+rge-kernel-plugin-host      = { path = "../../kernel/plugin-host" }
+serde                       = { workspace = true }
+postcard                    = { workspace = true }
+ron                         = { workspace = true }
+thiserror                   = { workspace = true }
+tracing                     = { workspace = true }
+# ulid is re-imported here to enable its optional `serde` feature for
+# EntityId round-trip serialisation in the SnapshotParticipate payload.
+# The authoritative EntityId definition lives in rge-kernel-ecs.
+ulid                        = { version = "1", features = ["serde"] }
+
+[lints]
+workspace = true

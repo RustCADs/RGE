@@ -1,0 +1,15 @@
+[package]
+name        = "rge-kernel-asset-streaming"
+description = "RGE Tier-1 kernel substrate: asset-streaming"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+authors.workspace      = true
+publish                = false
+
+[dependencies]
+
+[lints]
+workspace = true
