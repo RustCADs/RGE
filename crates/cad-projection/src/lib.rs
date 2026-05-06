@@ -148,8 +148,9 @@ impl CadProjection {
 
     /// Verify every [`EntityCadMap`] entry's [`NodeId`] is present in the
     /// supplied cad-graph. Returns orphan `(entity, node)` pairs that no
-    /// longer resolve. An empty `Vec` means every projection-side handle
-    /// references a live cad-graph node.
+    /// longer resolve. An empty `Vec` means every entry in the projection's
+    /// single source of truth (the [`EntityCadMap`]) references a live
+    /// cad-graph node.
     ///
     /// **Convention**: callers SHOULD invoke this after restoring a
     /// [`CadProjection`] from PIE, with the cad-graph that was restored
@@ -163,8 +164,11 @@ impl CadProjection {
     /// Symmetric counterpart of `cad-core`'s
     /// [`SnapshotParticipate`][rge_cad_core::CadGraph] impl — this method
     /// is the post-restore handle-validation guard that closes the
-    /// silent-inconsistency window where `BRepHandle.cad_node` references
-    /// would orphan after divergent restore.
+    /// silent-inconsistency window where the projection's cad-node
+    /// references could orphan after divergent restore. Post-2026-05-08
+    /// (`BRepHandle` `SSoT` refactor / Pairing-6 closure), the orphan check
+    /// reads from the [`EntityCadMap`], which is now the only place the
+    /// cad-node FK is stored.
     #[must_use]
     pub fn validate_handles(&self, cad: &CadGraph) -> Vec<(EntityId, NodeId)> {
         let mut orphans = Vec::new();
@@ -176,9 +180,73 @@ impl CadProjection {
         orphans
     }
 
-    /// Spawn a new ECS entity carrying a `BRepHandle` pointing at `node`,
-    /// register the bidirectional mapping, and mark the new entity dirty so
-    /// the next [`tick`](Self::tick) projects its mesh.
+    /// Remap an existing entity to a different cad-node.
+    ///
+    /// Used when a committed cad-graph mutation re-creates a node (for
+    /// example, a parameter change produces a new content-derived [`NodeId`]).
+    /// The function atomically updates the entity's binding in the
+    /// [`EntityCadMap`] to `new_node`, then marks the entity dirty so the
+    /// next [`Self::tick`] re-projects it.
+    ///
+    /// Pre-validates that `new_node` is unbound (or already bound to
+    /// `entity`) so the map is never partially mutated on error.
+    ///
+    /// # Errors
+    ///
+    /// * [`EntityCadMapError::NotFound`] if `entity` was not registered in
+    ///   the projection.
+    /// * [`EntityCadMapError::DuplicateNode`] if `new_node` is already bound
+    ///   to a different entity. The map is unchanged on this error.
+    pub fn remap_entity(
+        &mut self,
+        entity: EntityId,
+        new_node: NodeId,
+    ) -> Result<(), EntityCadMapError> {
+        // Pre-validate the entity is registered. Bail without mutating.
+        if self.entity_cad_map.node_for(entity).is_none() {
+            return Err(EntityCadMapError::NotFound);
+        }
+        // Pre-validate `new_node` is either unbound or already bound to
+        // `entity` (which makes this remap a no-op). Bail without mutating
+        // when it's bound to some OTHER entity.
+        if let Some(existing_entity) = self.entity_cad_map.entity_for(new_node) {
+            if existing_entity != entity {
+                return Err(EntityCadMapError::DuplicateNode {
+                    node: new_node,
+                    existing_entity,
+                });
+            }
+            // Same entity already bound to new_node — no-op except marking
+            // dirty so the caller's expectation of "tick will re-project"
+            // still holds.
+            self.cache.mark_dirty(entity);
+            return Ok(());
+        }
+        // Pre-checks passed. The two-step swap is now infallible.
+        let removed = self.entity_cad_map.remove_entity(entity);
+        debug_assert!(
+            removed.is_some(),
+            "pre-validated entity must still be registered",
+        );
+        // Both the forward slot for `entity` (just removed) and the reverse
+        // slot for `new_node` (pre-validated as empty) are vacant; insert
+        // cannot fail.
+        let insert_result = self.entity_cad_map.insert(entity, new_node);
+        debug_assert!(
+            insert_result.is_ok(),
+            "post-validation insert is invariantly successful",
+        );
+        let _ = insert_result;
+        // Mark dirty so the next tick re-projects the entity at its new node.
+        self.cache.mark_dirty(entity);
+        Ok(())
+    }
+
+    /// Spawn a new ECS entity carrying a fresh [`BRepHandle`], register the
+    /// `(entity, node)` binding in the [`EntityCadMap`] (the single source of
+    /// truth for the cad-node FK post-2026-05-08 `SSoT` refactor), and mark
+    /// the new entity dirty so the next [`tick`](Self::tick) projects its
+    /// mesh.
     ///
     /// # Errors
     ///
@@ -190,7 +258,11 @@ impl CadProjection {
         world: &mut World,
         node: NodeId,
     ) -> Result<EntityId, ProjectionError> {
-        let entity = world.spawn_with(BRepHandle::new(node));
+        // Post-2026-05-08 SSoT refactor: the BRepHandle does NOT carry the
+        // cad-node FK any more — that lives exclusively in
+        // `entity_cad_map`. The handle stores only projection bookkeeping
+        // (mesh_id + last_projected_checkpoint).
+        let entity = world.spawn_with(BRepHandle::new());
         match self.entity_cad_map.insert(entity, node) {
             Ok(()) => {
                 self.cache.mark_dirty(entity);
@@ -411,11 +483,12 @@ mod tests {
         // World has the BRepHandle.
         let er = world.entity(entity).expect("entity");
         let handle = er.get::<BRepHandle>().expect("handle");
-        assert_eq!(handle.cad_node, node);
-        // No projection yet (mesh_id == None until tick runs).
+        // Post-2026-05-08 SSoT refactor: the cad-node FK lives only in the
+        // EntityCadMap — the handle does not store it.
         assert_eq!(handle.mesh_id, None);
+        assert_eq!(handle.last_projected_checkpoint, None);
 
-        // Map records both directions.
+        // The single source of truth (EntityCadMap) records both directions.
         assert_eq!(projection.node_for(entity), Some(node));
         assert_eq!(projection.entity_for(node), Some(entity));
     }

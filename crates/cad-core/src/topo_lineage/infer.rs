@@ -5,19 +5,18 @@
 //! Sub-module of [`crate::topo_lineage`]; see that module's `//!` docs for
 //! the design rationale + v0 simplifications vs PLAN §1.5.4.3.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use crate::tessellation::Tessellation;
+use crate::tessellation::{Tessellation, TopologyFaceId};
 use crate::topo_lineage::plane::QuantizedPlane;
-use crate::topo_lineage::types::{
-    LabeledMesh, LineageEdge, LineageError, LineageGraph, TopologyEvolution, TopologyFaceId,
-};
+use crate::topo_lineage::types::{LineageEdge, LineageError, LineageGraph, TopologyEvolution};
 
 // ---------------------------------------------------------------------------
 // label_by_plane
 // ---------------------------------------------------------------------------
 
 /// Label a [`Tessellation`] by grouping its triangles by plane equation.
+/// Returns a new [`Tessellation`] with `face_labels = Some(...)`.
 ///
 /// Each distinct [`QuantizedPlane`] gets a sequential `face_id` starting at
 /// `base_id`. Triangles whose planes hash equally (sign-canonicalized at
@@ -34,6 +33,10 @@ use crate::topo_lineage::types::{
 /// a `base_id` of `0`, `100`, or `1_000_000` etc. is safely below the
 /// sentinel.
 ///
+/// If the input tessellation already carries labels (`tess.is_labeled() ==
+/// true`), they are **discarded and replaced** by plane-derived labels —
+/// the caller asked to relabel by plane, so we relabel by plane.
+///
 /// # Errors
 ///
 /// * [`LineageError::InvalidInput`] if the input tessellation has malformed
@@ -49,7 +52,7 @@ use crate::topo_lineage::types::{
 /// `1_000_000`), so the next id stays well below the sentinel; the
 /// assertion documents the invariant for future callers that pass huge
 /// `base_id` values.
-pub fn label_by_plane(tess: &Tessellation, base_id: u64) -> Result<LabeledMesh, LineageError> {
+pub fn label_by_plane(tess: &Tessellation, base_id: u64) -> Result<Tessellation, LineageError> {
     if tess.indices.len() % 3 != 0 {
         return Err(LineageError::InvalidInput(format!(
             "indices.len() ({}) must be a multiple of 3",
@@ -112,60 +115,101 @@ pub fn label_by_plane(tess: &Tessellation, base_id: u64) -> Result<LabeledMesh, 
         face_labels.push(face_id);
     }
 
-    LabeledMesh::new(tess.positions.clone(), tess.indices.clone(), face_labels)
+    Tessellation::with_labels(tess.positions.clone(), tess.indices.clone(), face_labels).map_err(
+        |e| {
+            LineageError::InvalidInput(format!("label_by_plane produced invalid tessellation: {e}"))
+        },
+    )
 }
 
 // ---------------------------------------------------------------------------
-// infer_lineage
+// infer_lineage (unified)
 // ---------------------------------------------------------------------------
 
-/// Reconstruct lineage between an input [`LabeledMesh`] and an output
-/// [`Tessellation`] via plane-equation matching.
+/// Reconstruct lineage between a labeled input [`Tessellation`] and an
+/// output [`Tessellation`] (which may or may not carry labels).
 ///
-/// # Heuristic
+/// **Input must be labeled.** If `input.is_labeled() == false` this returns
+/// [`LineageError::InvalidInput`]. Callers starting from primitive output
+/// should derive labels via [`label_by_plane`] first.
 ///
-/// 1. Group output triangles by plane (uses [`label_by_plane`] internally
-///    with `output_base_id`).
-/// 2. For each input face (one plane = one `face_id`), find the matching
-///    output plane group:
-///    * Exact plane match + same triangle count → `Preserved` (1.0).
-///    * Exact plane match + fewer output triangles → `Split` (1.0).
-///    * Exact plane match + more output triangles → `Merged` (0.5).
-///    * No plane match → `Deleted` (1.0).
-/// 3. For each output plane group with no input plane match →
-///    `Reinterpreted` (1.0).
+/// # Two paths
 ///
-/// The returned `LabeledMesh` is the labeled output (same as
-/// `label_by_plane(output, output_base_id)`) so the caller can chain through
-/// successive operators.
+/// The function dispatches on `output.is_labeled()`:
+///
+/// * **Labeled output** (high-confidence path, was `infer_lineage_labeled`)
+///   — both sides carry per-triangle labels (typically because a Boolean op
+///   propagated input labels through `csgrs`'s polygon metadata). Per-input-
+///   label triangle-count comparison classifies each input face as
+///   `Preserved` (in == out) or `Split` (in != out). Output labels not
+///   present on the input become `Reinterpreted`. Confidence is 1.0
+///   throughout (metadata directly tracked identity).
+///
+/// * **Unlabeled output** (plane-equation heuristic, was the original
+///   `infer_lineage`) — labels the output via [`label_by_plane`] internally,
+///   then matches input vs output planes. Same plane + same triangle count
+///   → `Preserved` (1.0); same plane + fewer outputs → `Split` (1.0); same
+///   plane + more outputs → `Merged` (0.5); no plane match → `Deleted`
+///   (1.0); output planes with no input match → `Reinterpreted` (1.0).
+///
+/// Both paths return `(labeled_output, lineage_graph)` where the labeled
+/// output is the input's `output` upgraded to labeled form (cloned through
+/// when already labeled, or relabeled by plane when not).
 ///
 /// # Errors
 ///
-/// * [`LineageError::InvalidInput`] if the input or output mesh has
-///   malformed index buffers.
+/// * [`LineageError::InvalidInput`] if the input is unlabeled.
+/// * [`LineageError::InvalidInput`] if either mesh has malformed buffers.
 ///
 /// # Panics
 ///
-/// Panics if the internal book-keeping diverges (every input face that
-/// gets a recorded plane should also have a triangle count, and vice
-/// versa) — these `expect`s are invariants the function maintains, not
-/// recoverable errors. They are also exercised by the unit tests, which
-/// would surface a regression immediately.
+/// Panics if internal book-keeping diverges (every counted face id should
+/// be present in its accompanying count map). Internal invariant — the
+/// `expect`s document the guarantee.
 pub fn infer_lineage(
-    input: &LabeledMesh,
+    input: &Tessellation,
     output: &Tessellation,
     output_base_id: u64,
-) -> Result<(LabeledMesh, LineageGraph), LineageError> {
+) -> Result<(Tessellation, LineageGraph), LineageError> {
+    let input_labels = input.face_labels().ok_or_else(|| {
+        LineageError::InvalidInput(
+            "infer_lineage requires labeled input (call label_by_plane first)".to_string(),
+        )
+    })?;
+
+    if output.is_labeled() {
+        Ok(infer_lineage_with_labeled_output(
+            input,
+            input_labels,
+            output,
+        ))
+    } else {
+        infer_lineage_with_unlabeled_output(input, input_labels, output, output_base_id)
+    }
+}
+
+/// Plane-equation fallback path: output has no labels yet. Build them via
+/// [`label_by_plane`] then run the original triangle-count-vs-plane
+/// heuristic. Returns the freshly-labeled output.
+fn infer_lineage_with_unlabeled_output(
+    input: &Tessellation,
+    input_labels: &[TopologyFaceId],
+    output: &Tessellation,
+    output_base_id: u64,
+) -> Result<(Tessellation, LineageGraph), LineageError> {
     // Group output triangles by plane via label_by_plane. The returned
     // labeled_output's face_labels[i] is the face id of triangle i in
     // output; the iteration order assigns ids in input-traversal order.
     let labeled_output = label_by_plane(output, output_base_id)?;
+    let labeled_output_labels = labeled_output
+        .face_labels()
+        .expect("label_by_plane always returns labeled output");
 
     // For each output face id, recover its plane and triangle count.
     // Skip triangles tagged DEGENERATE — they're not assigned a real face.
     let mut output_plane_for_face: BTreeMap<TopologyFaceId, QuantizedPlane> = BTreeMap::new();
     let mut output_tri_count_per_face: BTreeMap<TopologyFaceId, usize> = BTreeMap::new();
-    for (tri_idx, &face_id) in labeled_output.face_labels.iter().enumerate() {
+    for (tri_idx, &face_id) in labeled_output_labels.iter().enumerate() {
         if face_id.is_degenerate() {
             continue;
         }
@@ -211,7 +255,7 @@ pub fn infer_lineage(
     // non-degenerate face.
     let mut input_plane_for_face: BTreeMap<TopologyFaceId, QuantizedPlane> = BTreeMap::new();
     let mut input_tri_count_per_face: BTreeMap<TopologyFaceId, usize> = BTreeMap::new();
-    for (tri_idx, &face_id) in input.face_labels.iter().enumerate() {
+    for (tri_idx, &face_id) in input_labels.iter().enumerate() {
         if face_id.is_degenerate() {
             continue;
         }
@@ -229,17 +273,17 @@ pub fn infer_lineage(
                 input_plane_for_face.entry(face_id).or_insert(plane);
             }
             Err(LineageError::DegenerateTriangle { .. } | LineageError::NonFiniteNormal { .. }) => {
-                // Caller hand-built a LabeledMesh with a non-degenerate
-                // label on a degenerate triangle — ambiguous. Skip (the
-                // outer `for` loop already advances to the next triangle).
+                // Caller hand-built a labeled tessellation with a
+                // non-degenerate label on a degenerate triangle —
+                // ambiguous. Skip (the outer `for` loop already advances
+                // to the next triangle).
             }
             Err(other) => return Err(other),
         }
     }
 
     let mut graph = LineageGraph::new();
-    let mut output_faces_matched: std::collections::BTreeSet<TopologyFaceId> =
-        std::collections::BTreeSet::new();
+    let mut output_faces_matched: BTreeSet<TopologyFaceId> = BTreeSet::new();
 
     // Walk inputs in deterministic (BTreeMap) order.
     for (&input_face_id, &input_plane) in &input_plane_for_face {
@@ -287,79 +331,41 @@ pub fn infer_lineage(
     Ok((labeled_output, graph))
 }
 
-// ---------------------------------------------------------------------------
-// infer_lineage_labeled (csgrs metadata-passthrough path, v0.5)
-// ---------------------------------------------------------------------------
-
-/// Reconstruct lineage when both input and output carry face labels (i.e.,
-/// the Boolean op was run via [`crate::BooleanOp::evaluate_labeled`] carrying
-/// csgrs `Mesh<TopologyFaceId>` polygon metadata).
-///
-/// This is the **high-confidence** path: per-output-triangle `face_label`
-/// directly maps to its originating input face id, so we don't have to rely
-/// on the plane-equation triangle-count heuristic that misclassifies many
-/// partially-consumed `Boolean::Difference` faces as `Merged` (the v0
-/// false-positive class fixed here).
-///
-/// # Algorithm
+/// High-confidence label-tracking path: output already carries labels (from
+/// e.g. a Boolean op that propagated input labels through `csgrs`'s polygon
+/// metadata).
 ///
 /// For each input face id present in `input.face_labels`:
 /// * If it appears in `output.face_labels`: classify by triangle count:
 ///   * `input_count == output_count` → `Preserved` (confidence 1.0).
-///   * `input_count != output_count` → `Split` (confidence 1.0) — the
-///     input face was either partially consumed (`input>output`) or
-///     retriangulated by csgrs's BSP into more sub-triangles
-///     (`input<output`). Both are semantically "one input face was
-///     split into multiple output pieces" from the label's perspective;
-///     the labeled path classifies them uniformly as Split. **Merged**
-///     in the v0 lineage taxonomy means *multiple input faces collapse
-///     to one output face* — that requires distinct input labels mapping
-///     to a single output label, which the per-input-label scan cannot
-///     observe directly. For v0 we therefore never emit Merged on the
-///     labeled path.
+///   * `input_count != output_count` → `Split` (confidence 1.0). Both
+///     directions ("input partially consumed" — `input>output` — and "input
+///     retriangulated by csgrs's BSP into more sub-triangles" —
+///     `input<output`) classify uniformly as Split. **Merged** in the v0
+///     lineage taxonomy means *multiple input faces collapse to one output
+///     face* — that requires distinct input labels mapping to a single
+///     output label, which the per-input-label scan cannot observe
+///     directly. We therefore never emit Merged on the labeled path.
 /// * Else (label not in output): `Deleted` (confidence 1.0).
 ///
 /// For each output face id NOT in `input.face_labels`: `Reinterpreted`
-/// (confidence 1.0).
-///
-/// # Difference's lhs-retag quirk (per ADR-112)
-///
-/// `Boolean::Difference` retags rhs's clipped polygons with `Mesh::metadata`
-/// (which we pass as `None`). Those polygons therefore arrive at the output
-/// labeled with [`TopologyFaceId::DEGENERATE`] from the
-/// [`crate::operators::boolean`] bridge's unmetadata sentinel. Since
-/// `DEGENERATE` is also distinct from every real input face id, the
-/// inference correctly classifies those as `Reinterpreted` — matching the
-/// user's mental model that those rhs-derived faces are new internal walls
-/// the Difference carved out.
-///
-/// Triangles tagged with [`TopologyFaceId::DEGENERATE`] are excluded from
-/// face counts on both sides, but a DEGENERATE label appearing only on the
-/// output side surfaces as a single Reinterpreted edge (the rhs-derived
-/// faces collectively under Difference).
-///
-/// The `LineageGraph` returned has deterministic edge order (input faces
-/// walked in `BTreeSet` order, then unmatched output faces in `BTreeSet`
-/// order).
-///
-/// # Panics
-///
-/// Panics if the internal book-keeping diverges (every counted input face
-/// id should be present in `input_count_per_face`). This is an internal
-/// invariant maintained inside the function, not a recoverable error;
-/// the `expect` documents the invariant.
-#[must_use]
-pub fn infer_lineage_labeled(input: &LabeledMesh, output: &LabeledMesh) -> LineageGraph {
-    use std::collections::BTreeSet;
+/// (confidence 1.0). Triangles tagged with [`TopologyFaceId::DEGENERATE`]
+/// are excluded from per-face counts; their presence on the **output** side
+/// surfaces as a single `Reinterpreted` edge with `to =
+/// Some(DEGENERATE)` (collectively — these are typically rhs-derived faces
+/// from csgrs's `Difference` lhs-retag quirk, per ADR-112).
+fn infer_lineage_with_labeled_output(
+    _input: &Tessellation,
+    input_labels: &[TopologyFaceId],
+    output: &Tessellation,
+) -> (Tessellation, LineageGraph) {
+    let output_labels = output
+        .face_labels()
+        .expect("infer_lineage_with_labeled_output called with unlabeled output");
 
-    // Count triangles per face id on each side. Degenerate sentinel is
-    // bookkept separately: its presence on the output side records a single
-    // Reinterpreted edge (collectively for all DEGENERATE-tagged output
-    // triangles); its presence on the input side is excluded from any edge
-    // (a degenerate input is not a face we ever expect to track).
     let mut input_count_per_face: BTreeMap<TopologyFaceId, usize> = BTreeMap::new();
     let mut input_face_set: BTreeSet<TopologyFaceId> = BTreeSet::new();
-    for &face_id in &input.face_labels {
+    for &face_id in input_labels {
         if face_id.is_degenerate() {
             continue;
         }
@@ -370,7 +376,7 @@ pub fn infer_lineage_labeled(input: &LabeledMesh, output: &LabeledMesh) -> Linea
     let mut output_count_per_face: BTreeMap<TopologyFaceId, usize> = BTreeMap::new();
     let mut output_face_set: BTreeSet<TopologyFaceId> = BTreeSet::new();
     let mut output_has_degenerate = false;
-    for &face_id in &output.face_labels {
+    for &face_id in output_labels {
         if face_id.is_degenerate() {
             output_has_degenerate = true;
             continue;
@@ -440,7 +446,7 @@ pub fn infer_lineage_labeled(input: &LabeledMesh, output: &LabeledMesh) -> Linea
         });
     }
 
-    graph
+    (output.clone(), graph)
 }
 
 // ---------------------------------------------------------------------------
@@ -452,6 +458,16 @@ mod tests {
     use super::*;
     use crate::operators::{CuboidOp, ExtrudeOp, Operator, Polygon2D};
 
+    /// Helper for the labeled-path tests: build a hand-rolled labeled
+    /// [`Tessellation`] from positions / indices / labels.
+    fn labeled_mesh(
+        positions: Vec<[f32; 3]>,
+        indices: Vec<u32>,
+        labels: Vec<TopologyFaceId>,
+    ) -> Tessellation {
+        Tessellation::with_labels(positions, indices, labels).expect("test labeled mesh ctor")
+    }
+
     // --- label_by_plane ---------------------------------------------------
 
     #[test]
@@ -462,7 +478,12 @@ mod tests {
         let tess = cube.evaluate(&[]).expect("cube tess");
         assert_eq!(tess.triangle_count(), 12);
         let labeled = label_by_plane(&tess, 0).expect("label cube");
-        assert_eq!(labeled.face_count(), 6, "cube should have 6 plane groups");
+        assert!(labeled.is_labeled(), "label_by_plane returns labeled tess");
+        assert_eq!(
+            labeled.face_count(),
+            Some(6),
+            "cube should have 6 plane groups"
+        );
         assert_eq!(labeled.triangle_count(), 12);
     }
 
@@ -480,24 +501,53 @@ mod tests {
         let labeled = label_by_plane(&tess, 0).expect("label extrude");
         assert_eq!(
             labeled.face_count(),
-            5,
+            Some(5),
             "triangle prism should have 5 plane groups (2 caps + 3 walls)"
         );
     }
 
-    // --- infer_lineage ----------------------------------------------------
+    // --- infer_lineage error path -----------------------------------------
 
     #[test]
-    fn infer_lineage_identity_preserves_all_faces() {
-        // input == output (cube tessellation passed unchanged).
+    fn infer_lineage_with_unlabeled_input_returns_invalid_input_error() {
+        // Caller passes unlabeled input → must return InvalidInput.
+        let cube = CuboidOp::default();
+        let tess = cube.evaluate(&[]).expect("cube tess");
+        // tess is unlabeled (default).
+        assert!(!tess.is_labeled());
+        let err = infer_lineage(&tess, &tess, 100).unwrap_err();
+        match err {
+            LineageError::InvalidInput(msg) => {
+                assert!(
+                    msg.contains("requires labeled input"),
+                    "expected 'requires labeled input' message; got: {msg}"
+                );
+            }
+            other => panic!("expected InvalidInput, got {other:?}"),
+        }
+    }
+
+    // --- infer_lineage with unlabeled output (plane-heuristic path) -------
+
+    #[test]
+    fn infer_lineage_with_labeled_input_unlabeled_output_uses_plane_heuristic() {
+        // input == output (same cube) → identity preserves all 6 plane
+        // groups. Output is unlabeled, so the plane heuristic kicks in.
         let cube = CuboidOp::default();
         let tess = cube.evaluate(&[]).expect("cube tess");
         let labeled_input = label_by_plane(&tess, 0).expect("label cube");
+        // tess is unlabeled.
+        assert!(!tess.is_labeled());
+
         let (labeled_output, lineage) =
             infer_lineage(&labeled_input, &tess, 100).expect("identity lineage");
+        assert!(
+            labeled_output.is_labeled(),
+            "infer_lineage returns labeled output"
+        );
         assert_eq!(
             labeled_output.face_count(),
-            6,
+            Some(6),
             "output has same 6 face groups"
         );
         // 6 input faces ⇒ 6 Preserved edges; 0 Reinterpreted (no new
@@ -653,21 +703,10 @@ mod tests {
         );
     }
 
-    // --- infer_lineage_labeled (csgrs metadata-passthrough path) ----------
-
-    /// Helper for the labeled-path tests: build a hand-rolled
-    /// [`LabeledMesh`] from positions / indices / labels with `expect`-
-    /// driven invariants (test code, panics-on-misuse is fine).
-    fn labeled_mesh(
-        positions: Vec<[f32; 3]>,
-        indices: Vec<u32>,
-        labels: Vec<TopologyFaceId>,
-    ) -> LabeledMesh {
-        LabeledMesh::new(positions, indices, labels).expect("test labeled mesh ctor")
-    }
+    // --- infer_lineage with labeled output (high-confidence path) ---------
 
     #[test]
-    fn infer_lineage_labeled_identity_preserves_all() {
+    fn infer_lineage_with_labeled_input_labeled_output_uses_label_tracking() {
         // input == output (same labels everywhere) → all Preserved.
         let positions = vec![
             [0.0_f32, 0.0, 0.0],
@@ -678,8 +717,9 @@ mod tests {
         let indices = vec![0_u32, 1, 2, 0, 2, 3];
         let labels = vec![TopologyFaceId(7), TopologyFaceId(7)];
         let mesh = labeled_mesh(positions, indices, labels);
+        assert!(mesh.is_labeled());
 
-        let lineage = infer_lineage_labeled(&mesh, &mesh);
+        let (_out, lineage) = infer_lineage(&mesh, &mesh, 100).expect("identity labeled");
         let preserved = lineage
             .edges_by_evolution(TopologyEvolution::Preserved)
             .count();
@@ -735,7 +775,7 @@ mod tests {
             vec![TopologyFaceId(0), TopologyFaceId(0)],
         );
 
-        let lineage = infer_lineage_labeled(&input, &output);
+        let (_out, lineage) = infer_lineage(&input, &output, 100).expect("labeled diff lineage");
         let split_count = lineage.edges_by_evolution(TopologyEvolution::Split).count();
         let merged_count = lineage
             .edges_by_evolution(TopologyEvolution::Merged)
@@ -767,7 +807,7 @@ mod tests {
         );
         let output = labeled_mesh(positions, vec![0, 1, 2], vec![TopologyFaceId(0)]);
 
-        let lineage = infer_lineage_labeled(&input, &output);
+        let (_out, lineage) = infer_lineage(&input, &output, 100).expect("labeled del lineage");
         let deleted = lineage
             .edges_by_evolution(TopologyEvolution::Deleted)
             .count();
@@ -800,7 +840,7 @@ mod tests {
             vec![TopologyFaceId(0), TopologyFaceId(99)],
         );
 
-        let lineage = infer_lineage_labeled(&input, &output);
+        let (_out, lineage) = infer_lineage(&input, &output, 100).expect("labeled reint lineage");
         let reint = lineage
             .edges_by_evolution(TopologyEvolution::Reinterpreted)
             .count();
@@ -814,9 +854,7 @@ mod tests {
             .unwrap();
         assert!(edge.from.is_none());
         assert_eq!(edge.to, Some(TopologyFaceId(99)));
-        // Label 0 is Merged (1 input tri, 1 output tri matching label 0).
-        // Wait — input tri count for label 0 = 1, output tri count for
-        // label 0 = 1, so it's Preserved, not Merged. Verify:
+        // Label 0 is Preserved (1 input tri, 1 output tri matching label 0).
         let preserved = lineage
             .edges_by_evolution(TopologyEvolution::Preserved)
             .count();
@@ -826,10 +864,10 @@ mod tests {
     #[test]
     fn infer_lineage_labeled_distinguishes_lhs_rhs_labels() {
         // Input has labels {0,1,2} (lhs face range) ∪ {10,11,12} (rhs
-        // face range), simulating a Boolean op evaluate_labeled call
-        // where lhs labels were 0..3 and rhs labels were 10..13. The
-        // output drops face 1 and face 11 but keeps the rest. Verify
-        // both sides surface independently in the lineage:
+        // face range), simulating a Boolean op where lhs labels were 0..3
+        // and rhs labels were 10..13. The output drops face 1 and face 11
+        // but keeps the rest. Verify both sides surface independently in
+        // the lineage:
         //  * lhs: 0, 2 → Preserved; 1 → Deleted
         //  * rhs: 10, 12 → Preserved; 11 → Deleted
         let positions = vec![[0.0_f32, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 1.0, 0.0]];
@@ -861,17 +899,14 @@ mod tests {
         ];
         let output = labeled_mesh(positions, out_indices, out_labels);
 
-        let lineage = infer_lineage_labeled(&input, &output);
+        let (_out, lineage) = infer_lineage(&input, &output, 100).expect("labeled lhs/rhs lineage");
         // 4 Preserved (0, 2, 10, 12); 2 Deleted (1, 11); 0 Reinterpreted.
         assert_eq!(
             lineage
                 .edges_by_evolution(TopologyEvolution::Preserved)
                 .count(),
             4,
-            "expected 4 Preserved edges across lhs+rhs; got {}",
-            lineage
-                .edges_by_evolution(TopologyEvolution::Preserved)
-                .count()
+            "expected 4 Preserved edges across lhs+rhs"
         );
         assert_eq!(
             lineage
@@ -930,7 +965,8 @@ mod tests {
             ],
         );
 
-        let lineage = infer_lineage_labeled(&input, &output);
+        let (_out, lineage) =
+            infer_lineage(&input, &output, 100).expect("labeled degenerate lineage");
         // Label 0: Preserved (1 input, 1 output).
         let preserved = lineage
             .edges_by_evolution(TopologyEvolution::Preserved)

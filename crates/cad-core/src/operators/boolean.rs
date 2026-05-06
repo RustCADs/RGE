@@ -2,64 +2,39 @@
 //!
 //! Failure class: snapshot-recoverable (inherited via the cad-core lib root).
 //!
-//! # Design
+//! Per [ADR-112](../../../docs/adr/ADR-112-cad-boolean-csg-library.md). Backed
+//! by `csgrs` (pure-Rust BSP-tree triangle-mesh CSG). The bridge converts
+//! cad-core's triangle-soup [`Tessellation`] into csgrs's `Mesh` representation,
+//! runs the boolean via [`CSG`], converts back, and preserves labels when
+//! present.
 //!
-//! Per [ADR-112](../../../docs/adr/ADR-112-cad-boolean-csg-library.md), Boolean
-//! is the first cad-core operator backed by an external CSG library: `csgrs`
-//! (pure-Rust BSP-tree triangle-mesh CSG). The bridge converts cad-core's
-//! triangle-soup [`Tessellation`] (`Vec<[f32; 3]>` positions plus `Vec<u32>`
-//! indices) into csgrs's [`Mesh`] representation (a list of [`Polygon`]s, each
-//! holding three [`Vertex`]es with `Point3<f64>` positions and `Vector3<f64>`
-//! normals), performs the boolean op via the [`CSG`] trait, and converts the
-//! result back to triangle soup.
+//! # Unified labeled / unlabeled paths (2026-05-08 unified-mesh refactor)
 //!
-//! # csgrs version + features
+//! [`BooleanOp::evaluate`] handles both unlabeled and labeled inputs in a
+//! single signature. Both unlabeled → unlabeled output (legacy bit-identical).
+//! Both labeled → labeled output (was `evaluate_labeled`). Mixed → labeled
+//! output, unlabeled side synthesizes per-triangle [`TopologyFaceId::DEGENERATE`]
+//! labels (downstream lineage classifies as Reinterpreted).
 //!
-//! csgrs 0.20.1 with `default-features = false` plus features `["f64",
-//! "earcut"]`:
+//! # csgrs features
 //!
-//! * `f64` — required (csgrs has a `compile_error!` if neither `f64` nor
-//!   `f32` is selected). csgrs's f32 feature pulls `rapier3d 0.24` which
-//!   conflicts with the workspace-pinned `rapier3d 0.32` in `crates/physics`,
-//!   so we use `f64` (which pulls `rapier3d-f64 0.24` — a different crate, no
-//!   conflict). The bridge converts `f32` ↔ `f64` at the boundary.
-//! * `earcut` — required (csgrs has a `compile_error!` if neither `earcut`
-//!   nor `delaunay` is selected). `earcut` is the lighter of the two.
+//! csgrs 0.20.1 `default-features = false` + `["f64", "earcut"]`. f64 avoids
+//! the rapier3d 0.24/0.32 conflict (workspace pins 0.32 in `crates/physics`).
+//! The bridge converts `f32` ↔ `f64` at the boundary. Per ADR-112 §"csgrs
+//! feature flags". T-junction handling deferred per csgrs upstream TODO.
 //!
-//! All other default features declined: `stl-io`, `dxf-io`, `obj-io`,
-//! `ply-io`, `amf-io`, `chull-io`, `image-io`, `metaballs`, `sdf`, `offset`,
-//! `delaunay`, `truetype-text`, `hershey-text`. Per ADR-112 §"csgrs feature
-//! flags".
+//! # Capability surface (ADR-104/112)
 //!
-//! # Capability surface
-//!
-//! Per ADR-104 / ADR-112 §"Capability surface entry":
-//!
-//! * `boolean_robust_under_tolerance: false` — BSP, no exact arithmetic.
-//! * `healing_strategies: none` — no T-junction welding, no sliver removal.
-//! * `deterministic_triangulation: true` — gated by the per-CI 200-iter
-//!   (Union+Difference × 100) soak in `crates/cad-core/tests/cad_boolean_determinism.rs`.
-//!   The §13.6 1000-iter periodic-soak gate is deferred to a future CI integration.
-//!
-//! T-junction handling is incomplete in csgrs upstream (per ADR-112
-//! §"Followups" and csgrs's own README) — accepted as a documented capability
-//! gap for now.
+//! `boolean_robust_under_tolerance: false`, `healing_strategies: none`,
+//! `deterministic_triangulation: true` (gated by 200-iter soak in
+//! `cad_boolean_determinism.rs`).
 //!
 //! # Failure handling
 //!
-//! csgrs's BSP construction asserts on `< 3` vertex polygons and panics on
-//! degenerate-normal planes (`Plane::from_normal`). We mitigate by:
-//!
-//! 1. Filtering input triangles whose three positions are not distinct (zero
-//!    edge length) in [`tessellation_to_csgrs`] before constructing
-//!    [`Polygon`]s.
-//! 2. Wrapping the boolean op in [`std::panic::catch_unwind`] so any residual
-//!    panic surfaces as [`OpError::InvalidParameter`] rather than poisoning
-//!    the caller.
-//!
-//! Boolean failures are snapshot-recoverable per PLAN §1.13: the operation
-//! rolls back via `CadGraph::begin_operation`, a diagnostic surfaces, the
-//! editor stays alive.
+//! csgrs's BSP can panic on degenerate input. Mitigation: pre-filter
+//! degenerate triangles in [`tessellation_to_csgrs`], wrap the op in
+//! [`std::panic::catch_unwind`] surfacing as [`OpError::InvalidParameter`].
+//! Snapshot-recoverable per PLAN §1.13.
 
 use std::fmt::Debug;
 use std::panic::AssertUnwindSafe;
@@ -72,8 +47,7 @@ use nalgebra::{Point3, Vector3};
 use serde::{Deserialize, Serialize};
 
 use crate::operators::{OpError, OpKind, Operator};
-use crate::tessellation::Tessellation;
-use crate::topo_lineage::{LabeledMesh, LineageError, TopologyFaceId};
+use crate::tessellation::{Tessellation, TopologyFaceId};
 
 // ---------------------------------------------------------------------------
 // BooleanMode + BooleanOp
@@ -174,6 +148,26 @@ impl Operator for BooleanOp {
         let lhs = inputs[0];
         let rhs = inputs[1];
 
+        // Detect whether either side carries labels. If so, take the
+        // labeled path (carry per-triangle TopologyFaceId metadata through
+        // csgrs); otherwise the unlabeled path (no metadata, matches the
+        // legacy `evaluate` behavior bit-identically).
+        if lhs.is_labeled() || rhs.is_labeled() {
+            self.evaluate_with_labels(lhs, rhs)
+        } else {
+            self.evaluate_unlabeled(lhs, rhs)
+        }
+    }
+}
+
+impl BooleanOp {
+    /// Unlabeled fast path — both inputs lack labels, output is unlabeled.
+    /// Bit-identical to the pre-refactor `evaluate`.
+    fn evaluate_unlabeled(
+        &self,
+        lhs: &Tessellation,
+        rhs: &Tessellation,
+    ) -> Result<Tessellation, OpError> {
         // Convert both inputs to csgrs Mesh<()>. () is the no-payload metadata
         // type; this is the unlabeled path that drops any lineage info.
         let lhs_mesh: CsgrsMesh<()> = tessellation_to_csgrs(&lhs.positions, &lhs.indices, |_| ());
@@ -187,50 +181,28 @@ impl Operator for BooleanOp {
             OpError::InvalidParameter(format!("boolean failed: invalid output tessellation: {e}"))
         })
     }
-}
 
-impl BooleanOp {
-    /// Run the boolean op carrying per-input-triangle [`TopologyFaceId`]
-    /// labels through csgrs's polygon metadata.
+    /// Labeled path — at least one input carries labels. Per-triangle
+    /// [`TopologyFaceId`] labels thread through csgrs's polygon metadata so
+    /// downstream lineage can recover originating-face identity with high
+    /// confidence. Mixed inputs synthesize [`TopologyFaceId::DEGENERATE`]
+    /// labels on the unlabeled side; downstream lineage classifies those
+    /// as Reinterpreted.
     ///
-    /// This is the **labeled path** — input triangles' face labels are
-    /// threaded through csgrs's `Mesh<TopologyFaceId>` metadata field so
-    /// that the lineage inference can recover, per output triangle, which
-    /// input face the output came from with high confidence (no plane-
-    /// equation heuristics needed).
-    ///
-    /// # csgrs metadata semantics (per ADR-112 §"Followups" 30-min spike)
-    ///
-    /// * **Union**: csgrs preserves both lhs and rhs polygon metadata via
-    ///   clone in plane splits and `clip_polygons`. Output polygons retain
-    ///   their originating-input metadata.
-    /// * **Intersection**: csgrs preserves polygon metadata as-is from
-    ///   clipping. Output polygons retain their originating-input metadata.
-    /// * **Difference**: csgrs **explicitly retags `b`'s clipped polygons
-    ///   with `self.metadata` (lhs's `Mesh::metadata`)** — known csgrs
-    ///   quirk. We carry `Mesh::metadata = None` so this retagging
-    ///   propagates as `None` for the rhs-derived faces (see
-    ///   `intern_label`); the resulting `face_labels` for those output
-    ///   triangles fall back to a synthetic id derived from the *first* lhs
-    ///   label so downstream classification treats them as Reinterpreted /
-    ///   Split rather than mis-attributing them to a specific lhs face.
-    ///
-    /// # Errors
-    ///
-    /// * [`OpError::WrongArity`] is impossible here (fixed arity 2 from
-    ///   typed parameters), but [`OpError::InvalidParameter`] surfaces if
-    ///   csgrs panics, the output mesh is malformed, or the input
-    ///   `LabeledMesh`es have malformed buffers.
-    pub fn evaluate_labeled(
+    /// csgrs metadata semantics (per ADR-112 §"Followups" 30-min spike):
+    /// Union and Intersection preserve polygon metadata through plane
+    /// splits / `clip_polygons`. **Difference** retags rhs's clipped
+    /// polygons with `self.metadata` (lhs's `Mesh::metadata` = None) — a
+    /// known csgrs quirk. Those rhs-derived faces fall back to
+    /// [`TopologyFaceId::DEGENERATE`] via `csgrs_to_tessellation`'s
+    /// unmetadata sentinel, routing them through Reinterpreted.
+    fn evaluate_with_labels(
         &self,
-        lhs: &LabeledMesh,
-        rhs: &LabeledMesh,
-    ) -> Result<LabeledMesh, OpError> {
-        // Build per-triangle metadata closures that pull from the labeled
-        // input. tessellation_to_csgrs walks the index buffer in chunks of
-        // 3, calling `metadata(triangle_idx)` for each triangle.
-        let lhs_labels = lhs.face_labels.clone();
-        let rhs_labels = rhs.face_labels.clone();
+        lhs: &Tessellation,
+        rhs: &Tessellation,
+    ) -> Result<Tessellation, OpError> {
+        let lhs_labels = derive_per_triangle_labels(lhs);
+        let rhs_labels = derive_per_triangle_labels(rhs);
 
         let lhs_mesh: CsgrsMesh<TopologyFaceId> =
             tessellation_to_csgrs(&lhs.positions, &lhs.indices, |tri_idx| lhs_labels[tri_idx]);
@@ -241,22 +213,36 @@ impl BooleanOp {
 
         // Convert back, propagating the per-polygon metadata into per-output-
         // triangle labels. Polygons whose csgrs metadata field is None
-        // (rhs-derived under Difference's lhs-retag quirk where `Mesh::metadata`
-        // is None) get tagged with TopologyFaceId::DEGENERATE — which the
-        // labeled inference treats as "label not in input set" → Reinterpreted.
+        // (rhs-derived under Difference's lhs-retag quirk where
+        // `Mesh::metadata` is None) get tagged with TopologyFaceId::DEGENERATE.
         let (positions, indices, labels) =
             csgrs_to_tessellation::<TopologyFaceId>(&result, || TopologyFaceId::DEGENERATE)?;
 
-        LabeledMesh::new(positions, indices, labels).map_err(|e: LineageError| {
+        Tessellation::with_labels(positions, indices, labels).map_err(|e| {
             OpError::InvalidParameter(format!(
-                "boolean evaluate_labeled failed to build output LabeledMesh: {e}"
+                "boolean failed to build labeled output tessellation: {e}"
             ))
         })
     }
 }
 
+/// Pull (or synthesize) per-triangle labels for a [`Tessellation`].
+///
+/// * Labeled input → clone the existing labels.
+/// * Unlabeled input → synthesize a `Vec` of [`TopologyFaceId::DEGENERATE`]
+///   one per triangle. Downstream lineage classifies those as Reinterpreted,
+///   which is the desired semantics for "this side had no input-face
+///   identity to track".
+fn derive_per_triangle_labels(tess: &Tessellation) -> Vec<TopologyFaceId> {
+    if let Some(labels) = tess.face_labels() {
+        labels.to_vec()
+    } else {
+        vec![TopologyFaceId::DEGENERATE; tess.triangle_count()]
+    }
+}
+
 /// Shared implementation of the boolean dispatch + panic catch — used by
-/// both `evaluate` and `evaluate_labeled`.
+/// both the unlabeled and labeled paths.
 fn run_boolean<S>(
     mode: BooleanMode,
     lhs_mesh: &CsgrsMesh<S>,
@@ -371,41 +357,23 @@ where
 type TriangleSoupWithLabels<M> = (Vec<[f32; 3]>, Vec<u32>, Vec<M>);
 
 /// Convert a csgrs [`Mesh<M>`] back to triangle-soup buffers + a per-output-
-/// triangle metadata vector.
+/// triangle metadata vector. Polygons with `N > 3` vertices are
+/// fan-triangulated from `vertex[0]` (csgrs's polygons are coplanar by
+/// construction so fan-triangulation is valid). Each output triangle clones
+/// its source polygon's metadata.
 ///
-/// Polygons with `N > 3` vertices are fan-triangulated from `vertex[0]`. csgrs
-/// returns its boolean-output polygons as planar polygons (already coplanar by
-/// construction) so fan triangulation is geometrically valid. Each output
-/// triangle inherits its source polygon's `metadata` (cloned per fan
-/// triangle).
+/// Vertex dedup uses exact f32 bit equality after the f64 → f32 conversion
+/// (12-byte LE-byte key). Required for BLAKE3-determinism downstream —
+/// tolerance comparisons would yield non-deterministic indexings.
 ///
-/// Vertex deduplication uses **exact f32 bit equality** after the f64 → f32
-/// conversion: any two output positions whose final 12-byte f32 representation
-/// is bit-identical share an index. This is required for BLAKE3-determinism
-/// downstream — float-tolerance comparisons would yield non-deterministic
-/// indexings depending on iteration order. csgrs's BSP produces vertices at
-/// exact intersection points, so coincident shared vertices typically already
-/// match bit-for-bit at f32 precision after conversion.
-///
-/// Returns `(positions, indices, labels)` where `labels.len() ==
-/// indices.len() / 3` (one metadata payload per output triangle). For the
-/// no-metadata path, `M = ()` so `labels` is `Vec<()>` and the caller
-/// discards the third tuple element.
-///
-/// Polygons whose csgrs `metadata` field is `None` (which can happen for
-/// rhs-derived faces under `Boolean::Difference`'s lhs-retag quirk — see
-/// [`BooleanOp::evaluate_labeled`]) yield the value returned by
-/// `unmetadata_label`. For the unlabeled path that closure returns `()`;
-/// for the labeled path we pass [`TopologyFaceId::DEGENERATE`] so
-/// downstream classification routes those rhs-derived faces through the
-/// Reinterpreted branch (treated as "label not seen on input" — which is
-/// correct for the v0 prototype: those Difference rhs-clip artifacts are
-/// new internal walls).
+/// Polygons with csgrs `metadata = None` (rhs-derived under Difference's
+/// lhs-retag quirk) yield `unmetadata_label()`. Unlabeled path: `()`.
+/// Labeled path: [`TopologyFaceId::DEGENERATE`] (routes through Reinterpreted).
 ///
 /// # Errors
 ///
-/// * [`OpError::InvalidParameter`] if any output position is non-finite or
-///   the cumulative vertex count overflows `u32::MAX`.
+/// * [`OpError::InvalidParameter`] on non-finite output position or
+///   `u32::MAX` vertex count overflow.
 fn csgrs_to_tessellation<M>(
     mesh: &CsgrsMesh<M>,
     unmetadata_label: impl Fn() -> M,
@@ -513,6 +481,7 @@ where
 mod tests {
     use super::*;
     use crate::operators::{CuboidOp, Operator};
+    use crate::topo_lineage::label_by_plane;
 
     /// Helper: an axis-aligned cube of `size` centered at `(cx, cy, cz)`.
     fn cube_at(cx: f32, cy: f32, cz: f32, size: f32) -> Tessellation {
@@ -543,6 +512,14 @@ mod tests {
     fn unit_cube_origin() -> Tessellation {
         let op = CuboidOp::default();
         op.evaluate(&[]).expect("default cube")
+    }
+
+    /// Helper: build a labeled [`Tessellation`] from a Tessellation by
+    /// labeling each triangle with the supplied `face_id`.
+    fn labeled_with_id(tess: &Tessellation, face_id: TopologyFaceId) -> Tessellation {
+        let labels = vec![face_id; tess.triangle_count()];
+        Tessellation::with_labels(tess.positions.clone(), tess.indices.clone(), labels)
+            .expect("test labeled mesh ctor")
     }
 
     /// Test 1 — arity must be 2.
@@ -628,6 +605,11 @@ mod tests {
         // Output must be non-empty.
         assert!(result.vertex_count() > 0);
         assert!(result.triangle_count() > 0);
+        // Both inputs were unlabeled → output is unlabeled.
+        assert!(
+            !result.is_labeled(),
+            "two unlabeled inputs should yield unlabeled output"
+        );
     }
 
     /// Test 6 — union of overlapping cubes has FEWER vertices than naive
@@ -826,40 +808,43 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
-    // evaluate_labeled (csgrs metadata-passthrough path)
+    // Labeled-input dispatch (csgrs metadata-passthrough path)
     // -----------------------------------------------------------------
 
-    use crate::topo_lineage::{label_by_plane, TopologyFaceId};
-
-    /// Helper: build a `LabeledMesh` from a `Tessellation` by labeling
-    /// each triangle with the supplied `face_id`. Useful for hand-rolling
-    /// inputs where every input triangle shares a single label.
-    fn labeled_with_id(tess: &Tessellation, face_id: TopologyFaceId) -> LabeledMesh {
-        let labels = vec![face_id; tess.triangle_count()];
-        LabeledMesh::new(tess.positions.clone(), tess.indices.clone(), labels)
-            .expect("test labeled mesh ctor")
+    /// Both unlabeled inputs → unlabeled output. Bit-identical legacy path.
+    #[test]
+    fn boolean_evaluate_with_both_unlabeled_inputs_returns_unlabeled_output() {
+        let lhs = cube_at(0.0, 0.0, 0.0, 1.0);
+        let rhs = cube_at(0.5, 0.5, 0.5, 1.0); // overlapping
+        let op = BooleanOp::union();
+        let out = op.evaluate(&[&lhs, &rhs]).expect("union eval");
+        assert!(
+            !out.is_labeled(),
+            "two unlabeled inputs must produce unlabeled output"
+        );
     }
 
-    /// Test 13 — Union with a single label on each side carries both
-    /// labels through to the output. lhs labels = {0}, rhs labels = {1};
-    /// union output's `face_labels` must contain both 0 and 1 (csgrs
-    /// preserves polygon metadata via clone in plane splits / `clip_polygons`).
+    /// Both labeled inputs → labeled output. Was `evaluate_labeled`.
     #[test]
-    fn boolean_evaluate_labeled_carries_lhs_label_through_union() {
+    fn boolean_evaluate_with_both_labeled_inputs_returns_labeled_output() {
         let lhs_tess = cube_at(0.0, 0.0, 0.0, 1.0);
         let rhs_tess = cube_at(0.5, 0.5, 0.5, 1.0); // overlapping
         let lhs = labeled_with_id(&lhs_tess, TopologyFaceId(0));
         let rhs = labeled_with_id(&rhs_tess, TopologyFaceId(1));
-
         let op = BooleanOp::union();
-        let out = op.evaluate_labeled(&lhs, &rhs).expect("union labeled");
+        let out = op.evaluate(&[&lhs, &rhs]).expect("union labeled");
+        assert!(
+            out.is_labeled(),
+            "two labeled inputs must produce labeled output"
+        );
 
         // Output has triangles. Labels must include 0 (from lhs) AND 1
         // (from rhs) — csgrs preserves polygon metadata for Union.
-        assert!(out.triangle_count() > 0, "labeled union output empty");
+        assert!(out.triangle_count() > 0);
+        let labels = out.face_labels().expect("labeled");
         let mut has_0 = false;
         let mut has_1 = false;
-        for &lbl in &out.face_labels {
+        for &lbl in labels {
             if lbl == TopologyFaceId(0) {
                 has_0 = true;
             }
@@ -867,13 +852,47 @@ mod tests {
                 has_1 = true;
             }
         }
+        assert!(has_0, "union must carry lhs label 0 through");
+        assert!(has_1, "union must carry rhs label 1 through");
+    }
+
+    /// Mixed: lhs labeled, rhs unlabeled → labeled output (rhs synthesizes
+    /// DEGENERATE labels, which surface as Reinterpreted in lineage).
+    #[test]
+    fn boolean_evaluate_with_one_labeled_one_unlabeled_input() {
+        let lhs_tess = cube_at(0.0, 0.0, 0.0, 1.0);
+        let rhs_tess = cube_at(0.5, 0.5, 0.5, 1.0);
+        let lhs = labeled_with_id(&lhs_tess, TopologyFaceId(42));
+        assert!(!rhs_tess.is_labeled());
+
+        let op = BooleanOp::union();
+        let out = op.evaluate(&[&lhs, &rhs_tess]).expect("mixed union");
+        assert!(out.is_labeled(), "labeled lhs must propagate to output");
+        assert!(out.triangle_count() > 0);
+        let labels = out.face_labels().expect("labeled output");
         assert!(
-            has_0,
-            "union output must carry lhs label 0 through (csgrs preserves polygon metadata for Union)"
+            labels.contains(&TopologyFaceId(42)),
+            "lhs label 42 must propagate through union"
         );
+    }
+
+    /// Reverse mixed: lhs unlabeled, rhs labeled → labeled output.
+    #[test]
+    fn boolean_evaluate_with_unlabeled_lhs_labeled_rhs() {
+        let lhs_tess = cube_at(0.0, 0.0, 0.0, 1.0); // unlabeled
+        let rhs_tess = cube_at(0.5, 0.5, 0.5, 1.0); // overlapping
+        let rhs = labeled_with_id(&rhs_tess, TopologyFaceId(7));
+        assert!(!lhs_tess.is_labeled());
+
+        let op = BooleanOp::union();
+        let out = op.evaluate(&[&lhs_tess, &rhs]).expect("mixed union");
+        assert!(out.is_labeled());
+        assert!(out.triangle_count() > 0);
+        // rhs label 7 should propagate through union.
+        let labels = out.face_labels().expect("labeled");
         assert!(
-            has_1,
-            "union output must carry rhs label 1 through (csgrs preserves polygon metadata for Union)"
+            labels.contains(&TopologyFaceId(7)),
+            "rhs label 7 must propagate through union"
         );
     }
 
@@ -881,54 +900,50 @@ mod tests {
     /// the overlap region (csgrs preserves polygon metadata as-is from
     /// clipping).
     #[test]
-    fn boolean_evaluate_labeled_carries_lhs_label_through_intersection() {
+    fn boolean_evaluate_carries_lhs_label_through_intersection() {
         let lhs_tess = cube_at(0.0, 0.0, 0.0, 1.0);
         let rhs_tess = cube_at(0.5, 0.5, 0.5, 1.0); // overlapping
         let lhs = labeled_with_id(&lhs_tess, TopologyFaceId(0));
         let rhs = labeled_with_id(&rhs_tess, TopologyFaceId(1));
 
         let op = BooleanOp::intersection();
-        let out = op
-            .evaluate_labeled(&lhs, &rhs)
-            .expect("intersection labeled");
+        let out = op.evaluate(&[&lhs, &rhs]).expect("intersection labeled");
 
-        // Intersection of overlapping cubes is non-empty. Both lhs and
-        // rhs polygons contribute to the output (each side's clipped
-        // polygons retain their metadata under csgrs's intersection
-        // semantics).
-        assert!(
-            out.triangle_count() > 0,
-            "labeled intersection output empty"
-        );
-        let labels: std::collections::BTreeSet<TopologyFaceId> =
-            out.face_labels.iter().copied().collect();
+        assert!(out.is_labeled());
+        assert!(out.triangle_count() > 0);
+        let labels: std::collections::BTreeSet<TopologyFaceId> = out
+            .face_labels()
+            .expect("labeled")
+            .iter()
+            .copied()
+            .collect();
         assert!(
             labels.contains(&TopologyFaceId(0)) || labels.contains(&TopologyFaceId(1)),
-            "intersection output must carry at least one of the input labels through; got {labels:?}"
+            "intersection must carry at least one of the input labels through; got {labels:?}"
         );
     }
 
-    /// Test 15 — Difference's csgrs lhs-retag quirk: rhs's clipped
-    /// polygons are retagged with `Mesh::metadata` (lhs's mesh-level
-    /// metadata, which we pass as None). Per ADR-112: the output's
-    /// rhs-derived faces therefore arrive with `metadata = None`,
-    /// surfaced through `csgrs_to_tessellation` as the unmetadata sentinel
-    /// (`TopologyFaceId::DEGENERATE`). lhs-derived survivors keep their
-    /// metadata.
+    /// Difference's csgrs lhs-retag quirk: rhs's clipped polygons are retagged
+    /// with `Mesh::metadata` (we pass None) so they arrive as DEGENERATE per
+    /// ADR-112. lhs-derived survivors keep their metadata.
     #[test]
-    fn boolean_evaluate_labeled_difference_retags_rhs_as_lhs_per_csgrs_quirk() {
+    fn boolean_evaluate_difference_retags_rhs_as_lhs_per_csgrs_quirk() {
         let lhs_tess = cube_at(0.0, 0.0, 0.0, 1.0);
         let rhs_tess = cube_at(0.5, 0.5, 0.5, 1.0); // overlapping
         let lhs = labeled_with_id(&lhs_tess, TopologyFaceId(0));
         let rhs = labeled_with_id(&rhs_tess, TopologyFaceId(1));
 
         let op = BooleanOp::difference();
-        let out = op.evaluate_labeled(&lhs, &rhs).expect("difference labeled");
+        let out = op.evaluate(&[&lhs, &rhs]).expect("difference labeled");
 
-        assert!(out.triangle_count() > 0, "labeled difference output empty");
-
-        let labels: std::collections::BTreeSet<TopologyFaceId> =
-            out.face_labels.iter().copied().collect();
+        assert!(out.is_labeled());
+        assert!(out.triangle_count() > 0);
+        let labels: std::collections::BTreeSet<TopologyFaceId> = out
+            .face_labels()
+            .expect("labeled")
+            .iter()
+            .copied()
+            .collect();
 
         // lhs label (0) should still appear on at least one surviving
         // output triangle (lhs's faces that were not clipped retain
@@ -937,15 +952,6 @@ mod tests {
             labels.contains(&TopologyFaceId(0)),
             "Difference output must still carry the lhs label 0 on lhs-survivor faces; got {labels:?}"
         );
-        // The label 1 (rhs) is NOT expected to appear directly because
-        // csgrs retags rhs polygons with self.metadata (lhs's mesh-level
-        // metadata = None) — so they should arrive as the unmetadata
-        // sentinel (DEGENERATE) rather than label 1. Either: (a) all
-        // rhs-derived output faces are DEGENERATE, OR (b) rhs label 1
-        // is genuinely absent from the output (rhs entirely consumed
-        // the carve volume so its visible boundary is what we see). We
-        // assert the negation: label 1 should NOT survive on the
-        // difference output's faces.
         assert!(
             !labels.contains(&TopologyFaceId(1)),
             "Difference output unexpectedly preserved rhs label 1; csgrs retagged rhs polygons \
@@ -954,31 +960,33 @@ mod tests {
         );
     }
 
-    /// Test 16 — round-trip: a cube labeled by plane (6 distinct labels
-    /// for the 6 axis-aligned faces) survives a no-op `evaluate_labeled`
-    /// with itself. Checks the most basic property: input labels
-    /// propagate through the conversion bridge intact when the boolean
-    /// op is a no-op union (a ∪ a = a).
+    /// Round-trip: a cube labeled by plane (6 distinct labels for the 6
+    /// axis-aligned faces) survives a no-op self-union evaluate.
     #[test]
-    fn boolean_evaluate_labeled_label_by_plane_round_trip_through_self_union() {
+    fn boolean_evaluate_label_by_plane_round_trip_through_self_union() {
         let cube_tess = unit_cube_origin();
         let labeled = label_by_plane(&cube_tess, 0).expect("label cube");
         // 6 distinct face ids on a unit cube (one per axis-aligned face).
-        assert_eq!(labeled.face_count(), 6);
+        assert_eq!(labeled.face_count(), Some(6));
 
         let op = BooleanOp::union();
         let out = op
-            .evaluate_labeled(&labeled, &labeled)
+            .evaluate(&[&labeled, &labeled])
             .expect("self-union labeled");
 
-        // Self-union: every label that appeared on the input should
-        // also appear on the output (the label set survives) — at
-        // minimum, all 6 input face ids should be present in the
-        // output's labels.
-        let in_labels: std::collections::BTreeSet<TopologyFaceId> =
-            labeled.face_labels.iter().copied().collect();
-        let out_labels: std::collections::BTreeSet<TopologyFaceId> =
-            out.face_labels.iter().copied().collect();
+        assert!(out.is_labeled());
+        let in_labels: std::collections::BTreeSet<TopologyFaceId> = labeled
+            .face_labels()
+            .expect("labeled")
+            .iter()
+            .copied()
+            .collect();
+        let out_labels: std::collections::BTreeSet<TopologyFaceId> = out
+            .face_labels()
+            .expect("labeled")
+            .iter()
+            .copied()
+            .collect();
         for &id in in_labels.iter().filter(|id| !id.is_degenerate()) {
             assert!(
                 out_labels.contains(&id),

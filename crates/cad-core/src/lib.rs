@@ -44,8 +44,8 @@ pub use operators::{
 };
 pub use tessellation::{
     CacheKey, Tessellation, TessellationCache, TessellationError, Tolerance, ToleranceError,
+    TopologyFaceId,
 };
 pub use topo_lineage::{
-    infer_lineage, infer_lineage_labeled, label_by_plane, LabeledMesh, LineageEdge, LineageError,
-    LineageGraph, TopologyEvolution, TopologyFaceId,
+    infer_lineage, label_by_plane, LineageEdge, LineageError, LineageGraph, TopologyEvolution,
 };

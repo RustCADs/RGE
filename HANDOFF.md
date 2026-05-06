@@ -1,6 +1,6 @@
 # RGE Handoff Document
 
-> **Snapshot**: 2026-05-07 13:00. Continuation pointer for the next session.
+> **Snapshot**: 2026-05-08 05:00. Continuation pointer for the next session.
 >
 > **Read first**: this file. Then [`Status.md`](./Status.md) (current snapshot) and [`change.log`](./change.log) (full history).
 
@@ -10,7 +10,7 @@
 
 | Pillar | State |
 |---|---|
-| Workspace tests | **1549 / 1549 pass** across 200 binaries (2 ignored intentionally hardware-gated) |
+| Workspace tests | **1568 / 1568 pass** across 200 binaries (2 ignored intentionally hardware-gated) |
 | Architecture lints | **9 / 9 PASS** exit 0 (forbidden-dep, split-exemption, no-utils, graph-foundation, editor-state-ownership, command-bus, projection-modules, kernel-isolation, failure-class) |
 | `cargo +nightly fmt --check` | exit 0 |
 | `cargo check --workspace --all-targets` | 0 errors, ~130 pre-existing ui-theme `missing_docs` warnings (deferred per Status.md) |
@@ -22,7 +22,34 @@
 
 ## What just shipped (this session — completed work)
 
-1. **PluginContext v1 + CadProjectionPlugin canary** (post-audit CRITICAL #2; 16 new tests; kernel/plugin-host 23 → 33, cad-projection 28 → 34):
+1. **Plugin diagnostic auto-emit** (post-audit LOW #5; 5 new tests; kernel/plugin-host 33 → 38):
+   - Closes Pairing-5 of the 2026-05-07 deep audit (plugin failures swallowed into `*Report.failed[i].1` String, never reached the diagnostic sink)
+   - `PluginHost::init_all` / `tick_all` / `shutdown_all` now auto-emit a synthetic `Diagnostic::error` with structured prefix `"plugin <id> init failed: <err>"` (or `tick failed` / `shutdown failed`) whenever a plugin returns `Err`
+   - Plugin-fatal isolation preserved: emit is additive to whatever the plugin emits via `ctx.emit_diagnostic`; failure semantics unchanged
+   - The diagnostic stream is now the single source of truth for plugin-failure surfacing
+   - 5 new regression tests: init failure auto-emits, init success doesn't auto-emit, tick failure auto-emits, shutdown failure auto-emits, multi-plugin failures = one auto-emit per failure
+   - Inline edit (no agent dispatch — too small to warrant the overhead); existing 33 plugin-host tests untouched and still pass
+2. **BRepHandle SSoT refactor** (post-audit MEDIUM #4; 5 net new tests; cad-projection 34 → 39):
+   - Closes Pairing-6 of the 2026-05-07 deep audit (cad-node FK dual-storage drift between BRepHandle ECS component and EntityCadMap)
+   - `BRepHandle.cad_node: NodeId` field **dropped**; struct now carries only `mesh_id` + `last_projected_checkpoint`
+   - `EntityCadMap` is the sole authoritative owner of entity↔cad-node mapping
+   - New `CadProjection` accessors: `node_for(entity)` / `entity_for(node)` / `remap_entity(entity, new_node)` — replaces the `handle.cad_node = new_node` write idiom with an atomic, validated transition that auto-marks the entity dirty for re-projection
+   - `BRepHandle::new()` no longer takes a NodeId
+   - Plugin adapter audit confirmed (no edits needed): `plugin_adapter.rs` only goes through `CadProjection::tick`, which always used `entity_cad_map.node_for(*entity)` for the lookup
+   - 5 new regression tests: struct-shape RON-no-cad_node check, node_for/entity_for accessor round-trip, remap-marks-dirty, remap-unknown-entity-error-NotFound, default-matches-new
+   - **Axis 3 fully closed**: HIGH #3 unified Tessellation + this MEDIUM #4 BRepHandle SSoT — no more dual-source representations in cad-core or cad-projection
+2. **Unified Mesh refactor** (post-audit HIGH #3; 9 net new tests; cad-core 155 → 164):
+   - Closes Pairings 1+8 of the 2026-05-07 deep audit (labeled vs. unlabeled type duality)
+   - `Tessellation` extended with `face_labels: Option<Vec<TopologyFaceId>>` (`#[serde(default, skip_serializing_if = "Option::is_none")]` for snapshot-format minimality); new `with_labels(...)` ctor + `is_labeled()` / `face_labels()` / `face_count()` accessors; new `LabelLengthMismatch` error variant
+   - `LabeledMesh` type **deleted** entirely
+   - `TopologyFaceId` moved from `topo_lineage::types` to `tessellation::mesh` (avoids tessellation→topo_lineage reverse import); re-exported through `topo_lineage::types` for back-compat — every existing import path keeps working
+   - `BooleanOp::evaluate` collapsed to one method: dispatches on `lhs.is_labeled() || rhs.is_labeled()`; mixed inputs synthesize `TopologyFaceId::DEGENERATE` per-triangle labels on the unlabeled side (downstream lineage classifies as Reinterpreted)
+   - `infer_lineage` collapsed to one function: requires labeled input (returns `LineageError::InvalidInput` otherwise); dispatches on output's labeled state (label-tracking when labeled, plane-equation heuristic when unlabeled)
+   - `evaluate_labeled` + `infer_lineage_labeled` removed from public API
+   - `label_by_plane` now returns `Tessellation` (was `LabeledMesh`)
+   - The labeled-mesh substrate now composes through `OperatorGraph::evaluate` end-to-end — Pairing-1 closed
+   - boolean.rs at 997 lines + infer.rs at 990 lines (both under 1000-cap; agent compressed redundant doc-comments to land under)
+2. **PluginContext v1 + CadProjectionPlugin canary** (post-audit CRITICAL #2; 16 new tests; kernel/plugin-host 23 → 33, cad-projection 28 → 34):
    - Closes Pairing-3 of the 2026-05-07 deep audit ("PluginContext is a logger, not a context")
    - `kernel/plugin-host::PluginContext` extended with type-erased resource registry: `BTreeMap<TypeId, Box<dyn Any + Send>>` + `insert<T>` / `get_mut<T>` / `take<T>` / `contains<T>` / `resource_count()` / `with_resource<T>` builder
    - Existing `PluginContext::new(diagnostics)` + `emit_diagnostic` + `diagnostics()` v0 API bit-identical (no breaking changes)
@@ -236,7 +263,7 @@ Pick one. All four are bounded single-agent dispatches.
 ## How to resume
 
 1. **Verify env**: cargo at `A:\RustCache\cargo\bin\cargo.exe` (NOT on PATH); set `CARGO_HOME=A:\RustCache\cargo`, `RUSTUP_HOME=A:\RustCache\rustup`. Run from `A:\RCAD\RGE\`.
-2. **Verify state matches this doc**: `cargo run -q -p rge-tool-architecture-lints -- all` should exit 0; `cargo test --workspace --all-targets --no-fail-fast` should report 1549 passed.
+2. **Verify state matches this doc**: `cargo run -q -p rge-tool-architecture-lints -- all` should exit 0; `cargo test --workspace --all-targets --no-fail-fast` should report 1568 passed.
 3. **Pick a dispatch option** (B/C/D/E above). Each has the spec inline; turn it into an Agent prompt with the same template structure as prior dispatches.
 4. **After dispatch completes**: verify all 9 lints PASS, run workspace tests, append entries to [`change.log`](./change.log) with timestamp + test count delta + LLVM lines + any complications, update [`Status.md`](./Status.md) with new state, update [`README.md`](./README.md) test count if changed.
 
@@ -253,13 +280,13 @@ Snapshot system is incomplete; graph-based stateful Tier-2 substrates are not al
 Plugin substrate is not real yet; current `PluginContext { &mut dyn DiagnosticSink }` is a logger, not a context; no stable ABI boundary.
 
 - **~~CRITICAL #2~~ DONE 2026-05-07**: `PluginContext` v1 — type-erased resource registry (`BTreeMap<TypeId, Box<dyn Any + Send>>`) with `insert<T>` / `get_mut<T>` / `take<T>` / `contains<T>` / `with_resource<T>` builder. **Owned-resources-handoff** design (not borrowed references) keeps plugin-host Tier-1 with no `unsafe`. Existing `PluginContext::new(diagnostics)` v0 API bit-identical. First real Tier-2 plugin canary `CadProjectionPlugin` lives in `crates/cad-projection/src/plugin_adapter.rs` and exercises full lifecycle through PluginHost. 16 tests; kernel/plugin-host 23 → 33; cad-projection 28 → 34.
-- **LOW #5**: Auto-emit `Diagnostic` from `init_all` / `tick_all` / `shutdown_all` on plugin `Err` (without changing the `PluginError` type). Preserves plugin-fatal isolation while making the diagnostic stream the single source of truth.
+- **~~LOW #5~~ DONE 2026-05-08**: `PluginHost::init_all` / `tick_all` / `shutdown_all` auto-emit `Diagnostic::error` on plugin Err with structured `"plugin <id> {phase} failed: <err>"` prefix. Plugin-fatal isolation preserved (additive). 5 regression tests; plugin-host 33 → 38.
 
 ### Axis 3 — Unified data model
 Parallel/duplicated representations (labeled vs unlabeled mesh; handle vs map cad_node) create dual-source-of-truth drift and pipeline composability failures.
 
-- **HIGH #3**: **Unified Mesh refactor** — collapse `Tessellation` + `LabeledMesh` into one type with `face_labels: Option<Vec<TopologyFaceId>>`. `Operator::evaluate -> Tessellation` carries labels when produced. Deletes the dual-path API (`evaluate` vs `evaluate_labeled`). Touches all 5 operators + cad-projection bridge + topo_lineage API.
-- **MEDIUM #4**: Single source of truth for `BRepHandle` ↔ `EntityCadMap`. Drop `cad_node` field from `BRepHandle`; look up via `EntityCadMap` at access time. Eliminates dual-source drift. Tradeoff: tiny perf hit, big consistency win.
+- **~~HIGH #3~~ DONE 2026-05-08**: Unified Mesh refactor. `Tessellation { positions, indices, face_labels: Option<Vec<TopologyFaceId>> }` — single type. `LabeledMesh` deleted; `TopologyFaceId` moved tessellation::mesh; `BooleanOp::evaluate` + `infer_lineage` collapsed to one signature each that dispatches on labeled-state. The labeled-mesh substrate now composes through `OperatorGraph::evaluate` end-to-end. cad-core 155 → 164 tests; +9 net.
+- **~~MEDIUM #4~~ DONE 2026-05-08**: `BRepHandle.cad_node` field dropped; `EntityCadMap` is the sole authoritative owner. New `CadProjection::{node_for, entity_for, remap_entity}` accessors expose the SSoT pattern. 5 regression tests; cad-projection 34 → 39. **Axis 3 fully closed.**
 
 ### Deferred (defensible until trigger fires)
 
@@ -270,11 +297,15 @@ Parallel/duplicated representations (labeled vs unlabeled mesh; handle vs map ca
 
 1. **~~CRITICAL #1~~ DONE 2026-05-07** — `CadGraph::SnapshotParticipate` impl + handle-validation guard
 2. **~~CRITICAL #2~~ DONE 2026-05-07** — `PluginContext` v1 capability registry + `cad-projection::Plugin` canary
-3. **HIGH #3 (NEXT)** — Unified Mesh refactor (closes labeled/unlabeled duality, Pairing-1+8)
-4. MEDIUM #4 — `BRepHandle` single-source-of-truth (closes Pairing-6)
-5. LOW #5 — Plugin diagnostic auto-emit (closes Pairing-5)
+3. **~~HIGH #3~~ DONE 2026-05-08** — Unified Mesh refactor (closes labeled/unlabeled duality, Pairing-1+8)
+4. **~~MEDIUM #4~~ DONE 2026-05-08** — `BRepHandle` single-source-of-truth (closes Pairing-6)
+5. **~~LOW #5~~ DONE 2026-05-08** — Plugin diagnostic auto-emit (closes Pairing-5)
 6. Test-gap-followup — Audit 2's 16 specific test recipes (cross-substrate determinism, missing fault injection, dead error variants)
 7. **gfx::Plugin canary** — second real Tier-2 plugin (proves PluginContext v1 design isn't cad-projection-specific; low-risk follow-up to CRITICAL #2)
+8. §18 companion docs (governance debt; substrates stable: GRAPH_FOUNDATION.md / CAD_TOPOLOGY_LINEAGE.md / PLUGIN_API.md / CAD_CORE_MODEL.md)
+9. Remaining kernel stubs (shared / asset-view / asset-streaming / io-scheduler / job-system)
+
+**All 5 architectural-debt audit findings (CRITICAL #1+#2 + HIGH #3 + MEDIUM #4 + LOW #5) now CLOSED** as of LOW #5 landing 2026-05-08. The 2026-05-07 deep audit is 100% productive: every ranked finding has shipped its corrective dispatch. Remaining registry items are governance debt or substrate expansion.
 
 ## Reference index
 

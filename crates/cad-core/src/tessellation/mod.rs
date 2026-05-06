@@ -16,4 +16,4 @@ pub mod cache;
 pub mod mesh;
 
 pub use cache::{CacheKey, TessellationCache, Tolerance, ToleranceError};
-pub use mesh::{Tessellation, TessellationError};
+pub use mesh::{Tessellation, TessellationError, TopologyFaceId};

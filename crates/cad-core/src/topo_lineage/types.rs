@@ -8,16 +8,21 @@
 //! # Contents
 //!
 //! * [`LineageError`] — error enum for all topo-lineage operations
-//! * [`TopologyFaceId`] — per-mesh face identity (with [`TopologyFaceId::DEGENERATE`] sentinel)
 //! * [`TopologyEvolution`] — `Preserved` / `Split` / `Merged` / `Deleted` / `Reinterpreted`
 //! * [`LineageEdge`] — one step in a face's history
 //! * [`LineageGraph`] — collection of edges with simple iteration helpers
-//! * [`LabeledMesh`] — mesh + per-triangle face labels
-
-use std::collections::BTreeSet;
+//!
+//! [`TopologyFaceId`] lives in [`crate::tessellation::mesh`] (so the
+//! [`crate::Tessellation`] substrate can carry per-triangle labels without
+//! a `tessellation → topo_lineage` reverse import) and is re-exported here
+//! for back-compat with code that imports it from `topo_lineage::types`.
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
+// Re-export so existing `crate::topo_lineage::types::TopologyFaceId` paths
+// keep working after the move to `tessellation::mesh`.
+pub use crate::tessellation::TopologyFaceId;
 
 // ---------------------------------------------------------------------------
 // LineageError
@@ -52,45 +57,6 @@ pub enum LineageError {
         /// Triangle index (0-based).
         triangle_idx: usize,
     },
-}
-
-// ---------------------------------------------------------------------------
-// TopologyFaceId
-// ---------------------------------------------------------------------------
-
-/// Per-mesh face identity.
-///
-/// Sequential within a single [`LabeledMesh`]; not stable across rebuilds
-/// (that's a Phase 7.2 dispatch — needs a B-Rep model first).
-///
-/// The sentinel value [`TopologyFaceId::DEGENERATE`] (`u64::MAX`) labels
-/// triangles that could not be assigned a plane because they were
-/// degenerate (zero area) or had non-finite normals. These triangles are
-/// excluded from lineage inference.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct TopologyFaceId(pub u64);
-
-impl TopologyFaceId {
-    /// Sentinel face id for triangles whose plane could not be derived
-    /// (degenerate / non-finite). The lineage pipeline silently excludes
-    /// these from face counts and edge inference.
-    pub const DEGENERATE: TopologyFaceId = TopologyFaceId(u64::MAX);
-
-    /// `true` iff this face id is the degenerate sentinel.
-    #[must_use]
-    pub fn is_degenerate(self) -> bool {
-        self.0 == u64::MAX
-    }
-}
-
-impl std::fmt::Display for TopologyFaceId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if self.is_degenerate() {
-            write!(f, "face:degenerate")
-        } else {
-            write!(f, "face:{}", self.0)
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -204,104 +170,12 @@ impl LineageGraph {
 }
 
 // ---------------------------------------------------------------------------
-// LabeledMesh
-// ---------------------------------------------------------------------------
-
-/// Mesh with per-triangle face labels.
-///
-/// Invariant (enforced by [`Self::new`]): `face_labels.len() ==
-/// indices.len() / 3` (one label per triangle).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct LabeledMesh {
-    /// Per-vertex positions in object space, `[x, y, z]`.
-    pub positions: Vec<[f32; 3]>,
-    /// Triangle indices into `positions`, three per triangle.
-    pub indices: Vec<u32>,
-    /// One [`TopologyFaceId`] per triangle.
-    pub face_labels: Vec<TopologyFaceId>,
-}
-
-impl LabeledMesh {
-    /// Construct a [`LabeledMesh`] after validating index-buffer invariants
-    /// and the label-length match.
-    ///
-    /// # Errors
-    ///
-    /// * [`LineageError::InvalidInput`] if `indices.len() % 3 != 0`.
-    /// * [`LineageError::LabelLengthMismatch`] if `face_labels.len() * 3 !=
-    ///   indices.len()`.
-    /// * [`LineageError::InvalidInput`] if any index is `>= positions.len()`.
-    pub fn new(
-        positions: Vec<[f32; 3]>,
-        indices: Vec<u32>,
-        face_labels: Vec<TopologyFaceId>,
-    ) -> Result<Self, LineageError> {
-        if indices.len() % 3 != 0 {
-            return Err(LineageError::InvalidInput(format!(
-                "indices.len() ({}) must be a multiple of 3",
-                indices.len()
-            )));
-        }
-        if face_labels.len() * 3 != indices.len() {
-            return Err(LineageError::LabelLengthMismatch {
-                got: face_labels.len(),
-                expected: indices.len() / 3,
-            });
-        }
-        let positions_len = positions.len();
-        for (i, &idx) in indices.iter().enumerate() {
-            if (idx as usize) >= positions_len {
-                return Err(LineageError::InvalidInput(format!(
-                    "index {idx} at indices[{i}] out of bounds (positions.len() = {positions_len})"
-                )));
-            }
-        }
-        Ok(Self {
-            positions,
-            indices,
-            face_labels,
-        })
-    }
-
-    /// Number of triangles (`indices.len() / 3`).
-    #[must_use]
-    pub fn triangle_count(&self) -> usize {
-        self.indices.len() / 3
-    }
-
-    /// Number of distinct face ids in `face_labels`, excluding the
-    /// degenerate sentinel ([`TopologyFaceId::DEGENERATE`]).
-    #[must_use]
-    pub fn face_count(&self) -> usize {
-        let mut seen = BTreeSet::new();
-        for id in &self.face_labels {
-            if !id.is_degenerate() {
-                seen.insert(*id);
-            }
-        }
-        seen.len()
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Unit tests
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // --- TopologyFaceId / serde -------------------------------------------
-
-    #[test]
-    fn topology_face_id_round_trips_through_serde() {
-        // Use RON (already a workspace dep — cad-core has it for snapshot
-        // round-trips elsewhere) so this test doesn't pull in serde_json.
-        let id = TopologyFaceId(42);
-        let s = ron::to_string(&id).expect("serialize");
-        let back: TopologyFaceId = ron::from_str(&s).expect("deserialize");
-        assert_eq!(id, back);
-    }
 
     // --- LineageGraph -----------------------------------------------------
 
@@ -427,91 +301,5 @@ mod tests {
             1
         );
         assert_eq!(g.edges_by_evolution(TopologyEvolution::Split).count(), 0);
-    }
-
-    // --- LabeledMesh ------------------------------------------------------
-
-    #[test]
-    fn labeled_mesh_new_validates_label_length() {
-        let positions = vec![[0.0_f32, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
-        let indices = vec![0_u32, 1, 2];
-        // Wrong: 0 labels for 1 triangle.
-        let err = LabeledMesh::new(positions.clone(), indices.clone(), vec![]).unwrap_err();
-        assert!(matches!(
-            err,
-            LineageError::LabelLengthMismatch {
-                got: 0,
-                expected: 1
-            }
-        ));
-        // Wrong: 2 labels for 1 triangle.
-        let err = LabeledMesh::new(
-            positions.clone(),
-            indices.clone(),
-            vec![TopologyFaceId(0), TopologyFaceId(1)],
-        )
-        .unwrap_err();
-        assert!(matches!(
-            err,
-            LineageError::LabelLengthMismatch {
-                got: 2,
-                expected: 1
-            }
-        ));
-        // Correct: 1 label for 1 triangle.
-        let ok = LabeledMesh::new(positions, indices, vec![TopologyFaceId(0)]).expect("valid");
-        assert_eq!(ok.triangle_count(), 1);
-    }
-
-    #[test]
-    fn labeled_mesh_new_validates_indices_multiple_of_3() {
-        let positions = vec![[0.0_f32, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
-        // 4 indices is not a multiple of 3.
-        let err =
-            LabeledMesh::new(positions, vec![0_u32, 1, 2, 0], vec![TopologyFaceId(0)]).unwrap_err();
-        match err {
-            LineageError::InvalidInput(msg) => assert!(msg.contains("multiple of 3"), "{msg}"),
-            other => panic!("expected InvalidInput, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn labeled_mesh_new_validates_index_bounds() {
-        let positions = vec![[0.0_f32, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
-        // Index 5 is out of bounds (positions.len() = 3).
-        let err =
-            LabeledMesh::new(positions, vec![0_u32, 1, 5], vec![TopologyFaceId(0)]).unwrap_err();
-        match err {
-            LineageError::InvalidInput(msg) => {
-                assert!(msg.contains("out of bounds"), "{msg}");
-            }
-            other => panic!("expected InvalidInput, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn labeled_mesh_face_count_counts_distinct_labels() {
-        let positions = vec![
-            [0.0_f32, 0.0, 0.0],
-            [1.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0],
-            [1.0, 1.0, 0.0],
-        ];
-        // 2 triangles with distinct labels.
-        let m = LabeledMesh::new(
-            positions.clone(),
-            vec![0_u32, 1, 2, 1, 3, 2],
-            vec![TopologyFaceId(0), TopologyFaceId(1)],
-        )
-        .expect("valid");
-        assert_eq!(m.face_count(), 2);
-        // 2 triangles with the same label.
-        let m = LabeledMesh::new(
-            positions,
-            vec![0_u32, 1, 2, 1, 3, 2],
-            vec![TopologyFaceId(7), TopologyFaceId(7)],
-        )
-        .expect("valid");
-        assert_eq!(m.face_count(), 1);
     }
 }

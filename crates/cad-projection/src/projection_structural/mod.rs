@@ -16,12 +16,15 @@
 //!
 //! # Components
 //!
-//! * [`BRepHandle`] — ECS component carrying a reference to a `cad-core`
-//!   operator-graph node, plus the most recently projected mesh id and the
-//!   checkpoint at which that mesh was projected. Implements
-//!   [`SnapshotComponent`] so PIE snapshots round-trip the mapping.
+//! * [`BRepHandle`] — ECS component carrying the most recently projected
+//!   mesh id and the checkpoint at which that mesh was projected. Per the
+//!   2026-05-08 `BRepHandle` `SSoT` refactor (Pairing-6 closure), the
+//!   cad-node FK is owned exclusively by [`EntityCadMap`] — the handle no
+//!   longer stores a `cad_node` field. Consumers look up the node at access
+//!   time via [`crate::CadProjection::node_for`].
 //! * [`EntityCadMap`] — owned by [`crate::CadProjection`]; an
-//!   atomic-bidirectional `BTreeMap` (`EntityId` ↔ `NodeId`).
+//!   atomic-bidirectional `BTreeMap` (`EntityId` ↔ `NodeId`). The single
+//!   source of truth for entity ↔ cad-node mappings.
 //! * [`EntityCadMapError`] — duplicate / not-found errors raised by
 //!   [`EntityCadMap`].
 //!
@@ -70,21 +73,28 @@ impl From<EntityIdProxy> for EntityId {
 // BRepHandle
 // ---------------------------------------------------------------------------
 
-/// ECS component holding a reference to a `cad-core` operator-graph node.
+/// ECS component carrying projection bookkeeping for a B-Rep entity.
 ///
-/// Carries the most recently projected mesh id and the checkpoint at which
+/// Stores the most recently projected mesh id and the checkpoint at which
 /// the projection was last performed. Both are `Option` because a freshly
 /// inserted handle has not been projected yet — the next
 /// [`crate::CadProjection::tick`] call fills them in.
 ///
-/// `BRepHandle` implements [`SnapshotComponent`] so its identity (the cad
-/// node it points to) round-trips through PIE snapshots. The
-/// `mesh_id` / `last_projected_checkpoint` fields are stable bookkeeping
-/// metadata; they re-derive on the next tick after restore.
+/// **Single source of truth for the cad-node FK** (post-2026-05-08 `SSoT`
+/// refactor, Pairing-6 closure): the entity ↔ cad-node mapping lives
+/// **only** in [`EntityCadMap`], owned by [`crate::CadProjection`]. The
+/// handle deliberately does not store a `cad_node` field; consumers look up
+/// the node via [`crate::CadProjection::node_for`] at access time. Removing
+/// the duplicated FK eliminates an entire class of drift bugs (handle
+/// pointing at one node while the map points at another) that were possible
+/// before this refactor.
+///
+/// `BRepHandle` implements [`SnapshotComponent`] so its bookkeeping fields
+/// round-trip through PIE snapshots. The `mesh_id` /
+/// `last_projected_checkpoint` fields are stable metadata; they re-derive on
+/// the next tick after restore.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BRepHandle {
-    /// The `cad-core` node this entity tracks.
-    pub cad_node: NodeId,
     /// Most recently projected mesh id, if any.
     pub mesh_id: Option<ProjectedMeshId>,
     /// Checkpoint at which `mesh_id` was projected, if any.
@@ -92,16 +102,27 @@ pub struct BRepHandle {
 }
 
 impl BRepHandle {
-    /// Construct a fresh `BRepHandle` pointing at `cad_node`. No mesh has been
-    /// projected yet — the next tick will fill in `mesh_id` and
-    /// `last_projected_checkpoint`.
+    /// Construct a fresh `BRepHandle`. No mesh has been projected yet — the
+    /// next tick will fill in `mesh_id` and `last_projected_checkpoint`.
+    ///
+    /// **Note (post-2026-05-08 `BRepHandle` `SSoT` refactor)**: this
+    /// constructor no longer takes a [`NodeId`]. The cad-node FK is owned
+    /// exclusively by [`EntityCadMap`] (single source of truth per Pairing-6
+    /// closure). Use [`crate::CadProjection::spawn_brep_entity`] to spawn a
+    /// `BRepHandle` entity together with its corresponding map entry; or
+    /// insert via free fns if you manage the map separately.
     #[must_use]
-    pub fn new(cad_node: NodeId) -> Self {
+    pub fn new() -> Self {
         Self {
-            cad_node,
             mesh_id: None,
             last_projected_checkpoint: None,
         }
+    }
+}
+
+impl Default for BRepHandle {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -394,10 +415,19 @@ mod tests {
 
     #[test]
     fn brep_handle_new_zero_state() {
-        let h = BRepHandle::new(n(42));
-        assert_eq!(h.cad_node, n(42));
+        // Post-2026-05-08 SSoT refactor: BRepHandle::new() takes no NodeId.
+        // The cad-node FK lives in EntityCadMap; the handle stores only
+        // projection bookkeeping (mesh_id + last_projected_checkpoint).
+        let h = BRepHandle::new();
         assert_eq!(h.mesh_id, None);
         assert_eq!(h.last_projected_checkpoint, None);
+    }
+
+    #[test]
+    fn brep_handle_default_matches_new() {
+        // Default impl is delegated to ::new(); they must produce identical
+        // zero-state handles.
+        assert_eq!(BRepHandle::default(), BRepHandle::new());
     }
 
     #[test]

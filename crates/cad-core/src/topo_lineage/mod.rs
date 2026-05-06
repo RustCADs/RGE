@@ -86,13 +86,19 @@
 //!
 //! # Module layout
 //!
-//! * `types` — [`LineageError`], [`TopologyFaceId`], [`TopologyEvolution`],
-//!   [`LineageEdge`], [`LineageGraph`], [`LabeledMesh`].
+//! * `types` — [`LineageError`], [`TopologyEvolution`], [`LineageEdge`],
+//!   [`LineageGraph`]. ([`TopologyFaceId`] re-exported from
+//!   [`crate::tessellation`] for back-compat.)
 //! * `plane` — `QuantizedPlane` (private; only used by `infer`).
-//! * `infer` — [`label_by_plane`] + [`infer_lineage`].
+//! * `infer` — [`label_by_plane`] + [`infer_lineage`] (the unified
+//!   labeled-or-unlabeled path).
 //!
 //! All three are private sub-modules; the public API is re-exported here
-//! and at the crate root.
+//! and at the crate root. Per the 2026-05-08 unified mesh refactor, the
+//! `LabeledMesh` type has been collapsed into [`crate::Tessellation`]'s
+//! optional `face_labels` field, and the `infer_lineage` /
+//! `infer_lineage_labeled` duplication has collapsed to a single
+//! [`infer_lineage`] that dispatches on `output.is_labeled()`.
 
 #![allow(clippy::module_name_repetitions)]
 
@@ -100,7 +106,5 @@ mod infer;
 mod plane;
 mod types;
 
-pub use infer::{infer_lineage, infer_lineage_labeled, label_by_plane};
-pub use types::{
-    LabeledMesh, LineageEdge, LineageError, LineageGraph, TopologyEvolution, TopologyFaceId,
-};
+pub use infer::{infer_lineage, label_by_plane};
+pub use types::{LineageEdge, LineageError, LineageGraph, TopologyEvolution, TopologyFaceId};

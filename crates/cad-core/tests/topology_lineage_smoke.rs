@@ -12,13 +12,16 @@
 //!   `label_by_plane` (input mesh) → `infer_lineage` →
 //!   classify input faces vs output planes.
 //!
-//! The unit tests in `topo_lineage::tests` already verify the lineage logic
-//! deterministically with synthetic input/output meshes; these integration
-//! smokes cover the wire-up to `csgrs`-driven Boolean output.
+//! After the 2026-05-08 unified-mesh refactor, the labeled and unlabeled
+//! paths share a single [`infer_lineage`] entry point that dispatches on
+//! `output.is_labeled()`. The labeled-path smoke (third test below)
+//! constructs labeled inputs via [`label_by_plane`] and then invokes
+//! [`BooleanOp::evaluate`] (no separate `evaluate_labeled` anymore — the
+//! `BooleanOp` detects labeled inputs automatically and propagates).
 
 use rge_cad_core::{
-    infer_lineage, infer_lineage_labeled, label_by_plane, BooleanMode, BooleanOp, CadGraph,
-    CuboidOp, OperatorNode, TessellationCache, Tolerance, TopologyEvolution, TransformOp,
+    infer_lineage, label_by_plane, BooleanMode, BooleanOp, CadGraph, CuboidOp, Operator,
+    OperatorNode, TessellationCache, Tolerance, TopologyEvolution, TransformOp,
 };
 
 fn tol() -> Tolerance {
@@ -72,7 +75,7 @@ fn cube_boolean_union_yields_preserved_and_reinterpreted_lineage() {
     let labeled_input = label_by_plane(&cube_a_tess, 0).expect("label cube_a");
     assert_eq!(
         labeled_input.face_count(),
-        6,
+        Some(6),
         "cube_a should label into 6 plane groups (the 6 cube faces)"
     );
 
@@ -82,12 +85,14 @@ fn cube_boolean_union_yields_preserved_and_reinterpreted_lineage() {
         .evaluate(union, &mut cache, tol())
         .expect("eval union");
 
-    // Run lineage inference.
+    // Run lineage inference. Output is unlabeled (OperatorGraph::evaluate
+    // with two unlabeled cube inputs produces unlabeled output) → plane
+    // heuristic path.
     let (labeled_output, lineage) =
         infer_lineage(&labeled_input, &union_tess, 100).expect("lineage");
 
     assert!(
-        labeled_output.face_count() > 0,
+        labeled_output.face_count().expect("labeled output") > 0,
         "union output has no labeled faces"
     );
     assert!(!lineage.is_empty(), "lineage graph is empty");
@@ -101,7 +106,7 @@ fn cube_boolean_union_yields_preserved_and_reinterpreted_lineage() {
     assert!(
         reint_count > 0,
         "expected Reinterpreted edges from Boolean output but found 0; \
-         lineage = {} edges, output face_count = {}",
+         lineage = {} edges, output face_count = {:?}",
         lineage.len(),
         labeled_output.face_count()
     );
@@ -120,9 +125,9 @@ fn cube_boolean_union_yields_preserved_and_reinterpreted_lineage() {
 }
 
 /// Cube ∖ `translated_cube` → expect Split or Deleted edges for the
-/// `cube_a` faces partially carved away by `cube_b`. (The csgrs
-/// metadata-retag quirk for Difference is per ADR-112; the plane-only v0
-/// prototype is unaffected because we don't consume csgrs metadata yet.)
+/// `cube_a` faces partially carved away by `cube_b`. Plane-heuristic path
+/// (output of `OperatorGraph::evaluate` is unlabeled because both cube
+/// inputs are unlabeled).
 #[test]
 fn cube_minus_offset_cube_records_deletion_or_split_for_consumed_faces() {
     let mut cad = CadGraph::new();
@@ -172,7 +177,7 @@ fn cube_minus_offset_cube_records_deletion_or_split_for_consumed_faces() {
 
     let (labeled_output, lineage) =
         infer_lineage(&labeled_input, &diff_tess, 100).expect("lineage");
-    assert!(labeled_output.face_count() > 0);
+    assert!(labeled_output.face_count().expect("labeled output") > 0);
     assert!(!lineage.is_empty());
 
     // The Difference removes a corner from cube_a (the `[0,0.5]³` octant is
@@ -229,24 +234,24 @@ fn cube_minus_offset_cube_records_deletion_or_split_for_consumed_faces() {
 }
 
 /// Cube ∖ `translated_cube` via the **labeled path** (csgrs metadata-
-/// passthrough integration, D-7.4-followup). Mirrors the fixture used by
-/// [`cube_minus_offset_cube_records_deletion_or_split_for_consumed_faces`]
-/// but threads per-input-triangle [`TopologyFaceId`] labels through
-/// [`BooleanOp::evaluate_labeled`] and runs [`infer_lineage_labeled`] on
-/// the result.
+/// passthrough). After the 2026-05-08 unified-mesh refactor, the labeled
+/// path is engaged simply by passing labeled [`Tessellation`] inputs to
+/// the unified [`BooleanOp::evaluate`] — there is no longer a separate
+/// `evaluate_labeled` method. The op detects `is_labeled()` and threads
+/// per-input-triangle [`TopologyFaceId`] through csgrs's polygon metadata.
 ///
 /// The plane-only path classifies partially-consumed Difference faces as
 /// **Merged** (a v0 false-positive — csgrs's BSP triangulation produces
 /// more output triangles per surviving plane than the 2-tri input). The
 /// labeled path uses the per-polygon csgrs metadata so input face
-/// identity survives the BSP, and the inference's triangle-count
+/// identity survives the BSP, and the unified inference's triangle-count
 /// comparison correctly fires `Split` (input>output) for consumed faces.
 ///
 /// This smoke verifies: the labeled path surfaces **at least one Split
 /// edge** for partial consumption (where the plane-only path would
 /// over-count as Merged).
 #[test]
-fn cube_minus_offset_cube_via_labeled_path_classifies_as_split_not_merged() {
+fn cube_minus_offset_cube_with_labeled_inputs_classifies_as_split_not_merged() {
     let mut cad = CadGraph::new();
     cad.begin_operation().expect("begin");
 
@@ -274,8 +279,8 @@ fn cube_minus_offset_cube_via_labeled_path_classifies_as_split_not_merged() {
 
     // Evaluate both lhs (cube_a) and rhs (translated cube_b) as
     // Tessellations through the existing graph path, then upgrade them
-    // to LabeledMeshes via label_by_plane (lhs ids start at 0, rhs ids
-    // start at 1000 so the two ranges are visibly disjoint).
+    // to labeled tessellations via label_by_plane (lhs ids start at 0,
+    // rhs ids start at 1000 so the two ranges are visibly disjoint).
     let mut cache = TessellationCache::new();
     let cube_a_tess = cad
         .graph()
@@ -291,12 +296,12 @@ fn cube_minus_offset_cube_via_labeled_path_classifies_as_split_not_merged() {
 
     assert_eq!(
         labeled_input.face_count(),
-        6,
+        Some(6),
         "cube_a labels into 6 plane groups (axis-aligned faces)"
     );
     assert_eq!(
         labeled_rhs.face_count(),
-        6,
+        Some(6),
         "translated cube_b labels into 6 plane groups"
     );
 
@@ -306,17 +311,19 @@ fn cube_minus_offset_cube_via_labeled_path_classifies_as_split_not_merged() {
     // labels on those rhs-derived output faces).
     let diff_op = BooleanOp::new(BooleanMode::Difference);
     let labeled_output = diff_op
-        .evaluate_labeled(&labeled_input, &labeled_rhs)
+        .evaluate(&[&labeled_input, &labeled_rhs])
         .expect("difference labeled");
+    assert!(labeled_output.is_labeled(), "labeled output expected");
     assert!(
         labeled_output.triangle_count() > 0,
         "labeled Difference output should be non-empty"
     );
 
-    // Now run the labeled-path inference between cube_a labeled and
-    // the labeled output (lhs perspective: which cube_a faces survived
-    // / split / disappeared?).
-    let lineage = infer_lineage_labeled(&labeled_input, &labeled_output);
+    // Now run the unified inference between cube_a labeled and the
+    // labeled output (lhs perspective: which cube_a faces survived /
+    // split / disappeared?). Output is labeled → label-tracking path.
+    let (_out, lineage) =
+        infer_lineage(&labeled_input, &labeled_output, 100).expect("labeled lineage");
     assert!(
         !lineage.is_empty(),
         "labeled-path lineage should not be empty"

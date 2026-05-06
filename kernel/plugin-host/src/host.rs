@@ -204,8 +204,18 @@ impl PluginHost {
                             report.initialized.push(id);
                         }
                         Err(e) => {
+                            // Auto-emit synthetic Diagnostic::error so the
+                            // diagnostic stream is the single source of truth
+                            // for plugin failures (Pairing-5 closure). Plugin
+                            // authors that emit their own diagnostic before
+                            // returning Err produce both: the auto-emit is
+                            // additive, not a replacement.
+                            let msg = e.to_string();
+                            ctx.emit_diagnostic(rge_kernel_diagnostics::Diagnostic::error(
+                                format!("plugin {id} init failed: {msg}"),
+                            ));
                             record.state = PluginState::Failed;
-                            report.failed.push((id, e.to_string()));
+                            report.failed.push((id, msg));
                         }
                     }
                 }
@@ -224,8 +234,13 @@ impl PluginHost {
                     match record.plugin.tick(ctx) {
                         Ok(()) => report.ticked += 1,
                         Err(e) => {
+                            // Auto-emit (see init_all above).
+                            let msg = e.to_string();
+                            ctx.emit_diagnostic(rge_kernel_diagnostics::Diagnostic::error(
+                                format!("plugin {id} tick failed: {msg}"),
+                            ));
                             record.state = PluginState::Failed;
-                            report.failed.push((id, e.to_string()));
+                            report.failed.push((id, msg));
                         }
                     }
                 }
@@ -254,8 +269,13 @@ impl PluginHost {
                             report.shutdown.push(id);
                         }
                         Err(e) => {
+                            // Auto-emit (see init_all above).
+                            let msg = e.to_string();
+                            ctx.emit_diagnostic(rge_kernel_diagnostics::Diagnostic::error(
+                                format!("plugin {id} shutdown failed: {msg}"),
+                            ));
                             record.state = PluginState::Failed;
-                            report.failed.push((id, e.to_string()));
+                            report.failed.push((id, msg));
                         }
                     }
                 }
@@ -720,6 +740,150 @@ mod tests {
         assert_eq!(host.count(), 0);
         // Pending plugin should not have shutdown called.
         assert!(log.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn init_all_auto_emits_diagnostic_on_plugin_init_failure() {
+        // Pairing-5 closure: a plugin that fails init produces a synthetic
+        // Diagnostic::error in the sink, even if the plugin itself doesn't
+        // call ctx.emit_diagnostic. The host is the single source of truth
+        // for plugin-failure surfacing.
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let mut diags = DiagnosticAggregator::new();
+        let mut host = PluginHost::new();
+
+        host.register(
+            PluginId::new("a"),
+            Box::new(TestPlugin::new("a", log.clone()).with_init_failure()),
+        )
+        .expect("register");
+
+        let report = {
+            let mut ctx = PluginContext::new(&mut diags);
+            host.init_all(&mut ctx)
+        };
+        assert_eq!(report.failed.len(), 1);
+        // Auto-emit produced exactly one error diagnostic.
+        assert_eq!(diags.len(), 1);
+        assert!(diags.has_errors());
+        let messages: Vec<&str> = diags.iter().map(|d| d.message.as_str()).collect();
+        assert!(
+            messages[0].starts_with("plugin a init failed:"),
+            "expected auto-emit prefix; got: {}",
+            messages[0]
+        );
+    }
+
+    #[test]
+    fn init_all_does_not_auto_emit_diagnostic_on_success() {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let mut diags = DiagnosticAggregator::new();
+        let mut host = PluginHost::new();
+
+        host.register(
+            PluginId::new("a"),
+            Box::new(TestPlugin::new("a", log.clone())),
+        )
+        .expect("register");
+
+        {
+            let mut ctx = PluginContext::new(&mut diags);
+            host.init_all(&mut ctx);
+        }
+        // Successful init produces no auto-emit (the plugin can still emit
+        // its own diagnostics, but TestPlugin doesn't).
+        assert_eq!(diags.len(), 0);
+    }
+
+    #[test]
+    fn tick_all_auto_emits_diagnostic_on_plugin_tick_failure() {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let mut diags = DiagnosticAggregator::new();
+        let mut host = PluginHost::new();
+
+        host.register(
+            PluginId::new("a"),
+            Box::new(TestPlugin::new("a", log.clone()).with_tick_failure()),
+        )
+        .expect("register");
+
+        {
+            let mut ctx = PluginContext::new(&mut diags);
+            host.init_all(&mut ctx);
+        }
+        // After successful init, sink is empty.
+        assert_eq!(diags.len(), 0);
+
+        let report = {
+            let mut ctx = PluginContext::new(&mut diags);
+            host.tick_all(&mut ctx)
+        };
+        assert_eq!(report.failed.len(), 1);
+        assert_eq!(diags.len(), 1);
+        let messages: Vec<&str> = diags.iter().map(|d| d.message.as_str()).collect();
+        assert!(messages[0].starts_with("plugin a tick failed:"));
+    }
+
+    #[test]
+    fn shutdown_all_auto_emits_diagnostic_on_plugin_shutdown_failure() {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let mut diags = DiagnosticAggregator::new();
+        let mut host = PluginHost::new();
+
+        host.register(
+            PluginId::new("a"),
+            Box::new(TestPlugin::new("a", log.clone()).with_shutdown_failure()),
+        )
+        .expect("register");
+
+        {
+            let mut ctx = PluginContext::new(&mut diags);
+            host.init_all(&mut ctx);
+        }
+        assert_eq!(diags.len(), 0);
+
+        let report = {
+            let mut ctx = PluginContext::new(&mut diags);
+            host.shutdown_all(&mut ctx)
+        };
+        assert_eq!(report.failed.len(), 1);
+        assert_eq!(diags.len(), 1);
+        let messages: Vec<&str> = diags.iter().map(|d| d.message.as_str()).collect();
+        assert!(messages[0].starts_with("plugin a shutdown failed:"));
+    }
+
+    #[test]
+    fn init_all_auto_emits_one_diagnostic_per_failing_plugin() {
+        // 3 plugins; b and c both fail init; expect exactly 2 auto-emits.
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let mut diags = DiagnosticAggregator::new();
+        let mut host = PluginHost::new();
+
+        host.register(
+            PluginId::new("a"),
+            Box::new(TestPlugin::new("a", log.clone())),
+        )
+        .expect("a");
+        host.register(
+            PluginId::new("b"),
+            Box::new(TestPlugin::new("b", log.clone()).with_init_failure()),
+        )
+        .expect("b");
+        host.register(
+            PluginId::new("c"),
+            Box::new(TestPlugin::new("c", log.clone()).with_init_failure()),
+        )
+        .expect("c");
+
+        {
+            let mut ctx = PluginContext::new(&mut diags);
+            host.init_all(&mut ctx);
+        }
+        // Two auto-emits, one per failure.
+        assert_eq!(diags.len(), 2);
+        let messages: Vec<&str> = diags.iter().map(|d| d.message.as_str()).collect();
+        assert!(messages[0].starts_with("plugin b init failed:"));
+        assert!(messages[1].starts_with("plugin c init failed:"));
     }
 
     #[test]
