@@ -50,7 +50,7 @@ The moat (per [PLAN.md §0.2](./plans/PLAN.md)):
 | physics::Plugin canary (§10.4 dogfood-rule three-substrate proof) | **done** — 3rd real Tier-2 plugin closing §10.4 dogfood-rule canary suite at three different resource families: CAD-graph (cad-projection) + GPU (gfx) + physics-world (this dispatch). New `crates/physics/src/plugin_adapter.rs` (325L; 9 unit tests at file foot) takes rapier3d `World` (10 arenas + IntegrationParameters + PhysicsPipeline) + `AuditLedger`, advances one simulation step, puts both back. ContractViolation paths validated; **RuntimeFault NOT exercised** because rapier3d's `step` is infallible (canonical "no-RuntimeFault straight-line subcase" pattern). New `crates/physics/tests/plugin_adapter_smoke.rs` (499L; 6 integration tests + `PanickingTickPlugin` sibling fixture). **Third-substrate proof point for ADR-114**: rapier3d 0.32's `World` composition is Send out of the box with `enhanced-determinism`; no `Mutex` / no `Arc` / no `unsafe`. Owned-handoff pattern generalizes cleanly across THREE substrate families with **zero kernel-side substrate change** between them. **§10.4 dogfood-rule canary count: 3 of N** (cad-projection + gfx + physics). physics 9 → 24; workspace 1634 → 1649 |
 | §18 companion docs (first batch) + ADR-114 amendment | **done** — pure-docs dispatch (zero test-count delta). ADR-114 amended (162L → 214L; +52L `Amendment 2026-05-08 — Three-substrate validation` section) substantiating the three-substrate proof + pattern dichotomy (straight-line vs lazy-build-on-first-tick) + no-RuntimeFault subcase; Followup #1 (gfx::Plugin canary) marked RESOLVED. First `docs/§18/` directory landing with convention defined (five-row header table per doc). **`docs/§18/PLUGIN_HOST_PATTERNS.md`** (282L): plugin authoring guide — owned-handoff contract, Pattern A straight-line + Pattern B lazy-build pseudocode, error classification cheat-sheet, idempotent-failure-put-back invariant, multi-plugin isolation, 12-16-test recipe template. **`docs/§18/PLUGIN_API.md`** (289L): API-surface reference for kernel/plugin-host with full Plugin/PluginContext/PluginError/PluginPhase/PluginHost docs + layering invariants. **§18 companion-doc count: 2 of 27** (was 0). New ADR-114 followup added: audio canary as 4th-substrate Send-shape cross-check on cpal::Stream RAII handles |
 | audio::Plugin canary (ADR-114 four-substrate proof closure) | **done** — 4th real Tier-2 plugin per ADR-114 amendment's new followup. **Send finding (best-case outcome)**: `AudioManager<MockBackend>` + `AudioManager<DefaultBackend>` + `AudioFrame` all `Send + 'static` (verified empirically via permanent `assert_send_static<T>()` lib test). Kira's wrapper around cpal renders the `cpal::Stream` non-Send concern moot at the public-API layer — Kira keeps the platform handle on a backend-owned thread and routes commands through a `Send` channel. Plugin canary required NO Mutex / NO Arc / NO unsafe. **Four-substrate proof CLOSED.** New `crates/audio/src/plugin_adapter.rs` (609L; 13 unit tests at file foot) + `crates/audio/tests/plugin_adapter_smoke.rs` (521L; 6 integration tests + `PanickingTickPlugin` sibling fixture). **First canary combining Pattern A (straight-line tick) + fallible inner work (RuntimeFault mapping)** — `audio_schedule_step` returns `Result<(), ManagerError>`; `ManagerError::UnknownClip` → `PluginError::RuntimeFault`. Distinct from physics's no-RuntimeFault subcase and gfx's lazy-build pattern. **§10.4 dogfood-rule canary count: 4 of N** (cad-projection + gfx + physics + audio). audio 28 → 48; workspace 1649 → 1668 |
-| Tests | **1692 / 1692 pass** (`cargo test --workspace --all-targets --no-fail-fast`) across 211 binaries (2 ignored intentionally). Plus **16 doctests pass** (`cargo test --workspace --doc --no-fail-fast`; 11 ignored — typically marker-only `text` blocks). |
+| Tests | **1735 / 1735 pass** (`cargo test --workspace --all-targets --no-fail-fast`) across 214+ binaries (2 ignored intentionally). Plus **16 doctests pass** (`cargo test --workspace --doc --no-fail-fast`; 11 ignored — typically marker-only `text` blocks). |
 
 Live snapshot of work in progress: [`Status.md`](./Status.md). Running history: [`change.md`](./change.md). Perf baselines: [`plans/BASELINE.md`](./plans/BASELINE.md).
 
@@ -60,13 +60,13 @@ Live snapshot of work in progress: [`Status.md`](./Status.md). Running history: 
 # Build the whole workspace
 cargo check --workspace --all-targets
 
-# Run all tests (1692 unit + integration; --all-targets excludes doctests)
+# Run all tests (1735 unit + integration; --all-targets excludes doctests)
 cargo test --workspace --all-targets --no-fail-fast
 
-# Run workspace doctests (16 pass + 11 ignored as of 2026-05-09)
+# Run workspace doctests (16 pass + 11 ignored as of 2026-05-10)
 cargo test --workspace --doc --no-fail-fast
 
-# Run all 9 architecture lints against the workspace
+# Run all 9 enforcement architecture lints + 1 supplementary against the workspace
 cargo run -q -p rge-tool-architecture-lints -- all
 
 # Run a single lint (kebab-case names)
@@ -91,18 +91,45 @@ Nine lints catch architectural drift before it merges. See [Status.md](./Status.
 | `kernel-isolation` | PLAN §1.6.4 | Multiple `io-*` crates claiming the same format extension |
 | `failure-class` | PLAN §1.13 | Tier-1+Tier-2 crates lacking `//! Failure class: <kind>` declaration in lib.rs |
 
-Pre-existing legitimate exceptions are tracked in [`tools/architecture-lints/exemptions.toml`](./tools/architecture-lints/exemptions.toml) — each entry names the file, the lint it suppresses, and the follow-up plan to remove it. **One substantive exemption remains** (graph-foundation editor-ui/LayoutNodeId rename TODO) plus 58 failure-class rollout-debt entries (cleared as each crate gets first real implementation per IMPLEMENTATION.md phase order — 23 of 81 cleared so far).
+Pre-existing legitimate exceptions are tracked in [`tools/architecture-lints/exemptions.toml`](./tools/architecture-lints/exemptions.toml) — each entry names the file, the lint it suppresses, and the follow-up plan to remove it. **One substantive exemption remains** (graph-foundation editor-ui/LayoutNodeId rename TODO) plus 36 failure-class rollout-debt entries (cleared as each crate gets first real implementation per IMPLEMENTATION.md phase order — **45 of 81 cleared** so far). Plus 1 supplementary warning-level lint: **`snapshot-participate`** (PLAN §13.2 gate; 3 of 3 stateful Tier-2 crates impl, K=0 missing).
 
-## Core docs (architecture)
+## Documentation hierarchy
 
-All architecture docs live in [`plans/`](./plans):
+Workspace docs are organized in 5 authority tiers (descending precedence; lower tiers cannot override higher tiers, but higher tiers may defer to lower tiers via explicit "defer to" cross-refs). Tier formalization landed 2026-05-10 per ChatGPT cross-review #1's "biggest documentation risk now: architectural drift between docs" framing.
+
+| Tier | Path | Authority | Stability |
+|---|---|---|---|
+| **Doctrine** | [`docs/architecture/`](./docs/architecture) | Invariant law (binding architectural rules) | Stable; changes require ADR amendment |
+| **ADR** | [`docs/adr/`](./docs/adr) | Architectural decisions + rejected alternatives | Stable; superseded entries flagged in-place |
+| **Spec / Companion** | [`docs/§18/`](./docs/§18) | Substrate operational contracts | Tracks source-truth (updated as substrate evolves) |
+| **PLAN** | [`plans/PLAN.md`](./plans/PLAN.md) | Roadmap (frozen at v0.8) | Frozen; v0.9+ requires §0.6 gate |
+| **STATUS** | [`Status.md`](./Status.md) / [`HANDOFF.md`](./HANDOFF.md) / [`change.md`](./change.md) | Implementation truth (live snapshot + continuation pointer + audit trail) | Updated per dispatch |
+
+`RFC` (experimental proposals) is reserved for post-v1.0; unused at v0.8.
+
+### Roadmap docs (PLAN tier)
 
 - [`plans/PLAN.md`](./plans/PLAN.md) — architecture (v0.8, frozen)
 - [`plans/IMPLEMENTATION.md`](./plans/IMPLEMENTATION.md) — phase ordering and de-risking gates
 - [`plans/fileandfolderstructure.md`](./plans/fileandfolderstructure.md) — workspace layout spec
-- [`plans/BASELINE.md`](./plans/BASELINE.md) — perf baselines (W03 stub-PIE / Phase 3.2 script-host swap / Phase 5.3 real-ECS PIE re-baseline / W04 wasmtime cold-start)
+- [`plans/BASELINE.md`](./plans/BASELINE.md) — perf baselines
 - [`tasks/`](./tasks) — wave dispatch packages (W01–W20)
 - [`versions.md`](./versions.md) — workspace dep table + MSRV
+
+### Doctrine docs (3 landed)
+
+- [`docs/architecture/README.md`](./docs/architecture/README.md) — navigation hub + maturity matrix
+- [`docs/architecture/REACTIVE_INVALIDATION.md`](./docs/architecture/REACTIVE_INVALIDATION.md) — 4-layer invalidation hierarchy + 4 invariants
+- [`docs/architecture/SCENE_EXTRACTION_CONTRACT.md`](./docs/architecture/SCENE_EXTRACTION_CONTRACT.md) — canonical pipeline + ownership rules
+- [`docs/architecture/NON_GOALS.md`](./docs/architecture/NON_GOALS.md) — 8 explicit non-goals + anti-sprawl criteria
+
+### ADRs (7 landed + 3 deferred)
+
+Landed: ADR-097 (cad-projection split) / ADR-098 (topology lineage substrate) / ADR-104 (capability surface) / ADR-112 (cad-core Boolean CSG library scoping) / ADR-113-deferred (truck cad-native backend) / ADR-114 (PluginContext owned-resources-handoff) / ADR-115 (graph-metrics substrate design). Deferred per §18 doctrine: ADR-099 (execution domains naming — see EXECUTION_DOMAINS.md) / ADR-101 (graph-foundation Tier-1 substrate — see GRAPH_FOUNDATION.md) / ADR-102 (failure containment — see RECOVERY_MODEL.md).
+
+### §18 companion docs (27 of 27 landed)
+
+Substrate operational contracts. See [`docs/§18/`](./docs/§18). Cumulative LoC ~7,700+.
 
 ## Workspace layout
 
@@ -118,7 +145,7 @@ rge/
 ├── golden-projects/     # regression validation
 ├── tools/               # architecture enforcement + CI (8 crates; 1 implemented = architecture-lints, 7 stub)
 ├── schemas/             # WIT / reflection / validation
-├── docs/                # ADRs (ADR-098/104/112/114 landed; ADR-097/101 still to write) + §18 companion docs (17 of 27 landed; 10 of 27 still to write)
+├── docs/                # 7 ADRs landed (097/098/104/112/113-deferred/114/115; 099/101/102 deferred per §18 doctrine) + 27 of 27 §18 companion docs landed + 3 doctrine docs in docs/architecture/
 ├── tests/               # cross-workspace integration
 └── third_party/         # vendored deps
 ```
@@ -131,6 +158,6 @@ MIT OR Apache-2.0 (dual-licensed; see [`LICENSE-MIT`](./LICENSE-MIT) and [`LICEN
 
 ## Contributing
 
-Architecture is frozen at v0.8. Adding new first-class subsystems requires the §0.6 freeze-policy gate (4 conditions). See [`PLAN.md` §0.6](./plans/PLAN.md) and the ADR process in [`docs/adr/`](./docs/adr) — ADR-098 (topology lineage substrate), ADR-104 (capability surface), ADR-112 (cad-core Boolean CSG library scoping), and ADR-114 (PluginContext owned-resources-handoff design) are landed; ADR-097/101 referenced from PLAN.md remain to be authored.
+Architecture is frozen at v0.8. Adding new first-class subsystems requires the §0.6 freeze-policy gate (4 conditions). See [`PLAN.md` §0.6](./plans/PLAN.md), the doc-authority hierarchy above, the ADR process in [`docs/adr/`](./docs/adr), and the doctrine docs in [`docs/architecture/`](./docs/architecture). Out-of-scope ambitions are explicitly enumerated in [`docs/architecture/NON_GOALS.md`](./docs/architecture/NON_GOALS.md).
 
 Every PR runs the 9 architecture lints + cargo-deny supply-chain matrix + nightly fmt check via GitHub Actions. Lint failures block the merge; new exemptions require code-review sign-off in `exemptions.toml`.

@@ -1,6 +1,6 @@
 # RGE Handoff Document
 
-> **Snapshot**: 2026-05-10 04:30. Continuation pointer for the next session.
+> **Snapshot**: 2026-05-10 05:00. Continuation pointer for the next session.
 >
 > **Read first**: this file. Then [`Status.md`](./Status.md) (current snapshot) and [`change.md`](./change.md) (full history).
 
@@ -22,7 +22,13 @@
 
 ## What just shipped (this session — completed work)
 
-1. **ADR-115 phase-2 Tier-B fanout metrics landed** (second C1 implementation step; +9 net workspace tests; bounded scope — fanout-related Tier-B subset; depth/SCC/diameter explicitly deferred to phase-2.5+):
+1. **Path-B doc-hierarchy formalization + navigation hub** (closes ChatGPT cross-review #1's "biggest documentation risk now: architectural drift between docs"; pure-docs; 0 test-count delta):
+   - **NEW `docs/architecture/README.md`** navigation hub (~110L). Authority hierarchy table (5 tiers: Doctrine / ADR / Spec-Companion / PLAN / STATUS — with paths + stability classifications; RFC unused at v0.8). 3 doctrine docs enumerated with one-line descriptions + LoC. "How to navigate" section answering 5 reader-intent questions (invariants → here; design rationale → ADR; substrate behavior → §18; roadmap → PLAN; current state → Status/HANDOFF/change). Subsystem maturity matrix (10 rows; mirrors cross-review #1's post-round-6 assessment). "Adding a new doctrine doc" gate criteria (4 conditions; cross-review's "DON'T over-document speculative systems" framing baked in).
+   - **Workspace `README.md` doc-hierarchy section landed**: replaced narrow "Core docs" section with full 5-tier authority hierarchy table + per-tier section listings (Roadmap docs / Doctrine docs / ADRs / §18 docs). Cross-references the new `docs/architecture/README.md` navigation hub.
+   - **README.md stale-number cleanup**: line 53 + 63 "1692 tests" → "1735 tests"; line 67 "as of 2026-05-09" → "as of 2026-05-10"; line 70 "9 architecture lints" → "9 enforcement architecture lints + 1 supplementary"; line 94 "23 of 81 cleared" → "45 of 81 cleared" + "58 failure-class rollout-debt entries" → "36 failure-class rollout-debt entries" + supplementary snapshot-participate lint mention; line 121 stub-vs-implementation summary updated to reflect 7 ADRs + 27 §18 + 3 doctrine docs; line 134 contributing-section ADR list updated.
+   - The cross-review's recommended `Doctrine / ADR / Spec / PLAN / STATUS / RFC` hierarchy is now realized at TWO levels: **directory level** (since 2026-05-10 03:30 doctrine-tier landing) AND **documented** (this dispatch's README updates). Future contributors land at workspace README → see authority hierarchy table → know where to look + where to add new docs.
+   - Workspace state: **1735 tests / 16 doctests / 9 enforcement + 1 supplementary lints PASS / fmt clean**. Substantive lint exemption: 1 (LayoutNodeId).
+2. **ADR-115 phase-2 Tier-B fanout metrics landed** (second C1 implementation step; +9 net workspace tests; bounded scope — fanout-related Tier-B subset; depth/SCC/diameter explicitly deferred to phase-2.5+):
    - **5 new public methods on `Graph<N, E>`** (all `#[must_use]`):
      - `node_in_degree(&self, node: NodeId) -> u32` — Tier-B per-node; O(1) via incoming adjacency cache
      - `node_out_degree(&self, node: NodeId) -> u32` — Tier-B per-node; O(1) via outgoing adjacency cache

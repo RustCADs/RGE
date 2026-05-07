@@ -1,0 +1,92 @@
+# RGE Architecture — Doctrine Tier
+
+This directory holds **Doctrine-tier** docs: binding architectural rules and
+invariants that govern subsystem design across the workspace. Distinct from
+the operational-contract `docs/§18/` companion-doc tier, the architectural-
+decision `docs/adr/` tier, and the roadmap `plans/PLAN.md` tier.
+
+## Authority hierarchy
+
+Per the [2026-05-10 cross-review #1 archive in `change.md`](../../change.md),
+workspace docs operate at five authority tiers (descending precedence; lower
+tiers cannot override higher tiers, but higher tiers may defer to lower tiers
+via explicit "defer to" cross-refs):
+
+| Tier | Path | Authority | Stability |
+|---|---|---|---|
+| **Doctrine** | [`docs/architecture/`](.) | Invariant law (binding architectural rules) | Stable; changes require ADR amendment |
+| **ADR** | [`docs/adr/`](../adr) | Architectural decisions + rejected alternatives | Stable; superseded entries flagged in-place |
+| **Spec / Companion** | [`docs/§18/`](../§18) | Substrate operational contracts | Tracks source-truth (updated as substrate evolves) |
+| **PLAN** | [`plans/PLAN.md`](../../plans/PLAN.md) | Roadmap (frozen at v0.8) | Frozen; v0.9+ requires §0.6 gate |
+| **STATUS** | [`Status.md`](../../Status.md) / [`HANDOFF.md`](../../HANDOFF.md) / [`change.md`](../../change.md) | Implementation truth (live snapshot + continuation + audit trail) | Updated per dispatch |
+
+`RFC` (experimental proposals) is reserved for post-v1.0 use; unused at v0.8.
+
+## Doctrine docs (3 of 3 landed)
+
+- **[`REACTIVE_INVALIDATION.md`](./REACTIVE_INVALIDATION.md)** (254L) — 4-layer
+  invalidation hierarchy (graph mutations → topology evolution → tessellation
+  rebuilds → GPU uploads); 4 invariants (explicit / revision-aware /
+  observable / deterministic); 4 critical constraints. Companion to PLAN
+  §1.6 + §1.5.4.3 + ADR-115.
+- **[`SCENE_EXTRACTION_CONTRACT.md`](./SCENE_EXTRACTION_CONTRACT.md)** (252L)
+  — canonical pipeline (CAD Graph → Topology → Geometry Eval → Tessellation
+  → Scene Extraction → GPU Resources); ownership rules ("renderer NEVER owns
+  authoritative geometry"); 4 extraction principles (pure / incremental /
+  deterministic / replaceable). Companion to PLAN §1.5.2 + ADR-114.
+- **[`NON_GOALS.md`](./NON_GOALS.md)** (205L) — 8 explicit non-goals (NOT
+  general-purpose game engine / NOT competing CAD authoring tool v1 / NOT
+  distributed runtime today / NOT AI-native CAD / NOT procedural-content-
+  generation platform / NOT simulation platform v1 / NOT marketplace / NOT
+  Bevy-or-Fyrox fork); anti-sprawl criteria; 10 explicit deferrals.
+  Companion to PLAN §0.2 + §0.6 + 2026-05-10 cross-review #1.
+
+## How to navigate
+
+- Reading the **architecture's invariants**? Start here. Each doctrine doc
+  states load-bearing rules + cites the substrate refs that realize them.
+- Reading **why a specific design was chosen**? Read the corresponding ADR
+  in [`docs/adr/`](../adr). 7 ADRs landed: 097 / 098 / 104 / 112 /
+  113-deferred / 114 / 115. Three formal ADR creations deferred per §18
+  doctrine: 099 / 101 / 102.
+- Reading **how a substrate works today**? Read the corresponding §18 doc
+  in [`docs/§18/`](../§18). 27 of 27 companion docs landed (cumulative LoC
+  ~7,700+).
+- Reading **the roadmap or phase order**? Read
+  [`plans/PLAN.md`](../../plans/PLAN.md) +
+  [`plans/IMPLEMENTATION.md`](../../plans/IMPLEMENTATION.md).
+- Reading **what's true right now**? Read [`Status.md`](../../Status.md)
+  for the live snapshot, [`HANDOFF.md`](../../HANDOFF.md) for the next-
+  session continuation pointer, [`change.md`](../../change.md) for the
+  full session-by-session audit trail.
+
+## Subsystem maturity (post-2026-05-10 cross-review #1 framing)
+
+| Subsystem | Maturity (2026-05-10) |
+|---|---|
+| ECS / runtime core | Strong experimental |
+| Plugin substrate | Early production-grade direction |
+| CAD operator architecture | Advanced prototype (5 operators + topology lineage prototype) |
+| Deterministic infrastructure | Exceptionally strong for stage (1000-tick replay byte-identical; 3-way PIE composition byte-identical) |
+| Reflection / tooling | Incomplete (kernel/types substrate done; downstream consumers limited) |
+| Editor architecture | Pre-stabilization (editor-state coordination layer landed; full editor app not yet) |
+| Fault isolation | Partially mature (5-class taxonomy + plugin-fatal isolation + H3 fault-injection harness) |
+| GPU abstraction | Early (gfx canary running; render-snapshot separation pending Phase 6) |
+| Multi-user / distributed future readiness | Surprisingly strong (PIE byte-identity is foundational) |
+| Kernel-grade topology infrastructure | Emerging (lineage substrate prototype; persistent IDs deferred) |
+
+## Adding a new doctrine doc
+
+The doctrine tier is **deliberately small**. Per the cross-review's framing:
+"DO NOT over-document speculative systems. Avoid giant docs for AI CAD,
+cloud architecture, future networking, advanced distributed runtime,
+commercial ecosystem plans. Those become stale quickly."
+
+A new doctrine doc is justified when:
+1. Multiple subsystems depend on the same architectural invariant
+2. The invariant is currently implicit (encoded in code; not documented)
+3. Drift between implementations would be catastrophic
+4. The decision can be expressed as a binding rule (not a sketch or roadmap)
+
+Otherwise prefer: an ADR (decision), a §18 spec doc (substrate contract),
+or a PLAN.md amendment (roadmap).
