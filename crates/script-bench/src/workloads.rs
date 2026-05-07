@@ -151,7 +151,7 @@ impl Transform {
     }
 }
 
-/// Deterministic SplitMix64 — used to populate the 10k-entity buffer in a
+/// Deterministic `SplitMix64` — used to populate the 10k-entity buffer in a
 /// reproducible way without pulling in an RNG dependency.
 #[inline]
 fn splitmix64(state: &mut u64) -> u64 {
@@ -163,6 +163,10 @@ fn splitmix64(state: &mut u64) -> u64 {
 }
 
 #[inline]
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "intentional: producing a uniform `f32` in [-1.0, 1.0] from RNG bits is precision-bounded by f32's 24-bit mantissa anyway; the >> 8 shift down to 56 bits then dividing by 2^56 lands inside the representable f32 range"
+)]
 fn next_f32(state: &mut u64) -> f32 {
     // Map to [-1.0, 1.0]
     let bits = splitmix64(state);

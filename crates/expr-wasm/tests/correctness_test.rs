@@ -23,7 +23,7 @@ fn run(src: &str, vars: &[(&str, f32)]) -> f32 {
 }
 
 fn approx(a: f32, b: f64) {
-    let d = (a as f64 - b).abs();
+    let d = (f64::from(a) - b).abs();
     assert!(d < EPS, "got {a}, expected ≈{b}, |Δ|={d} > {EPS}");
 }
 

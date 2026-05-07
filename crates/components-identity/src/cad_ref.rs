@@ -25,6 +25,10 @@ impl CadRef {
     /// Borrow the underlying cad node id.
     #[inline]
     #[must_use]
+    #[allow(
+        clippy::trivially_copy_pass_by_ref,
+        reason = "accessor takes `&self` deliberately so call sites read like a borrow even though `CadNodeId` is currently `Copy`; if a future revision threads non-`Copy` payloads (e.g. lineage labels) through `CadRef` the signature stays stable"
+    )]
     pub const fn id(&self) -> CadNodeId {
         self.0
     }

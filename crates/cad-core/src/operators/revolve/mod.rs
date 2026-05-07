@@ -45,6 +45,20 @@
 //!   accepted).
 //! * `partial_path` — partial-revolution algorithm (fan-triangulated start /
 //!   end caps; convexity required).
+//!
+//! # Capability surface (per ADR-104)
+//!
+//! * `boolean_robust_under_tolerance`: true (no boolean op).
+//! * `deterministic_triangulation`: true (sin/cos sweep deterministic; no
+//!   triangulation-choice indeterminism).
+//! * `t_junction_handling`: true (closed surface; no T-junctions in side
+//!   walls or fan-triangulated caps).
+//! * `concave_input_supported`: **mode-dependent** — true for full revolution
+//!   (no caps ⇒ no fan-triangulation constraint); **false** for partial
+//!   revolution (fan-triangulated caps require strict convexity). Validated
+//!   at evaluate time.
+//! * `arity`: 0 (profile is a parameter, not an upstream input).
+//! * `output_labeled_when_input_labeled`: false (no inputs).
 
 mod full_path;
 mod partial_path;

@@ -1,4 +1,4 @@
-//! W12 exit criterion: AudioSource at 10 m with InverseSquare falloff has
+//! W12 exit criterion: `AudioSource` at 10 m with `InverseSquare` falloff has
 //! 1/100 the amplitude of the same source at 1 m.
 //!
 //! Two flavours of the test:
@@ -6,7 +6,7 @@
 //!    physical inverse-square value. This is the source of truth — Kira's
 //!    own spatializer uses an `Easing`-based approximation.
 //! 2. **End-to-end through Kira**: drive an emitter through the
-//!    MockBackend and confirm the spatial mix actually routes audio (rms > 0).
+//!    `MockBackend` and confirm the spatial mix actually routes audio (rms > 0).
 //!    The in-engine ratio is approximate (Kira uses `OutPowi(2)` against a
 //!    normalised-distance window) but the routing smoke test is the part the
 //!    schedule layer cares about.
@@ -108,5 +108,10 @@ fn render_one(
         let mono = (frame.left + frame.right) * 0.5;
         sum_sq += mono * mono;
     }
-    (sum_sq / n as f32).sqrt()
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "RMS divisor; n is bounded by frames.len().min(1024), far below f32 mantissa limit"
+    )]
+    let denom = n as f32;
+    (sum_sq / denom).sqrt()
 }

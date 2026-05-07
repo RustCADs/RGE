@@ -1,5 +1,15 @@
 //! `rge-pak-format` — `.rge-pak` cooked-asset container.
 //!
+//! Failure class: recoverable
+//!
+//! Per PLAN §1.13: pak-format failures (corrupted file / I/O error / mismatched
+//! magic / version mismatch / blob-decode failure) are transient and recoverable
+//! in-place — the caller surfaces the error to the user, falls back to a
+//! sibling pak, retries with a different path, or skips the asset. No PIE
+//! state is owned by pak-format itself; the cooked-asset bytes are
+//! reproducible from upstream sources via the cook-determinism contract.
+//! Matches gfx + audio + ui-theme classification (transient I/O failures).
+//!
 //! # Wire format (stable v1)
 //!
 //! A `.rge-pak` file is laid out as four contiguous regions:

@@ -8,11 +8,16 @@
 //! Linux/macOS/Win). The full 100 MB benchmark lives outside
 //! `cargo test` (it takes too long for default-CI).
 
+use std::io::Write as _;
 use std::time::Instant;
 
 use rge_pak_format::{AssetKind, PakReader, PakWriter};
 use tempfile::NamedTempFile;
 
+#[allow(
+    clippy::disallowed_names,
+    reason = "`tmp` is the conventional handle for a `tempfile::NamedTempFile` in the surrounding test crate; renaming would diverge from sibling integration tests"
+)]
 fn write_temp_pak(payloads: &[Vec<u8>]) -> NamedTempFile {
     let mut w = PakWriter::new();
     for blob in payloads {
@@ -20,13 +25,17 @@ fn write_temp_pak(payloads: &[Vec<u8>]) -> NamedTempFile {
     }
     let bytes = w.finish().unwrap();
     let mut tmp = NamedTempFile::new().unwrap();
-    use std::io::Write;
     tmp.write_all(&bytes).unwrap();
     tmp.flush().unwrap();
     tmp
 }
 
 #[test]
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "fixture loop range 0..20 is well inside u8::MAX and non-negative — narrowing cast is intentional"
+)]
 fn mmap_open_round_trips() {
     let payloads: Vec<Vec<u8>> = (0..20).map(|i| vec![i as u8; 1024]).collect();
     let tmp = write_temp_pak(&payloads);
@@ -86,6 +95,11 @@ fn mmap_open_is_fast_for_multi_mb_pak() {
 }
 
 #[test]
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "fixture loop range 0..16 is well inside u8::MAX and non-negative — narrowing cast is intentional"
+)]
 fn lazy_decompression_per_lookup() {
     // Exercise the lazy-decompress contract: open is fast,
     // per-lookup cost is per-blob (not per-pak). We can't measure
@@ -111,6 +125,11 @@ fn lazy_decompression_per_lookup() {
 }
 
 #[test]
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "fixture loop range 0..8 is well inside u8::MAX and non-negative — narrowing cast is intentional"
+)]
 fn open_via_path_and_via_bytes_yield_same_index() {
     let payloads: Vec<Vec<u8>> = (0..8).map(|i| vec![i as u8; 64]).collect();
     let mut w = PakWriter::new();
@@ -121,7 +140,6 @@ fn open_via_path_and_via_bytes_yield_same_index() {
 
     // Round trip through the filesystem.
     let mut tmp = NamedTempFile::new().unwrap();
-    use std::io::Write;
     tmp.write_all(&bytes).unwrap();
     tmp.flush().unwrap();
 

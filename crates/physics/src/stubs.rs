@@ -171,6 +171,7 @@ pub mod kernel_events {
 
     impl<T> Channel<T> {
         /// Construct empty channel.
+        #[must_use]
         pub fn new() -> Self {
             Self {
                 buf: RefCell::new(Vec::new()),

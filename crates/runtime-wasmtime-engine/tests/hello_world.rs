@@ -52,6 +52,10 @@ fn write_leb128(out: &mut Vec<u8>, mut v: u32) {
 /// Wasmtime accepts unknown custom sections, so adding this is safe.
 /// The `runtime-wasmtime` lossy scanner finds the `rcad-effects:...;`
 /// marker inside the payload regardless of how the section is framed.
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "fixture wasm-section payloads are small (<256 bytes); LEB128 encoding intentionally narrows usize→u32 — domain-bounded by the fixture sizes used in this test"
+)]
 fn append_rcad_effects(mut wasm: Vec<u8>, manifest: &str) -> Vec<u8> {
     let payload = format!("rcad-effects:{manifest};");
     let payload_bytes = payload.as_bytes();
@@ -129,7 +133,7 @@ fn cap_gate_module_without_network_cap_fails_at_instantiate() {
     let granted = CapSet::all();
     let r = engine.instantiate(&loaded, granted);
     match r {
-        Err(EngineError::LinkerMissing(_)) | Err(EngineError::Wasmtime(_)) => {
+        Err(EngineError::LinkerMissing(_) | EngineError::Wasmtime(_)) => {
             // Expected — unknown import.
         }
         Err(other) => panic!("expected LinkerMissing, got {other:?}"),
@@ -210,6 +214,10 @@ fn baseline_timings_are_within_spec() {
         inst.tick(0.016).expect("tick");
     }
     let t_tick_total = t_tick_start.elapsed();
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "tick wall-clock total stays well below 2^52 nanoseconds (~52 days) for the 10_000-tick perf assert; precision-loss cannot fire in practice"
+    )]
     let tick_ns = t_tick_total.as_nanos() as f64 / f64::from(n_ticks);
 
     // Memory footprint of the single exported memory.

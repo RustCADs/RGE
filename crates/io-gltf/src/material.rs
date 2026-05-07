@@ -3,8 +3,8 @@
 //!
 //! v0 supports glTF 2.0 `pbrMetallicRoughness` (the most-used profile) plus a
 //! pointer to the optional normal-map texture. Extension materials
-//! (KHR_materials_clearcoat etc.) are NOT round-tripped at v0; they come back
-//! as their pbrMetallicRoughness fallback. The glTF crate's
+//! (`KHR_materials_clearcoat` etc.) are NOT round-tripped at v0; they come back
+//! as their `pbrMetallicRoughness` fallback. The glTF crate's
 //! `material.pbr_metallic_roughness()` is always present (default-spec'd) so
 //! v0 doesn't error on missing-pbrMR materials — it picks up the spec
 //! defaults of `[1,1,1,1]` / `1.0` / `1.0`.

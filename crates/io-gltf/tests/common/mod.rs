@@ -162,6 +162,11 @@ pub fn make_animated_character_glb() -> Vec<u8> {
                 times: vec![0.0, 1.0],
                 channel: BoneChannel::Rotation(vec![
                     [0.0, 0.0, 0.0, 1.0],
+                    #[allow(
+                        clippy::unreadable_literal,
+                        clippy::approx_constant,
+                        reason = "fixture value is the canonical 7-digit single-precision encoding of cos(45deg) used in the glTF reference quaternion-rotation example; deliberately matches the value expected in fixture bytes byte-for-byte rather than computed via FRAC_1_SQRT_2"
+                    )]
                     [0.0, 0.7071068, 0.0, 0.7071068],
                 ]),
                 interpolation: rge_io_gltf::animation::Interpolation::Linear,
@@ -317,6 +322,10 @@ fn cube_mesh() -> MeshAsset {
     ];
 
     for (n, verts) in &faces {
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "fixture cube has 6 quads × 4 verts = 24 positions max — well under u32::MAX, no truncation possible"
+        )]
         let base = positions.len() as u32;
         for v in verts {
             positions.push(*v);

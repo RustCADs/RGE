@@ -243,6 +243,20 @@ impl ThemeRegistry {
     /// Resolve the inheritance chain for `name` and return the
     /// flattened theme (deepest ancestor merged first, child last).
     /// Caps at `MAX_INHERITANCE_DEPTH` and detects cycles.
+    ///
+    /// # Cycle detection — algorithmically distinct from the 3 `Graph<N,()>` consumers
+    ///
+    /// This method walks a `BTreeMap<String, Theme>` `extends:`-chain with
+    /// linear single-parent inheritance, returning [`RegistryError::Cycle`]
+    /// (a `String` for the cycle key). It does NOT operate on
+    /// `kernel/graph-foundation::Graph<N, E>` — the 3 substrate-backed
+    /// cycle-detection sites (`cad-core::operator_graph` ancestor-set guard,
+    /// `kernel/asset::DependencyGraph::detect_cycle` three-color DFS,
+    /// `asset-store::DepGraph` reachability walk) all use `Graph<N, ()>` per
+    /// audit-3 M7 closure (see `docs/§18/GRAPH_FOUNDATION.md` §3 + PLAN
+    /// §1.14 line 605). Theme inheritance is NOT a graph-foundation
+    /// consumer, so this 4th cycle-detection site is intentionally separate
+    /// — it doesn't need (and wouldn't benefit from) substrate primitives.
     pub fn flatten(&self, name: &str) -> Result<Theme, RegistryError> {
         let mut chain: Vec<&Theme> = Vec::new();
         let mut visited: Vec<&str> = Vec::new();

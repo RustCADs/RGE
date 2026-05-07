@@ -100,6 +100,7 @@ impl std::fmt::Display for PluginPhase {
 ///   are unrecoverable; the host detects + reports any leak separately.
 ///   Constructed only by the host, never via a public constructor.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum PluginError {
     /// Plugin's [`Plugin::init`] could not complete (resource unavailable,
     /// dependency missing, validation failed, etc.).
@@ -354,5 +355,33 @@ mod tests {
         assert_eq!(PluginPhase::Init.to_string(), "init");
         assert_eq!(PluginPhase::Tick.to_string(), "tick");
         assert_eq!(PluginPhase::Shutdown.to_string(), "shutdown");
+    }
+
+    /// SemVer hardening fixture: [`PluginError`] is `#[non_exhaustive]`, so
+    /// cross-crate consumers MUST include a wildcard arm when pattern-matching.
+    /// This test simulates that consumer pattern: if a future variant is added
+    /// (e.g. `Poisoned` / `ResourceLeak` per ADR-114 §"Followups"), the
+    /// wildcard arm absorbs it and this test still compiles — proving the
+    /// `#[non_exhaustive]` annotation is correctly applied and the SemVer
+    /// hardening works.
+    #[test]
+    #[allow(
+        unreachable_patterns,
+        reason = "intentional: simulates cross-crate consumer pattern; \
+                  same-crate compilation sees the enum as exhaustive so the \
+                  wildcard arm is unreachable from inside the crate, but the \
+                  `#[non_exhaustive]` SemVer barrier requires it for external \
+                  consumers"
+    )]
+    fn plugin_error_non_exhaustive_pattern_match_compiles() {
+        let err = PluginError::contract_violation("World");
+        let _name = match &err {
+            PluginError::InitFailed { .. } => "init",
+            PluginError::ShutdownFailed { .. } => "shutdown",
+            PluginError::RuntimeFault { .. } => "runtime",
+            PluginError::ContractViolation { .. } => "contract",
+            PluginError::Panic { .. } => "panic",
+            _ => "future-variant", // required by #[non_exhaustive]
+        };
     }
 }

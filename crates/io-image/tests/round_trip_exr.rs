@@ -1,4 +1,4 @@
-//! OpenEXR round-trip integration tests.
+//! `OpenEXR` round-trip integration tests.
 //!
 //! Spec exit: float values within 1e-5 tolerance.
 

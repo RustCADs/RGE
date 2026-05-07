@@ -263,7 +263,7 @@ mod tests {
         audio_schedule_step(&mut mgr, &sched, Some((listener_entity, &listener_xform))).unwrap();
     }
 
-    /// Unknown clip surfaces ManagerError::UnknownClip.
+    /// Unknown clip surfaces `ManagerError::UnknownClip`.
     #[test]
     fn unknown_clip_errors() {
         let mut mgr = mock_mgr(48_000);
@@ -284,7 +284,7 @@ mod tests {
         assert!(matches!(err, ManagerError::UnknownClip(_)));
     }
 
-    /// AudioListener default has unity gain so default world is audible.
+    /// `AudioListener` default has unity gain so default world is audible.
     #[test]
     fn audio_listener_default_unity() {
         assert!((AudioListener::default().gain - 1.0).abs() < 1e-6);

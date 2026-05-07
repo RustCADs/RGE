@@ -75,7 +75,13 @@ The mutation surface returns `GraphError` for the standard mistakes:
 
 Removing a node cascades: every edge incident to it is removed first, then the node itself. This keeps the `incoming` / `outgoing` adjacency caches consistent without requiring callers to know the cascade order.
 
-What `Graph<N, E>` deliberately does NOT provide: cycle detection, topological sort, evaluation, traversal. Domain-specific algorithms live in each domain's wrapper. `OperatorGraph` builds cycle detection on top via a `HashSet<NodeId>` ancestor stack inside its evaluator (see CAD_CORE_MODEL.md §5 and the Test 4 cycle-detection test in `operator_graph.rs`).
+What `Graph<N, E>` deliberately does NOT provide: cycle detection, topological sort, evaluation, traversal. Domain-specific algorithms live in each domain's wrapper. The workspace today has three distinct cycle-detection implementations layered on the substrate, each returning a different shape and operating at a different granularity — each consumer needs cycle detection differently, so unification would force one consumer's information shape onto the other two:
+
+- `crates/cad-core/src/graph/operator_graph.rs::effective_hash_and_label` — ancestor-set guard inside the recursive hash-folding evaluator; returns `EvalError::Cycle` inline during eval. Recursion only descends into upstream nodes reachable from the eval target (NOT a standalone scan). See CAD_CORE_MODEL.md §5 and the Test 4 cycle-detection test in `operator_graph.rs`.
+- `kernel/asset/src/dependency_graph.rs::DependencyGraph::detect_cycle` — standalone three-color DFS returning `Option<Vec<AssetId>>` (the cycle path). All-pairs full-graph scan.
+- `crates/asset-store/src/dependency.rs::DepGraph::transitive_closure` / `::invalidation_cascade` — start-node-targeted iterative walks that bail with `DepError::Cycle(AssetId)` (single offending asset) on revisit of the start node.
+
+Audit-3 finding M7 (2026-05-09) considered extracting the algorithm into substrate. The PLAN §1.14 line 605 test ("is this primitive infrastructure that all 8 graph systems would use the same way?") evaluated NO: the three current consumers diverge in return shape (`Vec<AssetId>` path / single `AssetId` / inline `EvalError::Cycle`) and operating mode (all-pairs scan / start-node-bounded reachability / on-the-fly during eval). The findings is closed by cross-referencing all three callsites in their module docs rather than by extraction (Path B per the audit-3 M7 dispatch brief). Each callsite carries the same three-way cross-ref so future consumers see the divergence rationale without grepping.
 
 ## 4. `GraphSnapshot<N, E>` — immutable Arc-shared
 

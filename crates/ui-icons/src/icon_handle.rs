@@ -67,6 +67,7 @@ impl IconSetId {
 
     /// Borrow the inner string.
     #[inline]
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -112,6 +113,7 @@ impl IconName {
 
     /// Borrow the inner string.
     #[inline]
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -144,6 +146,7 @@ impl IconHandle {
     /// actually exists.
     ///
     /// [`IconRegistry::lookup`]: crate::registry::IconRegistry::lookup
+    #[must_use]
     pub fn new(set: IconSetId, name: IconName) -> Self {
         Self { set, name }
     }

@@ -3,6 +3,16 @@
 //
 //! `rge-data` — RON schemas for `.rge-project`, `.rge-scene`, `.rge-prefab`.
 //!
+//! Failure class: recoverable
+//!
+//! Per PLAN §1.13: rge-data failures (RON parse error / migration error /
+//! schema validation / version mismatch) are transient and recoverable
+//! in-place — the caller surfaces the error to the user (e.g. "this project
+//! file is malformed; please check the syntax") or rejects the load and keeps
+//! the editor on its last-known-good in-memory state. rge-data itself owns no
+//! PIE state; it's a stateless serde + migration layer. Matches pak-format
+//! + audio + gfx classification (transient I/O / parse failures).
+//!
 //! Phase 4 deliverable per `IMPLEMENTATION.md` §4.3 and `PLAN.md` §1.6
 //! (file format discipline) + §1.6.7 (versioning + migration).
 //!

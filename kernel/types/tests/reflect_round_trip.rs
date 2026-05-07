@@ -63,6 +63,10 @@ impl Reflect for RenderPass {
         }
     }
 
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "test fixture: hand-rolled `RenderPass` mirrors the narrowing path the macro emits when funneling wide ReflectValue carriers (I64/F64/U64) into narrow source-typed fields (i32/f32/u32); the round-trip test pre-builds values that fit the destination width"
+    )]
     fn set_field_dyn(&mut self, name: &str, value: ReflectValue) -> Result<(), ReflectError> {
         match (name, value) {
             ("name", ReflectValue::String(s)) => {
@@ -165,7 +169,7 @@ fn render_pass_round_trips_byte_identically_via_ron() {
     assert_eq!(reconstructed, original, "value round-trip failed");
 
     let s2 = to_ron(&reconstructed).expect("second ron serialization");
-    assert_eq!(s1, s2, "byte-identity failed: \n{}\n!=\n{}\n", s1, s2);
+    assert_eq!(s1, s2, "byte-identity failed: \n{s1}\n!=\n{s2}\n");
 }
 
 #[test]

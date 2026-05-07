@@ -32,9 +32,10 @@ use serde::{Deserialize, Serialize};
 ///
 /// [`Default`] is [`Self::Linear`] — gentlest, most predictable, matches Kira's
 /// default `Easing::Linear`.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum AudioFalloff {
     /// `1 - t` where `t` is normalised distance.
+    #[default]
     Linear,
     /// Logarithmic-shaped roll-off. Approximates real-world perceived loudness
     /// drop better than [`Self::Linear`] at the cost of a steeper near-field.
@@ -45,12 +46,6 @@ pub enum AudioFalloff {
     /// `(1 - t)^exponent` — user-tunable. `exponent > 1` sharpens, `< 1`
     /// flattens. Tests use `2.0` to produce a quadratic curve.
     Custom(f32),
-}
-
-impl Default for AudioFalloff {
-    fn default() -> Self {
-        Self::Linear
-    }
 }
 
 impl AudioFalloff {
@@ -154,7 +149,7 @@ mod tests {
         assert!((amp - 0.5).abs() < 1e-3, "amp = {amp}");
     }
 
-    /// W12 exit criterion: InverseSquare at 10x min distance is 1/100.
+    /// W12 exit criterion: `InverseSquare` at 10x min distance is 1/100.
     #[test]
     fn inverse_square_decade_is_hundredth() {
         let amp = AudioFalloff::InverseSquare.amplitude(10.0, 1.0, 100.0);
@@ -175,8 +170,12 @@ mod tests {
         );
     }
 
-    /// Distance < min_distance clamps to 1.0; distance > max clamps to 0.0.
+    /// Distance < `min_distance` clamps to 1.0; distance > max clamps to 0.0.
     #[test]
+    #[allow(
+        clippy::float_cmp,
+        reason = "asserting exact bit-equality of the early-return literals 1.0 / 0.0 emitted by the boundary branches in `amplitude`; no arithmetic is performed at these inputs"
+    )]
     fn out_of_band_clamps() {
         let f = AudioFalloff::Linear;
         assert_eq!(f.amplitude(0.0, 1.0, 100.0), 1.0);
@@ -190,7 +189,7 @@ mod tests {
         assert_eq!(AudioFalloff::default(), AudioFalloff::Linear);
     }
 
-    /// to_kira_easing maps every variant deterministically.
+    /// `to_kira_easing` maps every variant deterministically.
     #[test]
     fn easing_map_is_total() {
         use kira::Easing;

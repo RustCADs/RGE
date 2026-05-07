@@ -7,6 +7,18 @@
 //! [`glam::Mat4::from_scale_rotation_translation`] and applies it to every
 //! position in the upstream mesh. Indices pass through unchanged. Normals are
 //! NOT carried in this Phase-7.1 dispatch (positions only).
+//!
+//! # Capability surface (per ADR-104)
+//!
+//! * `boolean_robust_under_tolerance`: true (no boolean op).
+//! * `deterministic_triangulation`: true (mat4 × vec3 bit-deterministic given identical TRS inputs).
+//! * `t_junction_handling`: true (preserves upstream topology unchanged).
+//! * `concave_input_supported`: true (passes upstream positions through).
+//! * `arity`: 1.
+//! * `output_labeled_when_input_labeled`: **false** — Phase-7.1 strips labels
+//!   (positions-only). Overrides the default `iter().any` rule via
+//!   [`Operator::output_is_labeled`]. Future labels-through-Transform
+//!   dispatch will lift this.
 
 use serde::{Deserialize, Serialize};
 

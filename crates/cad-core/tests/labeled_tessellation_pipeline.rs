@@ -230,7 +230,7 @@ fn labeled_tessellation_flows_through_boolean_into_transform_strips_labels() {
 /// 2. Calls [`OperatorGraph::effective_hash_and_label_root`] on the Transform
 ///    node to get its cache-key fragment + predicted-output-is-labeled.
 /// 3. Verifies the recursive hash propagation: changing an upstream Cuboid's
-///    parameters changes the Transform's effective_hash (basic correctness —
+///    parameters changes the Transform's `effective_hash` (basic correctness —
 ///    proves the cache key actually depends on the upstream, including
 ///    transitively through the Boolean operator).
 /// 4. Verifies the predicted-output-is-labeled aligns with what the Transform
@@ -262,6 +262,10 @@ fn labeled_tessellation_flows_through_boolean_into_transform_strips_labels() {
 /// hash with labeled-vs-unlabeled Boolean upstreams and assert byte-level
 /// difference.
 #[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "single integration test exercises a multi-stage pipeline (build 2x Cuboid + Boolean + Transform graph; compute hash + label predicate; mutate upstream parameter; recompute and assert difference; exercise OperatorGraph::evaluate cache hit/miss). Splitting into helpers would obscure the linear test narrative; the doc-comment above explicitly enumerates the 5 verification steps."
+)]
 fn transform_cache_key_distinguishes_labeled_vs_unlabeled_upstream() {
     // ---- Build the requested pipeline: 2x Cuboid → Boolean(Union) → Transform ----
     let mut g_a = OperatorGraph::new();

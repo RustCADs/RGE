@@ -21,7 +21,7 @@
 //! 2. **`cad_projection_plugin_tick_returns_error_when_world_missing`** —
 //!    runtime safety: missing required resources surface as `PluginError`
 //!    + plugin state Failed (not panic). Per audit-2 A5.1, the host's
-//!    auto-emit classifies `ContractViolation` as a Warning (not Error).
+//!      auto-emit classifies `ContractViolation` as a Warning (not Error).
 //!
 //! 3. **`cad_projection_plugin_tick_puts_resources_back`** — invariant:
 //!    after a successful tick, all three resources (`World` / `CadGraph` /
@@ -439,6 +439,167 @@ fn cad_projection_plugin_isolation_with_sibling_panic() {
             .map(|d| (d.severity, d.message.as_str()))
             .collect::<Vec<_>>()
     );
+}
+
+// ===========================================================================
+// Multi-tick idempotence canary — backports the multi-tick determinism shape
+// from `crates/gfx/tests/plugin_adapter_smoke.rs::gfx_plugin_multiple_ticks_increment_counter`
+// to cad-projection's specific semantics (projection-cache hit accounting +
+// zero-reprojection invariant at steady state). Closes audit-2026-05-09 R3 M6.
+//
+// Note on the lazy-pipeline-init equivalent (gfx's
+// `gfx_plugin_pipeline_lazy_built_on_first_tick`): that test is N/A for
+// cad-projection because cad-projection does not have a lazy-built resource.
+// `CadProjection::new()` constructs the `EntityCadMap` / `ProjectionCache` /
+// `TessellationCache` eagerly at construction time; there is no GPU-style
+// lazy first-tick build to validate. Gfx's pipeline construction is deferred
+// to first tick because the orchestrator typically stages `GfxContext` AFTER
+// `init`; cad-projection's analogous resources are owned in-process by the
+// projection itself and are present from the moment the projection is
+// constructed.
+// ===========================================================================
+
+/// Multi-tick idempotence at steady state: after a single first-tick
+/// re-projection, every subsequent tick on an unchanged cad-graph must be
+/// a true no-op — bit-identical mesh output, zero re-projections, and
+/// strictly-monotonic cache-hit accounting. Backport of gfx's
+/// `gfx_plugin_multiple_ticks_increment_counter` adapted to cad-projection's
+/// projection-cache semantics.
+///
+/// This test interacts with the projection through `plugin.projection_mut()`
+/// (the public accessor on `CadProjectionPlugin`) so it can inspect the
+/// per-tick `TickReport` that the plugin's `tick(&mut PluginContext)` wrapper
+/// otherwise discards. The `tick` it drives is the same `CadProjection::tick`
+/// that `<CadProjectionPlugin as Plugin>::tick` delegates to — the host path
+/// is exercised by the four sibling tests above.
+///
+/// Verifies (analog of gfx's "counter advances by N" for a different
+/// resource family):
+///
+/// 1. Tick 1 is a cache MISS — the projection re-projects the cuboid mesh
+///    once; `entities_reprojected == 1`; `cache_misses == 1`.
+/// 2. Ticks 2..=10 are cache HITS — `entities_reprojected == 0` on every
+///    subsequent tick; cumulative `cache_hits` advances by exactly 1 per
+///    tick (1, 2, 3, ..., 9 across ticks 2..=10).
+/// 3. Cumulative `cache_misses` stays pinned at 1 for ticks 2..=10 (no new
+///    misses once steady state is reached).
+/// 4. The `BRepHandle.mesh_id` and the `ProjectedMesh` (positions + indices)
+///    captured after tick 1 are bit-identical to what's in the cache after
+///    tick 10 (idempotence: a no-op tick must not re-allocate the mesh).
+/// 5. `head_advanced_to` is the same `CheckpointId` on every tick — the
+///    cad-graph never advanced.
+#[test]
+fn cad_projection_plugin_multi_tick_idempotence_after_steady_state() {
+    let mut world = World::new();
+    world.register_snapshot_component::<BRepHandle>();
+
+    let mut cad = CadGraph::new();
+    let node = add_cuboid(&mut cad, 1.0, 1.0, 1.0, "cuboid for multi-tick canary");
+
+    let mut projection = CadProjection::new();
+    let entity = projection
+        .spawn_brep_entity(&mut world, node)
+        .expect("spawn");
+    let mut plugin = CadProjectionPlugin::from_projection(projection);
+
+    // Tick 1: cache miss — first re-projection.
+    let r1 = plugin
+        .projection_mut()
+        .tick(&mut world, &cad, tol())
+        .expect("tick 1");
+    assert_eq!(
+        r1.entities_reprojected, 1,
+        "tick 1 must re-project the freshly-spawned entity"
+    );
+    assert_eq!(
+        r1.cache_misses, 1,
+        "tick 1 must record exactly one cache miss"
+    );
+    assert_eq!(r1.cache_hits, 0, "tick 1 has no clean entities to hit on");
+    let head_after_tick1 = r1.head_advanced_to;
+
+    // Capture the post-tick-1 mesh as ground truth for byte-identical
+    // comparison across the remaining 9 ticks.
+    let mesh_after_tick1 = plugin
+        .projection()
+        .projected_mesh(entity)
+        .expect("mesh present after tick 1")
+        .clone();
+    assert_eq!(
+        mesh_after_tick1.vertex_count(),
+        8,
+        "cuboid projection produces 8 vertices"
+    );
+    assert_eq!(
+        mesh_after_tick1.triangle_count(),
+        12,
+        "cuboid projection produces 12 triangles"
+    );
+    let mesh_id_after_tick1 = world
+        .entity(entity)
+        .expect("entity preserved")
+        .get::<BRepHandle>()
+        .expect("brep handle present")
+        .mesh_id
+        .expect("mesh_id populated after tick 1");
+
+    // Ticks 2..=10: every tick must be a no-op at steady state — cache hit,
+    // zero re-projections, strictly-monotonic hit counter, mesh unchanged.
+    for tick_n in 2..=10u64 {
+        let report = plugin
+            .projection_mut()
+            .tick(&mut world, &cad, tol())
+            .unwrap_or_else(|e| panic!("tick {tick_n} unexpectedly failed: {e}"));
+        assert_eq!(
+            report.entities_reprojected, 0,
+            "tick {tick_n} must not re-project anything (steady state, head unchanged)"
+        );
+        let expected_hits = tick_n - 1; // 1 hit on tick 2, 2 on tick 3, …, 9 on tick 10.
+        assert_eq!(
+            u64::try_from(report.cache_hits).expect("hits fit in u64"),
+            expected_hits,
+            "tick {tick_n}: cumulative cache_hits must equal {expected_hits} (one new hit per steady-state tick)",
+        );
+        assert_eq!(
+            report.cache_misses, 1,
+            "tick {tick_n}: cumulative cache_misses must stay pinned at 1 (no new misses after tick 1)"
+        );
+        assert_eq!(
+            report.head_advanced_to, head_after_tick1,
+            "tick {tick_n}: head must not advance (cad-graph was never recommitted)"
+        );
+
+        // Idempotence proof: the cached mesh's positions + indices are
+        // bit-identical to the snapshot captured after tick 1. `Vec<[f32;3]>`
+        // and `Vec<u32>` use Eq directly here — equality is byte-identical
+        // because no re-projection ran (cache_misses didn't increment).
+        let mesh_now = plugin
+            .projection()
+            .projected_mesh(entity)
+            .unwrap_or_else(|| panic!("mesh missing after tick {tick_n}"));
+        assert_eq!(
+            mesh_now.positions, mesh_after_tick1.positions,
+            "tick {tick_n}: positions must be bit-identical to tick-1 capture",
+        );
+        assert_eq!(
+            mesh_now.indices, mesh_after_tick1.indices,
+            "tick {tick_n}: indices must be bit-identical to tick-1 capture",
+        );
+
+        // The `BRepHandle.mesh_id` must also be unchanged — a no-op tick
+        // must not allocate a new mesh slot.
+        let mesh_id_now = world
+            .entity(entity)
+            .expect("entity preserved")
+            .get::<BRepHandle>()
+            .expect("brep handle present")
+            .mesh_id
+            .expect("mesh_id populated");
+        assert_eq!(
+            mesh_id_now, mesh_id_after_tick1,
+            "tick {tick_n}: mesh_id must be unchanged (idempotence forbids re-allocation)",
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------

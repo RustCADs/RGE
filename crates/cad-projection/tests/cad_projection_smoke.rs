@@ -30,7 +30,7 @@
 //!    panicking. Demonstrates the safety net for callers who fail to honor
 //!    the co-restore convention.
 //!
-//! 5. **Pairing-6 BRepHandle SSoT regression tests** — guard the
+//! 5. **Pairing-6 `BRepHandle` `SSoT` regression tests** — guard the
 //!    post-2026-05-08 invariant that `BRepHandle` does NOT carry the cad-node
 //!    FK; the FK lives exclusively in `EntityCadMap`. Cover the
 //!    `node_for` / `entity_for` / `remap_entity` accessors.

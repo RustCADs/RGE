@@ -36,6 +36,11 @@ impl DynCapTicket {
     }
 
     /// Verify this ticket's caps cover the given effect set.
+    ///
+    /// # Errors
+    ///
+    /// - [`GrantError`] when the requested `effects` include any effect
+    ///   not covered by the ticket's [`CapSet`].
     pub fn check_covers(
         &self,
         effects: crate::effect_specifier::EffectSet,

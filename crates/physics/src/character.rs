@@ -175,6 +175,7 @@ impl CharacterController {
 ///
 /// Wave W11 doesn't insert the collider for you (the ECS spawn surface still
 /// belongs to W01) but tests need a shorthand.
+#[must_use]
 pub fn capsule_collider(controller: &CharacterController) -> Collider {
     Collider {
         shape: ColliderShape::Capsule {

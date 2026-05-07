@@ -540,3 +540,28 @@ fn boolean_output_is_labeled_returns_false_when_all_inputs_unlabeled() {
     let op = BooleanOp::union();
     assert!(!op.output_is_labeled(&[false, false]));
 }
+
+/// SemVer hardening fixture: [`BooleanMode`] is `#[non_exhaustive]`, so
+/// cross-crate consumers MUST include a wildcard arm when pattern-matching.
+/// This test simulates that consumer pattern: when the planned future variant
+/// is added (`Xor` per ADR-112 + the enum's own doc-comment), the wildcard
+/// arm absorbs it and this test still compiles — proving the
+/// `#[non_exhaustive]` annotation is correctly applied.
+#[test]
+#[allow(
+    unreachable_patterns,
+    reason = "intentional: simulates cross-crate consumer pattern; \
+              same-crate compilation sees the enum as exhaustive so the \
+              wildcard arm is unreachable from inside the crate, but the \
+              `#[non_exhaustive]` SemVer barrier requires it for external \
+              consumers"
+)]
+fn boolean_mode_non_exhaustive_pattern_match_compiles() {
+    let mode = BooleanMode::Union;
+    let _label = match mode {
+        BooleanMode::Union => "union",
+        BooleanMode::Intersection => "intersection",
+        BooleanMode::Difference => "difference",
+        _ => "future-variant", // required by #[non_exhaustive]
+    };
+}

@@ -169,12 +169,23 @@ impl Engine {
 
     /// Read all panic reports recorded since engine construction.
     /// Cleared after read so the editor can re-render without dupes.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal panic-registry mutex was poisoned by a
+    /// previous panic in `bind_host_functions` / `instantiate`. Such
+    /// poisoning surfaces a hard substrate fault that cannot recover
+    /// by any policy short of shutting the runtime; the panic here is
+    /// the right shape because the engine is already in an
+    /// unrecoverable state.
+    #[must_use]
     pub fn drain_panics(&self) -> Vec<PanicReport> {
         let mut g = self.panics.lock().expect("panic registry poisoned");
         g.drain()
     }
 
     /// Inner wasmtime engine (for advanced consumers).
+    #[must_use]
     pub fn inner(&self) -> &WasmtimeEngine {
         &self.inner
     }
@@ -309,6 +320,10 @@ fn bind_host_functions(
 
 /// Try to map a link-error (unknown import) into a cap-gate diagnostic
 /// when the missing import looks like a network/phi/transacts host fn.
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "owned `wasmtime::Error` matches the call-site shape (`classify_link_error(e, effects)` after a `?` short-circuit) — switching to `&wasmtime::Error` would force `&e` everywhere without functional benefit; the body's `Display`-via-`to_string` reads the same either way"
+)]
 fn classify_link_error(e: wasmtime::Error, _effects: EffectSet) -> EngineError {
     let msg = e.to_string();
     if msg.contains("unknown import") || msg.contains("incompatible import") {

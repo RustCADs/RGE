@@ -2,10 +2,10 @@
 
 | Companion to | PLAN.md §6.13 (`SnapshotParticipate` substrate) + PLAN.md §13.2 (cross-architecture coherence quality gate) |
 |---|---|
-| Status | Stable v0 — substrate shipped pre-2026-05-07; load-bearing as of 2026-05-08 with two real participants live (`cad-core.cad-graph` + `cad-projection.brep-handles`) |
-| Audience | Subsystem authors needing capture / restore for Play-in-Editor; orchestrator authors composing PIE snapshots from many subsystems; future audio / physics / particles / gfx participants per PLAN §13.2 |
+| Status | Stable v0 — substrate shipped pre-2026-05-07; load-bearing as of 2026-05-08 with three real participants live (`cad-core.cad-graph` + `cad-projection.brep-handles` + `physics.rapier-rigid-bodies`) |
+| Audience | Subsystem authors needing capture / restore for Play-in-Editor; orchestrator authors composing PIE snapshots from many subsystems; future audio / particles / gfx / editor-actions / editor-state participants per PLAN §13.2 |
 | Sibling doc | `CAD_CORE_MODEL.md` — `cad-core.cad-graph` participant implementer; `CAD_PROJECTION.md` — `cad-projection.brep-handles` participant implementer; both lean on this substrate |
-| Reference impls | `kernel/ecs/src/participate.rs` (`SnapshotParticipate` trait + `PieSnapshot` aggregator + `RGEP` envelope) · `crates/cad-core/src/checkpoints/participate.rs` (`cad-core.cad-graph` impl) · `crates/cad-projection/src/lib.rs` (`cad-projection.brep-handles` impl) |
+| Reference impls | `kernel/ecs/src/participate.rs` (`SnapshotParticipate` trait + `PieSnapshot` aggregator + `RGEP` envelope) · `crates/cad-core/src/checkpoints/participate.rs` (`cad-core.cad-graph` impl) · `crates/cad-projection/src/lib.rs` (`cad-projection.brep-handles` impl) · `crates/physics/src/participate.rs` (`physics.rapier-rigid-bodies` impl) |
 
 > Convention defined by `PLUGIN_HOST_PATTERNS.md` §header. Per PLAN §13.2 the substrate's quality gate is "all stateful Tier-2 has `SnapshotParticipate`" — this doc documents how to satisfy that gate.
 
@@ -240,8 +240,9 @@ Future participants should default to postcard and explicitly justify other form
 |---|---|---|---|
 | `cad-core.cad-graph` | cad-core | RON | OperatorGraph + CheckpointHistory + in-progress operation (the full transactional model) |
 | `cad-projection.brep-handles` | cad-projection | postcard | EntityCadMap + last_seen_checkpoint (entity↔node bridge bookkeeping) |
+| `physics.rapier-rigid-bodies` | physics | postcard | Rapier `World` arena state — `RigidBodySet` + `ColliderSet` + `IslandManager` + broadphase + narrowphase + joint sets + `IntegrationParameters` + gravity + tick. `PhysicsPipeline` is reconstructed via `new()` per rapier's own "workspace data, no point in serializing" comment |
 
-Both impls live alongside their substrate types — `cad-core.cad-graph` at `crates/cad-core/src/checkpoints/participate.rs`, `cad-projection.brep-handles` at the bottom of `crates/cad-projection/src/lib.rs`. See the implementer-side §18 docs (`CAD_CORE_MODEL.md` §5, `CAD_PROJECTION.md` §8) for impl detail.
+The three impls live alongside their substrate types — `cad-core.cad-graph` at `crates/cad-core/src/checkpoints/participate.rs`, `cad-projection.brep-handles` at the bottom of `crates/cad-projection/src/lib.rs`, `physics.rapier-rigid-bodies` at `crates/physics/src/participate.rs`. See the implementer-side §18 docs (`CAD_CORE_MODEL.md` §5, `CAD_PROJECTION.md` §8) for impl detail.
 
 ## 10. Divergent-restore tolerance
 
@@ -260,12 +261,24 @@ Per PLAN §13.2 the quality gate scales: every Tier-2 subsystem with stateful ru
 
 Anticipated future participants:
 
-- **physics.rapier-rigid-bodies** — physics-world arena state (transforms, velocities, joint state).
-- **audio.kira-mixer** — audio mixer state (track volumes, active clips, fade timers).
-- **gfx.render-snapshot** — render-tier separation per PLAN §1.5.2 (the part of gfx state that survives PIE; live GPU resources do not).
-- **particles.simulation** — emitter state, particle pools.
+- **gfx.render-snapshot** — render-tier separation per PLAN §1.5.2; lands alongside the future frame-graph + sim/render-thread split (Phase 6 deferred work per `GFX_RENDER_TIER.md` §11). Today's gfx state is single-threaded GPU resource state (wgpu device / queue / pipelines / buffers) reproducible from upstream scene state — there is no PIE-state to capture today; the participant is meaningful only once the §1.5.2 staged-snapshot pattern ships.
+- **particles.simulation** — emitter state, particle pools (crate does not exist yet; lint pre-registers the bare name `particles` for forward-compatibility).
+- **sculpt.brush-strokes** — sculpt-tool persistent brush state (crate does not exist yet; lint pre-registers the bare name `sculpt`).
 
 Each subsystem's impl lands as part of its first concrete substrate dispatch, alongside its tests in the same crate. The `kernel/ecs::participate` substrate itself does not change — the substrate's surface is stable; growth happens in the participant set.
+
+### 11.1 Crates audited and confirmed NOT-PIE-participants (post-2026-05-09 discriminate-vs-implement audit)
+
+The H3 supplementary lint's heuristic over-classified four Tier-2 crates as "stateful Tier-2 expected to impl `SnapshotParticipate`". A per-crate audit against the inclusion criterion ("owns state that should round-trip with `PieSnapshot::capture` / `PieSnapshot::restore`") closed each as NOT-a-PIE-participant. The audit cites pre-existing PLAN / §18 doctrine for each:
+
+| Crate | Removed from `STATEFUL_TIER2_CRATES` because |
+|---|---|
+| `audio` | RECOVERY_MODEL.md §9: "Audio state does NOT participate in PIE (it's transient: a paused-then-resumed editor restarts the audio mixer from scratch)". EXECUTION_DOMAINS.md §4: failure class `recoverable` *because* state is transient. PLAN §6.13's pre-v0.8 "required" list is superseded by the §18 doctrine. |
+| `editor-actions` | PLAN §6.16.5: "Stop restores pre-play snapshot" — undo stack is NOT modified during Play. PLAN §13.7's "history serialized + restored" is project-file persistence, not PIE round-trip. The `Action` trait is `dyn Action` with no `Serialize` / `Deserialize`; PIE round-trip would require typetag substrate that does not exist in v0.8. Snapshot-recoverable-class subsystems use the bus to *recover from* failures, they aren't *captured* by PIE. |
+| `editor-state` | PLAN §1.15 line 674 explicit: "PIE (§6.13) \| Editor-state persists across Play/Stop (selection survives, tool persists); does NOT participate in `WorldSnapshot`". EDITOR_STATE_MODEL.md §10: "no PIE-state at this level". Coordination state (Selection / Hover / ActiveTool) is session-scoped UI bookkeeping referenced via IDs/handles. |
+| `gfx` | PLAN §1.5.2 + GFX_RENDER_TIER.md §11: today's gfx is single-threaded headless rendering with no §1.5.2 sim/render-thread split; the `gfx.render-snapshot` participant is "Pending Phase 6 work" alongside the future frame-graph. Today's gfx owns only GPU resource state (wgpu non-`Send`-serializable handles) reproducible from upstream scene state on next render. The future entry above tracks this. |
+
+Re-add a crate to `STATEFUL_TIER2_CRATES` only when it ships a concrete impl that satisfies the inclusion criterion — at which point both the lint update and the crate's first impl land in the same dispatch (mirroring the cad-core + cad-projection + physics dispatch pattern).
 
 ## 12. Failure class
 

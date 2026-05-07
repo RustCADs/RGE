@@ -33,21 +33,12 @@ impl Default for LodLevel {
 /// extras as imposters. The `len` field tracks how many slots are populated;
 /// the rest are zeroed. Components must be `Copy`-able for ECS storage,
 /// hence the fixed array instead of a `Vec<LodLevel>`.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 pub struct Lod {
     /// Tier slots, ordered finest-first.
     pub levels: [LodLevel; 4],
     /// How many slots are populated. Values beyond this are ignored.
     pub len: u8,
-}
-
-impl Default for Lod {
-    fn default() -> Self {
-        Self {
-            levels: [LodLevel::default(); 4],
-            len: 0,
-        }
-    }
 }
 
 #[cfg(test)]

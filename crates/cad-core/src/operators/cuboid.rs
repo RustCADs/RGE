@@ -4,6 +4,17 @@
 //!
 //! Produces a closed 8-vertex / 12-triangle box centered at the origin with
 //! the half-extents `(width/2, height/2, depth/2)`. Right-handed CCW winding.
+//!
+//! # Capability surface (per ADR-104)
+//!
+//! All defaults — closed-form generative primitive with no inputs:
+//!
+//! * `boolean_robust_under_tolerance`: true (no boolean op).
+//! * `deterministic_triangulation`: true (single-pass float-multiply; bit-identical given identical extents).
+//! * `t_junction_handling`: true (8-vertex cube has none).
+//! * `concave_input_supported`: N/A (no profile input).
+//! * `arity`: 0.
+//! * `output_labeled_when_input_labeled`: false (no inputs ⇒ default `iter().any` returns false).
 
 use serde::{Deserialize, Serialize};
 

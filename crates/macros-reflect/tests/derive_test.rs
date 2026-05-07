@@ -17,7 +17,7 @@ fn derived_render_pass_round_trips_byte_identically() {
     let reconstructed: RenderPass = from_ron(&s1).expect("ron deserialization");
     assert_eq!(reconstructed, original);
     let s2 = to_ron(&reconstructed).expect("second ron serialization");
-    assert_eq!(s1, s2, "byte-identity failed:\n{}\n!=\n{}\n", s1, s2);
+    assert_eq!(s1, s2, "byte-identity failed:\n{s1}\n!=\n{s2}\n");
 }
 
 #[test]

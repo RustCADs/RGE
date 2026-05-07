@@ -1,6 +1,15 @@
 //! `rge-macros-reflect` — `#[derive(Reflect)]` proc-macro.
 //!
-//! adapted from rustforge::macros::rcad-property on 2026-05-05 — generalized
+//! Failure class: recoverable
+//!
+//! Per PLAN §1.13: macro-expansion failures (malformed `#[reflect(...)]`
+//! attribute, unrecognised UI hint, syn parse error) are transient
+//! compile-time diagnostics surfaced via `compile_error!`. The crate runs
+//! during `cargo check` / `cargo build` and owns no runtime state — there
+//! is no PIE participation. Matches the pattern: any compiler-time tool
+//! whose only output is diagnostics is recoverable.
+//!
+//! adapted from `rustforge::macros::rcad-property` on 2026-05-05 — generalized
 //! away from the dental `#[rcad(unit=..)]` namespace to the generic
 //! `#[reflect(...)]` namespace, with `UiHint` / `SchemaVersion` / `validate`
 //! attribute support.

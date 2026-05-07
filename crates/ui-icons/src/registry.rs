@@ -75,6 +75,7 @@ pub struct IconRegistry {
 
 impl IconRegistry {
     /// Create an empty registry with no sets and no active set.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -129,6 +130,7 @@ impl IconRegistry {
     }
 
     /// Currently-active set id, if any.
+    #[must_use]
     pub fn active(&self) -> Option<&IconSetId> {
         self.active.as_ref()
     }
@@ -144,6 +146,7 @@ impl IconRegistry {
     ///
     /// Returns [`None`] if no active set is configured, the name is
     /// invalid, or the icon does not exist.
+    #[must_use]
     pub fn lookup(&self, name: &str) -> Option<IconHandle> {
         let active = self.active.as_ref()?;
         let icon_name = IconName::new(name).ok()?;
@@ -156,6 +159,7 @@ impl IconRegistry {
     }
 
     /// Look up a name in a *specific* set (does not consult `active`).
+    #[must_use]
     pub fn lookup_in(&self, set: &IconSetId, name: &str) -> Option<IconHandle> {
         let icon_name = IconName::new(name).ok()?;
         let state = self.sets.get(set)?;
@@ -175,6 +179,13 @@ impl IconRegistry {
     /// - [`RegistryError::UnknownSet`] / [`RegistryError::UnknownIcon`]
     ///   if the handle does not match the registry.
     /// - [`RegistryError::Io`] if the SVG file can't be read.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the entry just inserted into the cache (or pre-existing
+    /// on a cache hit) is somehow absent at the post-`insert` retrieval
+    /// step. This is unreachable in practice — the path between insertion
+    /// and lookup holds an exclusive `&mut self` borrow.
     pub fn svg_bytes(&mut self, handle: &IconHandle) -> Result<&str, RegistryError> {
         let state = self
             .sets
@@ -229,6 +240,7 @@ impl IconRegistry {
     }
 
     /// Borrow the loaded set metadata (license / attribution / etc.).
+    #[must_use]
     pub fn set_info(&self, id: &IconSetId) -> Option<&LoadedIconSet> {
         self.sets.get(id).map(|s| &s.loaded)
     }

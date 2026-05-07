@@ -41,6 +41,7 @@
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -341,7 +342,10 @@ fn save_index(path: &Path, entries: &BTreeMap<AssetId, IndexEntry>) -> Result<()
     // BTreeMap iterates in id order — stable across runs, which is
     // what we want for diff-friendly cache state.
     for (id, e) in entries {
-        s.push_str(&format!("{} {} {}\n", e.tick, id.hex(), e.size));
+        // `writeln!` to a `String` cannot fail — `fmt::Write::write_fmt`
+        // returns `Err` only if a formatter callback errors, which the
+        // built-in `{}` formatter for `u64` / `&str` never does.
+        let _ = writeln!(&mut s, "{} {} {}", e.tick, id.hex(), e.size);
     }
     let staging = path.with_extension("staging");
     {

@@ -133,6 +133,7 @@ impl World {
     }
 
     /// Number of live joints. Test convenience.
+    #[must_use]
     pub fn joint_count(&self) -> usize {
         self.impulse_joints.iter().count()
     }

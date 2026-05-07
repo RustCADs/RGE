@@ -173,7 +173,7 @@ impl Evaluator {
     /// declared by [`ExprHandle::vars`].
     ///
     /// Hot path: ~5 ns per call after the first. The cost split is
-    /// roughly memory-write x N_vars + one wasmtime call dispatch.
+    /// roughly memory-write x `N_vars` + one wasmtime call dispatch.
     ///
     /// # Errors
     ///

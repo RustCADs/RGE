@@ -1,5 +1,15 @@
 //! `rge-io-image` — single-source-of-truth raster image importer/exporter.
 //!
+//! Failure class: recoverable
+//!
+//! Per PLAN §1.13: image codec failures (unknown magic, malformed PNG/JPEG,
+//! unsupported pixel format, EXR/HDR parse error, mip-chain dimension
+//! mismatch) are transient and recoverable in-place — the caller surfaces
+//! the error to the user, retries with a different codec, or skips the
+//! asset. No PIE state is owned by io-image itself; it's a stateless format
+//! adapter. Matches pak-format + io-gltf + asset-store (transient I/O /
+//! parse failures).
+//!
 //! Per [`PLAN.md`] §1.6.5 (Import/export authority), this crate is the **only**
 //! path for PNG / JPEG / EXR / HDR raster ingestion in RGE. CI lint enforces
 //! that no other crate links to `image` or `exr` directly.
@@ -46,7 +56,7 @@
     clippy::missing_panics_doc,
     clippy::similar_names,
     clippy::doc_markdown,
-    clippy::cast_possible_wrap
+    reason = "format-adapter crate: pixel↔float casts and wrapping arithmetic are intrinsic to image codecs (sample bit-depth conversions, premultiplication math); rich error types intentional for authoring diagnostics"
 )]
 
 pub mod asset_store_stub;

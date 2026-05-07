@@ -169,6 +169,7 @@ pub const STDLIB: &[Entry] = &[
 
 /// Look up a stdlib entry by name. Returns `None` for unknown / non-whitelisted
 /// functions; the caller must report this as [`crate::error::ExprError::UnknownFunction`].
+#[must_use]
 pub fn lookup(name: &str) -> Option<&'static Entry> {
     STDLIB.iter().find(|e| e.name == name)
 }

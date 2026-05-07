@@ -79,11 +79,6 @@ reason = "Phase 1.x rollout debt - declaration added when crate gets first real 
 
 [[exemption]]
 lint = "failure-class"
-file = "crates/asset-store/Cargo.toml"
-reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
-
-[[exemption]]
-lint = "failure-class"
 file = "crates/brep-render/Cargo.toml"
 reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
 
@@ -104,57 +99,7 @@ reason = "Phase 1.x rollout debt - declaration added when crate gets first real 
 
 [[exemption]]
 lint = "failure-class"
-file = "crates/components-editor/Cargo.toml"
-reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
-
-[[exemption]]
-lint = "failure-class"
-file = "crates/components-interaction/Cargo.toml"
-reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
-
-[[exemption]]
-lint = "failure-class"
-file = "crates/components-lifecycle/Cargo.toml"
-reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
-
-[[exemption]]
-lint = "failure-class"
-file = "crates/components-networking/Cargo.toml"
-reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
-
-[[exemption]]
-lint = "failure-class"
-file = "crates/components-physics/Cargo.toml"
-reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
-
-[[exemption]]
-lint = "failure-class"
-file = "crates/components-spatial/Cargo.toml"
-reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
-
-[[exemption]]
-lint = "failure-class"
-file = "crates/components-visibility/Cargo.toml"
-reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
-
-[[exemption]]
-lint = "failure-class"
-file = "crates/editor-shell/Cargo.toml"
-reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
-
-[[exemption]]
-lint = "failure-class"
-file = "crates/editor-ui/Cargo.toml"
-reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
-
-[[exemption]]
-lint = "failure-class"
 file = "crates/errors/Cargo.toml"
-reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
-
-[[exemption]]
-lint = "failure-class"
-file = "crates/expr-wasm/Cargo.toml"
 reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
 
 [[exemption]]
@@ -169,27 +114,12 @@ reason = "Phase 1.x rollout debt - declaration added when crate gets first real 
 
 [[exemption]]
 lint = "failure-class"
-file = "crates/input/Cargo.toml"
-reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
-
-[[exemption]]
-lint = "failure-class"
 file = "crates/input-gestures/Cargo.toml"
 reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
 
 [[exemption]]
 lint = "failure-class"
 file = "crates/io-audio/Cargo.toml"
-reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
-
-[[exemption]]
-lint = "failure-class"
-file = "crates/io-gltf/Cargo.toml"
-reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
-
-[[exemption]]
-lint = "failure-class"
-file = "crates/io-image/Cargo.toml"
 reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
 
 [[exemption]]
@@ -205,11 +135,6 @@ reason = "Phase 1.x rollout debt - declaration added when crate gets first real 
 [[exemption]]
 lint = "failure-class"
 file = "crates/io-stl/Cargo.toml"
-reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
-
-[[exemption]]
-lint = "failure-class"
-file = "crates/macros-reflect/Cargo.toml"
 reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
 
 [[exemption]]
@@ -244,11 +169,6 @@ reason = "Phase 1.x rollout debt - declaration added when crate gets first real 
 
 [[exemption]]
 lint = "failure-class"
-file = "crates/pak-format/Cargo.toml"
-reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
-
-[[exemption]]
-lint = "failure-class"
 file = "crates/physics-debug/Cargo.toml"
 reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
 
@@ -269,42 +189,12 @@ reason = "Phase 1.x rollout debt - declaration added when crate gets first real 
 
 [[exemption]]
 lint = "failure-class"
-file = "crates/rge-data/Cargo.toml"
-reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
-
-[[exemption]]
-lint = "failure-class"
-file = "crates/runtime-wasmtime/Cargo.toml"
-reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
-
-[[exemption]]
-lint = "failure-class"
-file = "crates/runtime-wasmtime-engine/Cargo.toml"
-reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
-
-[[exemption]]
-lint = "failure-class"
 file = "crates/script-aot/Cargo.toml"
 reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
 
 [[exemption]]
 lint = "failure-class"
-file = "crates/script-bench/Cargo.toml"
-reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
-
-[[exemption]]
-lint = "failure-class"
 file = "crates/script-graph/Cargo.toml"
-reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
-
-[[exemption]]
-lint = "failure-class"
-file = "crates/ui-fonts/Cargo.toml"
-reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
-
-[[exemption]]
-lint = "failure-class"
-file = "crates/ui-icons/Cargo.toml"
 reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
 
 

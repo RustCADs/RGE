@@ -79,8 +79,7 @@ mod tests {
     fn generator_matches_reference_within_one_percent() {
         let sr = 48_000_u32;
         let samples = sine_wave(440.0, sr, 0.01);
-        for i in 0..100 {
-            let actual = samples[i];
+        for (i, &actual) in samples.iter().enumerate().take(100) {
             let expected = sine_reference(440.0, sr, i);
             // 1% tolerance OR 1e-3 absolute, whichever larger — sine values
             // near zero crossings have small absolute error but huge relative.

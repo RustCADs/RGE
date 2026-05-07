@@ -142,6 +142,10 @@ pub(crate) enum DefaultSpec {
 }
 
 impl FieldAttrs {
+    #[allow(
+        clippy::too_many_lines,
+        reason = "linear `#[reflect(...)]` attribute parser; each `meta.path.is_ident(...)` branch handles one well-defined attribute key — extracting helpers would scatter the parse table without simplifying any individual branch"
+    )]
     pub(crate) fn parse(attrs: &[Attribute]) -> syn::Result<Self> {
         let mut out = FieldAttrs::default();
         for attr in attrs.iter().filter(|a| a.path().is_ident("reflect")) {
@@ -236,8 +240,7 @@ impl FieldAttrs {
                     let key = meta
                         .path
                         .get_ident()
-                        .map(ToString::to_string)
-                        .unwrap_or_else(|| "<path>".into());
+                        .map_or_else(|| "<path>".into(), ToString::to_string);
                     return Err(meta.error(format!(
                         "unknown field-level #[reflect({key} ...)] key — \
                          allowed: skip | ui | min | max | step | extensions | lines | \
@@ -254,8 +257,7 @@ impl FieldAttrs {
                 attrs
                     .iter()
                     .find(|a| a.path().is_ident("reflect"))
-                    .map(|a| a.span())
-                    .unwrap_or_else(proc_macro2::Span::call_site),
+                    .map_or_else(proc_macro2::Span::call_site, Spanned::span),
                 "#[reflect(ui = \"Slider\")] requires both min and max",
             ));
         }
@@ -304,8 +306,9 @@ type ParenLit = Punctuated<Lit, Token![,]>;
 /// Render the parsed [`ContainerAttrs::version`] into a `SchemaVersion::new(...)`
 /// expression. Lifted up so codegen need not know the triple's shape.
 pub(crate) fn version_expr(c: &ContainerAttrs, krate: &TokenStream2) -> TokenStream2 {
-    match c.version {
-        Some((mj, mi, pa)) => quote! { #krate::SchemaVersion::new(#mj, #mi, #pa) },
-        None => quote! { #krate::SchemaVersion::UNVERSIONED },
+    if let Some((mj, mi, pa)) = c.version {
+        quote! { #krate::SchemaVersion::new(#mj, #mi, #pa) }
+    } else {
+        quote! { #krate::SchemaVersion::UNVERSIONED }
     }
 }

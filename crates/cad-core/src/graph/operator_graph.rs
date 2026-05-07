@@ -9,6 +9,42 @@
 //! * Recursive structural-hash evaluation through a `TessellationCache`.
 //! * Cycle detection (graph-foundation's `Graph` itself does NOT detect
 //!   cycles — see test 4 in the unit-test block).
+//!
+//! # Cycle detection — three implementations across `Graph<N, ()>` consumers
+//!
+//! Audit-3 finding M7 (2026-05-09) flagged that the workspace has three
+//! distinct cycle-detection implementations layered on top of
+//! `kernel/graph-foundation::Graph<N, E>`:
+//!
+//! 1. **This file** — ancestor-set guard inside [`Self::effective_hash_and_label`]
+//!    (the `if !stack.insert(node_id)` line). Returns [`EvalError::Cycle`]
+//!    inline during recursive hash-folding evaluation. NOT a standalone
+//!    cycle scan: the recursion only descends into reachable upstream nodes
+//!    (those actually feeding the evaluation target), so it cannot be
+//!    factored out without restructuring the evaluator. Path-tracking is
+//!    the recursion stack itself; no cycle path is returned.
+//! 2. **`kernel/asset/src/dependency_graph.rs::DependencyGraph::detect_cycle`** —
+//!    standalone three-color DFS (visited + in-stack) returning
+//!    `Option<Vec<AssetId>>` (the cycle path).
+//! 3. **`crates/asset-store/src/dependency.rs::DepGraph::transitive_closure`
+//!    / `::invalidation_cascade`** — start-node-targeted iterative walks
+//!    that bail with `DepError::Cycle(AssetId)` (single offending asset)
+//!    when the traversal revisits the start node.
+//!
+//! These three implementations diverge by design: each returns a different
+//! shape (eval-integrated `EvalError::Cycle` vs. full path `Vec<AssetId>`
+//! vs. single `DepError::Cycle(AssetId)`) and operates at a different
+//! granularity (on-the-fly during eval / all-pairs full-graph scan /
+//! start-node-bounded reachability). They are NOT one algorithm wearing
+//! three return types; unifying them would force one consumer's
+//! information shape onto the other two and either leak unnecessary work
+//! (full DFS where bailing on first revisit suffices) or lose information
+//! (path discarded). PLAN §1.14 line 605 ("is this primitive infrastructure
+//! that all 8 graph systems would use the same way?") evaluates to NO for
+//! cycle detection: each domain consumer uses it differently. Per PLAN
+//! §1.14 line 628, graph-foundation deliberately stays "primitives, not
+//! runtime" — cycle-detection therefore lives in each domain's wrapper.
+//! See `docs/§18/GRAPH_FOUNDATION.md` §3 for the substrate-side framing.
 
 use std::collections::HashSet;
 use std::sync::Arc;

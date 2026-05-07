@@ -15,6 +15,10 @@ use rge_physics::world::World;
 use rge_physics::{events, ContactEventChannel};
 
 /// Build a small scene that will exercise contacts, joints, and sleeping.
+#[allow(
+    clippy::type_complexity,
+    reason = "local-only fixture-builder return; tuple is destructured immediately at every call site so naming a one-shot record type adds noise without clarity"
+)]
 fn build_scene() -> (
     World,
     Vec<(rge_physics::PhysicsHandle, Transform)>,
@@ -39,6 +43,10 @@ fn build_scene() -> (
     let mut transforms = Vec::new();
     let mut velocities = Vec::new();
     for i in 0..3 {
+        #[allow(
+            clippy::cast_precision_loss,
+            reason = "test fixture loop bound; i is in 0..3, far below f32 mantissa limit"
+        )]
         let y = 1.0 + i as f32 * 1.2;
         let cube = world.insert_body(
             RigidBody {
@@ -121,8 +129,7 @@ fn ledger_records_every_tick() {
     for (i, record) in ledger.records.iter().enumerate() {
         assert_eq!(
             record.tick, i as u64,
-            "ledger tick monotonicity broken at {}",
-            i
+            "ledger tick monotonicity broken at {i}"
         );
     }
 }

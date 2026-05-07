@@ -1,5 +1,14 @@
 //! `rge-script-bench` — scripting benchmark suite (v0.0.1 scaffold).
 //!
+//! Failure class: recoverable
+//!
+//! Per PLAN §1.13: benchmark-harness failures (workload setup error, JSON
+//! output write failure, engine-stub initialisation failure) are transient
+//! and recoverable in-place — the harness surfaces the error and re-runs
+//! or skips the workload. The crate is a measurement scaffold: no PIE
+//! participation, no runtime engine, no cross-call state. Matches gfx +
+//! ui-fonts (substrate / measurement crates with transient I/O risks).
+//!
 //! Provides the **harness**, the **native-Rust baseline**, and the **output
 //! format** for the "fastest script engine" pillar verification per
 //! [PLAN.md §5.6](../../plans/PLAN.md). Real engine integration (wasmtime via

@@ -235,6 +235,7 @@ impl PakReader {
     /// assets (the cooked main scene, the cooked plugin manifest);
     /// if a kind has multiple entries the caller must use
     /// [`Self::iter`] + filter.
+    #[must_use]
     pub fn first_of_kind(
         &self,
         kind: AssetKind,

@@ -43,6 +43,10 @@ enum Tok {
     Colon,
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "single-pass byte scanner; per-token branches are linear and inlining the lexer is the simplest correct shape — extracting helpers would only obscure the byte cursor's state machine"
+)]
 fn tokenize(src: &str) -> Result<Vec<Tok>, ExprError> {
     let bytes = src.as_bytes();
     let mut out = Vec::with_capacity(bytes.len() / 2 + 4);
@@ -222,6 +226,10 @@ impl Parser {
             false
         }
     }
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "owned `Tok` mirrors the constant-pattern call sites (`self.expect(Tok::Colon)`); the variants this helper sees are unit-only so the move is a no-op — switching to `&Tok` would force `&Tok::Colon` everywhere without functional benefit"
+    )]
     fn expect(&mut self, t: Tok) -> Result<(), ExprError> {
         if self.eat(&t) {
             Ok(())
@@ -334,6 +342,10 @@ fn infix_op(t: &Tok) -> Option<BinaryOp> {
 }
 
 /// Binding power. C-like: `||` < `&&` < cmp < `+/-` < `*/% `.
+#[allow(
+    clippy::match_same_arms,
+    reason = "relational (`<,<=,>,>=`) and equality (`==,!=`) are semantically distinct precedence groups that coincidentally share level 3 today; keeping them on separate arms documents the C precedence table the parser mirrors"
+)]
 fn infix_bp(op: BinaryOp) -> u8 {
     match op {
         BinaryOp::Or => 1,

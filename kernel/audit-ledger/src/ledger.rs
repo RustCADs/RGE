@@ -141,6 +141,7 @@ impl AuditLedger {
 
     /// Reverse iteration — newest first.  Used by the Command Bus undo
     /// projection.
+    #[must_use]
     pub fn iter_reverse(&self) -> impl DoubleEndedIterator<Item = &Event> {
         self.events.iter().rev()
     }
@@ -212,6 +213,7 @@ impl AuditLedger {
     /// Panics if the internal cursor value exceeds `usize::MAX`, which cannot
     /// occur in practice because the cursor is bounded by `events.len()` and
     /// `Vec` is itself bounded by `usize::MAX`.
+    #[must_use]
     pub fn undo_stream(&self) -> impl DoubleEndedIterator<Item = &Event> {
         let cursor = usize::try_from(self.cursor).expect("cursor fits in usize");
         self.events[..cursor].iter().rev()

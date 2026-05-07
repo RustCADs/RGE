@@ -2,7 +2,7 @@
 //!
 //! Failure class: recoverable
 //!
-//! adapted from rustforge::macros::rcad-property on 2026-05-05 — generalized to
+//! adapted from `rustforge::macros::rcad-property` on 2026-05-05 — generalized to
 //! generic `Reflect` trait + `UiHint` closed-set + `SchemaVersion`.
 //!
 //! # Why this crate is the architectural root

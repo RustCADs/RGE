@@ -19,6 +19,12 @@
 //! family (GPU resources vs ECS world / CAD graph / tolerance scalar) without
 //! requiring any change to the kernel substrate.
 //!
+//! The take/insert pattern this module repeats verbatim across all 4 canaries
+//! (cad-projection / gfx / physics / audio) is intentional per PLAN §10.4
+//! dogfood rule — see [`rge_cad_projection::plugin_adapter`]'s `# Why this
+//! looks duplicated across the four canaries` section for the canonical
+//! rationale.
+//!
 //! # Resource contract
 //!
 //! On `tick`, the plugin context MUST contain (caller-supplied):

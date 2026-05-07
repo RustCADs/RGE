@@ -17,7 +17,7 @@ pub struct Skeleton {
     /// Optional skeleton name (= glTF skin name).
     pub name: String,
     /// glTF node indices of the joints, in skin order. Index `i` here is
-    /// the bone-id used by JOINTS_0 vertex attribute on the skinned mesh.
+    /// the bone-id used by `JOINTS_0` vertex attribute on the skinned mesh.
     pub joints: Vec<usize>,
     /// 4×4 inverse-bind matrices, column-major, one per joint. Empty when
     /// the glTF skin omitted them — caller treats absent as identity per

@@ -11,6 +11,10 @@ use syn::{DeriveInput, Field};
 
 use crate::attrs::{version_expr, ContainerAttrs, DefaultSpec, FieldAttrs, UiHintKind};
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "linear `impl Reflect` emitter; per-field token-stream construction reads better as one block than as scattered helpers — splitting would obscure the dispatch shape"
+)]
 pub(crate) fn emit_impl(
     input: &DeriveInput,
     container: &ContainerAttrs,
@@ -22,16 +26,17 @@ pub(crate) fn emit_impl(
     // Crate-path indirection — defaults to ::rge_kernel_types but can be
     // overridden via `#[reflect(crate = "...")]` (used by the kernel-types
     // crate's own internal tests, if any, to avoid the self-dep cycle).
-    let krate: TokenStream2 = match &container.crate_path {
-        Some(p) => syn::parse_str::<syn::Path>(p)
+    let krate: TokenStream2 = if let Some(p) = &container.crate_path {
+        syn::parse_str::<syn::Path>(p)
             .map_err(|e| {
                 syn::Error::new_spanned(
                     &input.ident,
                     format!("invalid #[reflect(crate = ...)] path: {e}"),
                 )
             })?
-            .into_token_stream(),
-        None => quote! { ::rge_kernel_types },
+            .into_token_stream()
+    } else {
+        quote! { ::rge_kernel_types }
     };
 
     let version_e = version_expr(container, &krate);
@@ -214,11 +219,10 @@ fn ui_hint_expr(attrs: &FieldAttrs, krate: &TokenStream2) -> TokenStream2 {
 }
 
 fn range_expr(attrs: &FieldAttrs, krate: &TokenStream2) -> TokenStream2 {
-    match (attrs.min, attrs.max) {
-        (Some(min), Some(max)) => {
-            quote! { ::core::option::Option::Some(#krate::RangeMeta { min: #min, max: #max }) }
-        }
-        _ => quote! { ::core::option::Option::None },
+    if let (Some(min), Some(max)) = (attrs.min, attrs.max) {
+        quote! { ::core::option::Option::Some(#krate::RangeMeta { min: #min, max: #max }) }
+    } else {
+        quote! { ::core::option::Option::None }
     }
 }
 

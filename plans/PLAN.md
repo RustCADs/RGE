@@ -627,7 +627,7 @@ Anyone proposing to add functionality to graph-foundation must answer: "is this 
 
 **Failure mode to avoid:** graph-foundation becoming a god-substrate that tries to unify domain semantics. The discipline is "primitives, not runtime."
 
-ADR-101. Companion: `RGE/GRAPH_FOUNDATION.md` (Phase 4-Foundation deliverable).
+ADR-101 [deferred; superseded by the companion doc that shipped at `docs/§18/GRAPH_FOUNDATION.md` 2026-05-08 — formal ADR creation deferred until a downstream consumer (cross-graph diff/snapshot, viz-adapter materialisation, or god-substrate-risk audit) produces decision pressure beyond what the §18 doc captures]. Companion: `docs/§18/GRAPH_FOUNDATION.md` (Phase 4-Foundation deliverable; 224L; cross-references the 9-lint suite's `graph-foundation` rule that actively enforces the substrate).
 
 ### 1.15 Editor state coordination (NEW v0.8 — narrow scope, last architecture commitment before freeze)
 
@@ -860,7 +860,7 @@ LBS default (≤256 bones) · DQS opt-in · compute-shader (>256 bones).
 [Stop] → restore snapshot → world byte-identical to pre-play
 ```
 
-`SnapshotParticipate` trait required by `audio` · `physics` · `particles` · `gfx` · `cad-projection` · Tier-3 plugins. Selective serialization (full clone up to ~50k entities; diff mode above).
+`SnapshotParticipate` trait required by `audio` · `physics` · `particles` · `gfx` · `cad-projection` · Tier-3 plugins. Selective serialization (full clone up to ~50k entities; diff mode above). [v0.8 §18 doctrine update: per RECOVERY_MODEL.md / EXECUTION_DOMAINS.md / GFX_RENDER_TIER.md / EDITOR_STATE_MODEL.md (shipped 2026-05-08/09), `audio` + `gfx` are NOT PIE participants — audio state is wall-clock-bound transient (rebuilt from upstream ECS scene state on next tick); gfx render state is non-Send GPU resource state reproducible from upstream scene state on next render (gfx.render-snapshot participant pending Phase 6 sim/render-thread split per §1.5.2). The audit-3 H3 SnapshotParticipate lint at `tools/architecture-lints/src/snapshot_participate.rs` reflects this calibration: STATEFUL_TIER2_CRATES = {cad-core, cad-projection, particles, physics, sculpt}; cad-core + cad-projection + physics impl, particles + sculpt are forward-looking entries. See `docs/§18/PIE_SNAPSHOT.md` §11.1 "Crates audited and confirmed NOT-PIE-participants" for the full rationale.]
 
 ### 6.14 Subsystem integration map
 
@@ -1307,7 +1307,7 @@ ADR-001..ADR-096 from v0.5/v0.6 preserved.
 - **ADR-098** — Topology lineage graph with `TopologyEvolution` enum
 - **ADR-099** — Execution domains naming (CPU gameplay / GPU shading / GPU compute / Expression)
 - **ADR-100** — Constitutional principle #8: editor extends runtime, never replaces
-- **ADR-101** — `kernel/graph-foundation` Tier-1 substrate (primitives, not runtime)
+- **ADR-101** — `kernel/graph-foundation` Tier-1 substrate (primitives, not runtime). [Deferred; companion doc shipped at `docs/§18/GRAPH_FOUNDATION.md`.]
 - **ADR-102** — Failure containment model with 5 classes
 - **ADR-103** — Networking is authoritative CAD serialization, not replicated topology
 - **ADR-104** — CAD kernel non-equivalence doctrine + capability surface
@@ -1377,7 +1377,7 @@ Spawned from Track F (Month 1) unless noted:
 | §1.5.4.5 cad-projection internal split (6 modules) | review CRITICAL | §1.5.4.5, ADR-097 |
 | §1.10.4 Extended entropy metrics (10 new) | review | §1.10.4 |
 | §1.13 Failure containment model | review CRITICAL | §1.13, ADR-102 |
-| §1.14 graph-foundation substrate (Tier 1) | review CRITICAL | §1.14, ADR-101 |
+| §1.14 graph-foundation substrate (Tier 1) | review CRITICAL | §1.14, ADR-101 [deferred → `docs/§18/GRAPH_FOUNDATION.md`] |
 | §6.16 Promote to Command Bus framing | review CRITICAL | §6.16 |
 | §6.17 Authoritative CAD serialization (not replicated topology) | review CRITICAL | §6.17, ADR-103 |
 | Renderer realism reframe (industrial editor; photoreal post-v2) | review | §0.4, §4 |

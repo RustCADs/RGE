@@ -49,6 +49,7 @@
 pub mod character;
 pub mod events;
 pub mod joint;
+pub mod participate;
 pub mod physics_input_ledger;
 pub mod plugin_adapter;
 pub mod step;
@@ -61,6 +62,7 @@ pub use events::{
     CollisionEnded, CollisionStarted, ContactEventChannel, TriggerEntered, TriggerExited,
 };
 pub use joint::{Joint, JointHandle, JointKind};
+pub use participate::PHYSICS_WORLD_PARTICIPANT_ID;
 pub use plugin_adapter::{PhysicsPlugin, PHYSICS_PLUGIN_ID};
 pub use step::{physics_step, FIXED_DT, PHYSICS_HZ};
 pub use stubs::components_physics::{BodyKind, Collider, ColliderShape, RigidBody, Velocity};

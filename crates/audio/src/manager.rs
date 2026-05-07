@@ -90,7 +90,10 @@ pub struct AudioManager<B: Backend = DefaultBackend> {
 // Hand-rolled because `KiraManager`, `ListenerHandle` and the per-entity
 // Kira handles aren't `Debug` in a way that fits our diagnostic spans. We
 // project to summary counts which are what diagnostic spans actually want.
-#[allow(clippy::missing_fields_in_debug)]
+#[allow(
+    clippy::missing_fields_in_debug,
+    reason = "KiraManager / ListenerHandle / per-entity Kira handles aren't useful in Debug spans; we project to summary counts which is what diagnostic spans actually want"
+)]
 impl<B: Backend> std::fmt::Debug for AudioManager<B> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AudioManager")
@@ -239,6 +242,10 @@ where
     ///
     /// Currently infallible at this layer; returns `Result` for forward-compat
     /// with multi-listener support in a later wave.
+    #[allow(
+        clippy::unnecessary_wraps,
+        reason = "intentionally fallible at the surface even though today's single-anchor implementation cannot fail; multi-listener support in a later wave will materialise the error path without breaking callers"
+    )]
     pub fn register_listener(
         &mut self,
         entity: Entity,
@@ -302,7 +309,10 @@ where
 
     /// `pub(crate)` access for the schedule module. Avoids exposing
     /// `SourceState` mutability outside the crate.
-    #[allow(clippy::type_complexity)] // Tuple matches the four caller sites; a struct adds more noise than it saves.
+    #[allow(
+        clippy::type_complexity,
+        reason = "tuple matches the four caller sites in schedule.rs; introducing a struct adds more noise than it saves at the destructure sites"
+    )]
     pub(crate) fn parts_mut(
         &mut self,
     ) -> (
@@ -346,7 +356,7 @@ mod tests {
         assert_eq!(mgr.listener_count(), 0);
     }
 
-    /// register / unregister source round-trips and updates source_count.
+    /// register / unregister source round-trips and updates `source_count`.
     #[test]
     fn source_registration_round_trip() {
         let mut mgr = mock_manager();
@@ -375,6 +385,10 @@ mod tests {
 
     /// Clips registered from raw samples come back with the same length.
     #[test]
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "test fixture; i is bounded by 1000, far below f32 mantissa limit"
+    )]
     fn register_clip_from_samples_preserves_length() {
         let mut mgr = mock_manager();
         let samples: Vec<f32> = (0..1000).map(|i| (i as f32) * 0.001).collect();

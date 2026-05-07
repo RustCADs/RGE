@@ -62,6 +62,18 @@ Three sub-decisions follow.
 
 ## Implementation guidance
 
+The snippets below show the two error-mapping shapes a plugin author writes by
+hand: `contract_violation` (caller-supplied resource missing) and
+`runtime_fault` (plugin's own logic returned `Err`). Three more variants —
+[`InitFailed`](#pluginerror-variant-policy) (plugin's `init` returned `Err`),
+[`ShutdownFailed`](#pluginerror-variant-policy) (plugin's `shutdown` returned
+`Err`), and [`Panic`](#pluginerror-variant-policy) (host-classified after
+`catch_unwind`) — exist on the [`PluginError`] enum and are documented in full
+under §"`PluginError` variant policy" below. The 5-variant taxonomy landed in
+the audit-2 Phase 0 hardening (2026-05-08); the constructors used here
+(`PluginError::contract_violation` / `PluginError::runtime_fault`) wrap the
+typed enum variants and ARE current as of the 5-variant expansion.
+
 ### Resource lifecycle (canonical pattern)
 
 ```rust

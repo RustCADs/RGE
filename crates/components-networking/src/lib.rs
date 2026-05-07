@@ -1,5 +1,13 @@
 //! `rge-components-networking` — networking marker components.
 //!
+//! Failure class: recoverable
+//!
+//! Per PLAN §1.13: state-only marker crate; pure component definitions
+//! consumed (post-v1) by the replication subsystem. Owns no PIE state and
+//! emits no runtime errors. Mirrors the components-render /
+//! components-animation / components-audio / components-identity
+//! classification.
+//!
 //! Zero-cost at v1.0 per W01 PLAN: networking is a Reach feature (PLAN.md
 //! §0.4 — "keep markers; defer impl"). The components let scene RON files
 //! and gameplay code annotate intent today; the replication system in

@@ -6,7 +6,7 @@
 //! measures *allocation+drop* wall time as a proxy; the **size in bytes**
 //! reported to `BASELINE.md` comes from
 //! [`rge_script_bench::native_baseline::memory_overhead_bytes_per_module`]
-//! and is constant per architecture (one function pointer = 8 B on x86_64).
+//! and is constant per architecture (one function pointer = 8 B on `x86_64`).
 //!
 //! A future revision will replace this with a real RSS-delta probe once
 //! per platform — see `METHODOLOGY.md` §"W5".

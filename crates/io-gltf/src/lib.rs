@@ -1,6 +1,16 @@
 // adapted from rustforge::crates::io-gltf on 2026-05-05 — re-targeted to rge asset-store::Cache trait
 //! `rge-io-gltf` — glTF 2.0 import + export.
 //!
+//! Failure class: recoverable
+//!
+//! Per PLAN §1.13: glTF import/export failures (malformed `.glb` magic,
+//! unsupported accessor type, missing buffer, JSON serde error, schema
+//! constraint violation) are transient and recoverable in-place — the
+//! caller surfaces the error to the user, retries with a different file,
+//! or skips the asset. No PIE state is owned by io-gltf itself; it's a
+//! stateless format adapter. Matches pak-format + io-image + asset-store
+//! (transient I/O / parse failures).
+//!
 //! Phase-4 deliverable per [`PLAN.md`](../../plans/PLAN.md) §1.6.4. CI lint
 //! enforces this is the **only** path through which the workspace touches the
 //! `gltf` crate (one-import-path-per-format rule, §1.6.5).

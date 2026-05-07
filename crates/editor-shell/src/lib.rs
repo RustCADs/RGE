@@ -1,5 +1,15 @@
 //! `rge-editor-shell` — editor host: winit lifecycle + Play-in-Editor (PIE) state machine.
 //!
+//! Failure class: snapshot-recoverable
+//!
+//! Per PLAN §1.13: editor-shell owns the [`PlayState`] state machine and the
+//! [`WorldSnapshot`] that backs Play/Stop round-trip — the canonical PIE
+//! snapshot mechanism (PLAN §6.13). PIE-snapshot failures (state-machine
+//! invariant violation, snapshot decode error, restore mid-tick) are
+//! recoverable by restoring from the most recent snapshot rather than
+//! restarting the session. Mirrors physics + cad-projection + editor-actions
+//! (stateful subsystems with PIE participation).
+//!
 //! Phase 5 deliverable per [`IMPLEMENTATION.md`](../../plans/IMPLEMENTATION.md).
 //! Implements W03 dispatch (PLAN.md §6.13 PIE; §1.15 editor-state coordination).
 //!

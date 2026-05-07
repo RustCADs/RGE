@@ -1,5 +1,13 @@
 //! `rge-components-physics` — physics-side ECS components.
 //!
+//! Failure class: recoverable
+//!
+//! Per PLAN §1.13: state-only component crate; the crates/physics simulation
+//! crate (W11) consumes these and is itself snapshot-recoverable. This crate
+//! owns no PIE state and emits no runtime errors. Mirrors the
+//! components-render / components-animation / components-audio /
+//! components-identity classification.
+//!
 //! Rigid body class, collider shape, linear & angular velocity, joints, mass
 //! / inertia, character controller. Physics simulation lives in
 //! `crates/physics` (W11) and consumes these components; this crate is

@@ -5,7 +5,7 @@
 //! The test:
 //! 1. registers a 1-second 440 Hz mono sine clip,
 //! 2. plays it through the schedule step,
-//! 3. drives the MockBackend's renderer one sample at a time and compares
+//! 3. drives the `MockBackend`'s renderer one sample at a time and compares
 //!    each output `Frame` against the reference at the matching index.
 //!
 //! Tolerance is the looser of `1e-3` absolute or 1% relative — sine zero
@@ -21,7 +21,7 @@ use rge_audio::test_support::FrameCapture;
 use rge_audio::waveform::{sine_reference, sine_wave};
 use rge_audio::AudioManager;
 
-/// Set up a manager driving Kira's MockBackend at 48 kHz and pre-installs a
+/// Set up a manager driving Kira's `MockBackend` at 48 kHz and pre-installs a
 /// frame-capture effect on the main mixer track so the test can read what the
 /// renderer wrote each `process()` call.
 fn mock_manager(sample_rate: u32) -> (AudioManager<MockBackend>, FrameCapture) {
@@ -68,8 +68,7 @@ fn sine_wave_first_100_samples_within_one_percent() {
     let frames = capture.take();
 
     let mut max_abs_err = 0.0f32;
-    for i in 0..100 {
-        let frame = frames[i];
+    for (i, frame) in frames.iter().enumerate().take(100) {
         // Spatial mix may pan channels — average to mono for comparison.
         let actual = (frame.left + frame.right) * 0.5;
         let expected = sine_reference(FREQUENCY, SAMPLE_RATE, i);

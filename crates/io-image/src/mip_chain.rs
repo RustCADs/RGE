@@ -50,6 +50,10 @@ pub fn downsample_box(src: &Image) -> Result<Image> {
     }
 }
 
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "kept fallible-shape for symmetry with the public dispatch table — once a future kernel codec emits non-totally-defined cases (anisotropic or sRGB-aware paths, e.g. cubemap blocks) the error path will materialise without the dispatcher needing to learn new arms"
+)]
 fn downsample_rgba8(src: &Image, dst_w: u32, dst_h: u32) -> Result<Image> {
     let sw = src.width as usize;
     let sh = src.height as usize;
@@ -82,6 +86,10 @@ fn downsample_rgba8(src: &Image, dst_w: u32, dst_h: u32) -> Result<Image> {
     })
 }
 
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "see `downsample_rgba8` rationale; fallible-shape symmetry with the public dispatch table"
+)]
 fn downsample_rgba16(src: &Image, dst_w: u32, dst_h: u32) -> Result<Image> {
     let sw = src.width as usize;
     let sh = src.height as usize;
@@ -113,6 +121,10 @@ fn downsample_rgba16(src: &Image, dst_w: u32, dst_h: u32) -> Result<Image> {
     Ok(Image::from_rgba16(dst_w, dst_h, &samples))
 }
 
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "see `downsample_rgba8` rationale; fallible-shape symmetry with the public dispatch table"
+)]
 fn downsample_rgba32f(src: &Image, dst_w: u32, dst_h: u32) -> Result<Image> {
     let sw = src.width as usize;
     let sh = src.height as usize;

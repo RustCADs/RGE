@@ -9,6 +9,10 @@ use rge_io_image::{detect_format, jpeg, ImageFormat, PixelFormat};
 /// Compute the per-channel PSNR (peak signal-to-noise ratio) over RGB only
 /// (alpha is dropped during JPEG save). Uses 255.0 as the peak; returns
 /// `f64::INFINITY` when MSE is zero.
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "fixture image sizes (≤256×256) fit lossless in f64 mantissa; pixel-count cast to f64 for division is intentional"
+)]
 fn psnr_rgb(a: &[u8], b: &[u8]) -> f64 {
     assert_eq!(a.len(), b.len());
     assert_eq!(a.len() % 4, 0);

@@ -39,19 +39,53 @@
 //! wrappers below swallow `DuplicateNode` / `DuplicateEdge` rather than
 //! propagating them.
 //!
-//! # Cycles
+//! # Cycle detection — three implementations across `Graph<N, ()>` consumers
 //!
-//! Cycles are a configuration error — an asset can't depend on
-//! itself, directly or transitively. [`DepGraph::add_edge`] checks for
-//! self-edges; transitive cycles are caught by
-//! [`DepGraph::transitive_closure`] / [`DepGraph::invalidation_cascade`]
-//! returning a [`DepError::Cycle`].
+//! Cycles are a configuration error — an asset can't depend on itself,
+//! directly or transitively. [`DepGraph::add_edge`] checks for self-edges;
+//! transitive cycles are caught by [`DepGraph::transitive_closure`] /
+//! [`DepGraph::invalidation_cascade`] returning a [`DepError::Cycle`].
 //!
-//! graph-foundation's `Graph<N, E>` does NOT itself detect cycles (consistent
-//! with `cad-core::OperatorGraph` and `kernel/asset::DependencyGraph`, which
-//! both implement their own cycle detection on top of the substrate). We
-//! preserve the existing iterative walks below, swapping only the underlying
-//! adjacency storage.
+//! Audit-3 finding M7 (2026-05-09) flagged that the workspace has three
+//! distinct cycle-detection implementations layered on top of
+//! `kernel/graph-foundation::Graph<N, E>`:
+//!
+//! 1. **This file** — start-node-targeted iterative walks in
+//!    [`DepGraph::transitive_closure`] / [`DepGraph::invalidation_cascade`]
+//!    that bail with `DepError::Cycle(AssetId)` (single offending asset)
+//!    when the traversal revisits the start node. Cycle detection is a
+//!    side effect of forward / reverse reachability queries — there is no
+//!    separate "scan the graph for any cycle" entry point because callers
+//!    only need to know "is THIS query non-terminating?". The single
+//!    `AssetId` payload (vs. a full `Vec` cycle path) is sufficient because
+//!    cascade computation halts at the first revisit and re-running the
+//!    query after fixup gives the next collision.
+//! 2. **`kernel/asset/src/dependency_graph.rs::DependencyGraph::detect_cycle`** —
+//!    standalone three-color DFS returning `Option<Vec<AssetId>>` (the
+//!    cycle path). All-pairs full-graph scan; used to answer "does this
+//!    dep graph contain ANY cycle, and if so, which nodes form it?".
+//! 3. **`crates/cad-core/src/graph/operator_graph.rs::effective_hash_and_label`** —
+//!    ancestor-set guard inside the recursive hash-folding evaluator.
+//!    Returns `cad_core::graph::EvalError::Cycle` inline during eval; NOT
+//!    a standalone cycle scan. No path returned.
+//!
+//! These three implementations diverge by design: each returns a different
+//! shape (`DepError::Cycle(AssetId)` here vs. full path `Vec<AssetId>` vs.
+//! eval-integrated `EvalError::Cycle`) and operates at a different
+//! granularity (start-node-bounded reachability here vs. all-pairs
+//! full-graph scan vs. on-the-fly during eval). They are NOT one algorithm
+//! wearing three return types; unifying them would force one consumer's
+//! information shape onto the other two and either lose information (path
+//! discarded) or leak unnecessary work (full DFS where bailing on first
+//! revisit suffices). PLAN §1.14 line 605 ("is this primitive infrastructure
+//! that all 8 graph systems would use the same way?") evaluates to NO for
+//! cycle detection: each domain consumer uses it differently. Per PLAN
+//! §1.14 line 628, graph-foundation deliberately stays "primitives, not
+//! runtime" — cycle-detection therefore lives in each domain's wrapper.
+//! See `docs/§18/GRAPH_FOUNDATION.md` §3 for the substrate-side framing.
+//!
+//! We preserve the existing iterative walks below, swapping only the
+//! underlying adjacency storage.
 //!
 //! # Anti-pattern check
 //!

@@ -263,6 +263,10 @@ fn test_11_run_before_build() {
 // ── test 12: 10-system smoke test ─────────────────────────────────────────
 
 #[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "single end-to-end smoke test wiring 10 systems across all 4 stages with intra-/inter-stage dependencies plus determinism comparison; splitting it would lose the single-pass build-run-rerun-rebuild-compare narrative"
+)]
 fn test_12_ten_system_smoke_test() {
     // Ten systems across all four stages with dependency edges.
     // Verify deterministic execution order across two consecutive runs.

@@ -89,6 +89,7 @@ struct EventState {
 
 impl ContactEventChannel {
     /// Construct empty channels.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }

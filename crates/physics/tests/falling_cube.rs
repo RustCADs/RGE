@@ -82,9 +82,7 @@ fn falling_cube_lands_and_rests_within_60_ticks() {
     });
     assert!(
         rest <= 240,
-        "cube took too long to settle: {} ticks (>240); final pos {:?}",
-        rest,
-        final_pos
+        "cube took too long to settle: {rest} ticks (>240); final pos {final_pos:?}"
     );
     // Sanity: it should be near the ground (top of plane is ~0.05 thick + 0.5
     // half-extent = ~0.55).

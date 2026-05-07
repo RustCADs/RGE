@@ -1,5 +1,5 @@
 //! Tests for `#[reflect(validate = "...")]`, `#[reflect(custom_drawer = "...")]`
-//! and `#[reflect(skip)]`. The validate / custom_drawer attrs do not run code
+//! and `#[reflect(skip)]`. The validate / `custom_drawer` attrs do not run code
 //! at this phase — they propagate into `DefaultValue::Custom` / a skipped
 //! TODO field — but the macro must accept them and emit the descriptor
 //! correctly. Skip semantics are exercised end-to-end: a skipped field

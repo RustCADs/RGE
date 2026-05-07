@@ -68,6 +68,7 @@ impl RasterIcon {
     /// Return RGBA pixels with **un-premultiplied** alpha. Useful for
     /// `egui::ColorImage::from_rgba_unmultiplied`. Allocates a fresh
     /// vector — the canonical storage stays premultiplied.
+    #[must_use]
     pub fn pixels_unmultiplied(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(self.pixels.len());
         for chunk in self.pixels.chunks_exact(4) {
@@ -108,6 +109,7 @@ pub enum TintError {
 /// Returns a fresh `String` rather than mutating in place — the caller
 /// typically wants to keep the un-tinted source for re-tinting on theme
 /// swap.
+#[must_use]
 pub fn apply_tint(svg: &str, color: Color) -> String {
     let hex = color_to_hex(color);
     let mut out = String::with_capacity(svg.len() + 32);
@@ -219,9 +221,8 @@ pub fn rasterize(svg: &str, target_w: u32, target_h: u32) -> Result<RasterIcon, 
         paint.set_color_rgba8(paint_color.0, paint_color.1, paint_color.2, paint_color.3);
         paint.anti_alias = true;
 
-        let path = match shape.geometry.to_skia_path() {
-            Some(p) => p,
-            None => continue,
+        let Some(path) = shape.geometry.to_skia_path() else {
+            continue;
         };
         if is_stroke {
             let stroke = tiny_skia::Stroke {

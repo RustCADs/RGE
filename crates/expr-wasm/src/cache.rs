@@ -1,5 +1,5 @@
 //! Source-hash → compiled-Module cache. First compile pays parse + codegen
-//! + Cranelift JIT cost (≤2ms target per W19 spec); subsequent
+//! plus Cranelift JIT cost (≤2ms target per W19 spec); subsequent
 //! [`Compiler::compile`] calls with the same source hit O(1) here.
 
 use std::collections::HashMap;

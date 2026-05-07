@@ -1,6 +1,19 @@
 // adapted from rustforge::crates::runtime-wasmtime on 2026-05-05 — engine_wasmtime feature activated
-//! Wasmtime cap-gate API: effect specifiers, capability tickets, host
-//! state, hand-rolled `.wasm` header validator. This crate is
+//! `rge-runtime-wasmtime` — Wasmtime cap-gate API: effect specifiers, capability tickets, host
+//! state, hand-rolled `.wasm` header validator.
+//!
+//! Failure class: recoverable
+//!
+//! Per PLAN §1.13: cap-gate validation failures (header validator rejects
+//! malformed magic, `grant_check` denies a capability, manifest parse error,
+//! linker missing import) are transient and recoverable in-place — the
+//! caller refuses to instantiate the offending plugin and surfaces a
+//! diagnostic. The actual bytecode-execution risk (traps, plugin isolation)
+//! lives in the sibling `rge-runtime-wasmtime-engine` (plugin-fatal). This
+//! crate is engine-independent; no PIE state is owned. Matches pak-format +
+//! io-image (validation / format-adapter failures).
+//!
+//! This crate is
 //! **engine-independent** — the actual bytecode execution lives in the
 //! sibling [`rge-runtime-wasmtime-engine`](../runtime-wasmtime-engine)
 //! crate (W04 activates the `engine_wasmtime` feature there).

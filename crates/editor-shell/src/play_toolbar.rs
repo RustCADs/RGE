@@ -72,6 +72,7 @@ impl ToolbarButtonId {
     }
 
     /// Iterate all five button IDs in stable order.
+    #[must_use]
     pub fn all() -> &'static [Self] {
         &[
             Self::Play,

@@ -159,6 +159,10 @@ mod tests {
     }
 
     #[test]
+    #[allow(
+        clippy::float_cmp,
+        reason = "round-tripping the same f32 literal through a setter without arithmetic must yield bit-equal storage; bit-equality is the intended assertion"
+    )]
     fn record_tick_increments_counter_and_stashes_dt() {
         let mut h = HostState::new(CapSet::all(), blake3::hash(b"plugin-tick"));
         h.record_tick(0.016);

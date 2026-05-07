@@ -97,7 +97,7 @@ fn approx_eq4(a: [f32; 4], b: [f32; 4]) -> bool {
 mod tests {
     use super::*;
 
-    /// approx_eq3 catches identical, equal-within-tolerance, and far-apart inputs.
+    /// `approx_eq3` catches identical, equal-within-tolerance, and far-apart inputs.
     #[test]
     fn approx_eq3_correct() {
         assert!(approx_eq3([1.0, 2.0, 3.0], [1.0, 2.0, 3.0]));
@@ -105,7 +105,7 @@ mod tests {
         assert!(!approx_eq3([1.0, 2.0, 3.0], [1.5, 2.0, 3.0]));
     }
 
-    /// new_anchor records the supplied transform as last-applied; sync_pose
+    /// `new_anchor` records the supplied transform as last-applied; `sync_pose`
     /// for an identical pose is therefore a no-op (no anchor mutation needed).
     #[test]
     fn new_anchor_seeds_last_pose() {

@@ -1,5 +1,14 @@
 //! `rge-ui-icons` — tintable SVG icon registry.
 //!
+//! Failure class: recoverable
+//!
+//! Per PLAN §1.13: icon-set failures (manifest parse error, malformed SVG
+//! path, tint colour out of range, hot-reload swap exceeds 50ms SLO) are
+//! transient and recoverable in-place — the registry retains the previous
+//! set, surfaces a diagnostic, or skips the offending icon. No PIE state
+//! is owned; the SVG cache is reproducible from manifest sources. Matches
+//! ui-fonts + ui-theme + gfx (UI substrate classification).
+//!
 //! Phase-5 deliverable per `IMPLEMENTATION.md` §6.2.6 / Wave W06. This
 //! crate is the substrate for editor toolbars, menus, panels, and any
 //! other UI surface that needs vector icons recoloured at theme-swap
@@ -35,6 +44,11 @@
 //! quick to build, and offline-buildable. If RGE ever needs to render
 //! arbitrary user SVG, that's a separate problem with a separate
 //! crate.
+
+#![allow(
+    clippy::result_large_err,
+    reason = "loader / registry I/O is a cold-path file-IO operation; the rich `LoaderError` / `RegistryError` (thiserror-wrapped `ron::SpannedError` + `PathBuf`, ~136 bytes) is intentional for editor-side authoring diagnostics — boxing would force `Box<{Loader,Registry}Error>` callers without measurable benefit"
+)]
 
 pub mod icon_handle;
 pub mod loader;

@@ -280,6 +280,7 @@ impl Measure {
 /// Marker so [`BufferLine`], [`LineEnding`] are referenced (and re-exported
 /// transitively) — keeps documentation links stable when callers want them.
 #[doc(hidden)]
+#[must_use]
 pub fn _doc_anchor() -> (Option<BufferLine>, Option<LineEnding>) {
     (None, None)
 }

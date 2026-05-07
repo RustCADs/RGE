@@ -4,6 +4,13 @@
 //! Fixtures live at `crates/io-image/tests/fixtures/`.
 
 #![allow(dead_code, unreachable_pub, let_underscore_drop)]
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    clippy::cast_lossless,
+    reason = "synthetic-fixture loop ranges (0..16 / 0..8) are bounded; integer↔pixel-format casts are intentional and well within target-type domain"
+)]
 
 use std::path::PathBuf;
 use std::sync::Once;

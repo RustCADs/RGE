@@ -58,6 +58,13 @@ const SCRATCH_B: u32 = 2;
 /// - [`ExprError::UnknownFunction`] — function not in [`stdlib::STDLIB`].
 /// - [`ExprError::Arity`] — wrong number of args to a stdlib function.
 /// - [`ExprError::Encode`] — internal codegen bug (should not surface).
+///
+/// # Panics
+///
+/// Panics if the stdlib import table grows past `u32::MAX` entries. The table
+/// is statically sized at a few dozen builtins, so the panic is unreachable
+/// in practice; the `expect` markers identify the violating contract for
+/// future stdlib growth.
 pub fn compile(expr: &Expr) -> Result<Compiled, ExprError> {
     // 1. Collect variable schema in deterministic pre-order.
     let mut vars: Vec<String> = Vec::new();
@@ -275,6 +282,10 @@ fn emit_binop(
     Ok(())
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "linear emit-each-supported-stdlib-call body; splitting per-call would scatter the dispatch table without simplifying any individual branch"
+)]
 fn emit_call(
     ctx: &CodegenCtx,
     name: &str,

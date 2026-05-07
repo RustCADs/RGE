@@ -20,6 +20,12 @@
 //! substrates exercising the same `PluginContext` design with no kernel-side
 //! changes between them is the proof point ADR-114 calls for.
 //!
+//! The take/insert pattern this module repeats verbatim across all 4 canaries
+//! (cad-projection / gfx / physics / audio) is intentional per PLAN §10.4
+//! dogfood rule — see [`rge_cad_projection::plugin_adapter`]'s `# Why this
+//! looks duplicated across the four canaries` section for the canonical
+//! rationale.
+//!
 //! # Resource contract
 //!
 //! On `tick`, the plugin context MUST contain (caller-supplied):
@@ -43,7 +49,13 @@
 //! not return a `Result`, so there is no [`PluginError::RuntimeFault`]
 //! surface here. The variant is reserved for future extensions of the
 //! physics plugin (e.g. a fallible joint-build path or a rapier3d API
-//! upgrade that exposes step errors).
+//! upgrade that exposes step errors). This is the canonical
+//! "no-RuntimeFault straight-line subcase" formalised in ADR-114
+//! §"Amendment 2026-05-08 — Three-substrate validation" §"No-RuntimeFault
+//! subcase" and re-cited in §"Amendment 2026-05-08 — Four-substrate
+//! validation" §"Pattern A + fallible inner work — first cross-canary
+//! intersection" (where audio is the first canary that DOES exercise
+//! Pattern A + fallible inner work end-to-end).
 //!
 //! # Send + 'static bound
 //!

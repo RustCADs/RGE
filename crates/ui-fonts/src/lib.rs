@@ -1,5 +1,14 @@
 //! `rge-ui-fonts` — UI font subsystem.
 //!
+//! Failure class: recoverable
+//!
+//! Per PLAN §1.13: font-subsystem failures (missing font file, cosmic-text
+//! shaping error, glyph-cache atlas overflow, swap timeout) are transient
+//! and recoverable in-place — the resolver falls back to the OS default,
+//! the cache is rebuilt on next swap, or the editor surfaces a diagnostic.
+//! No PIE state is owned; the glyph cache is reproducible from font sources.
+//! Matches gfx + ui-icons + ui-theme (UI substrate classification).
+//!
 //! Wraps `cosmic-text` to provide:
 //!
 //! * [`FontRegistry`] — loads font files from a vendored `assets/` directory

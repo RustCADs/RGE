@@ -9,6 +9,10 @@
 /cargo-*.txt
 /cargo-*.log
 
+# Sub-agent dispatch transcripts (clippy / test output dumps from
+# multi-agent sweeps; debugging artifacts, not source).
+/_sweep_logs/
+
 # Cargo lockfile is committed at workspace root only
 # (members shouldn't commit their own Cargo.lock)
 **/Cargo.lock

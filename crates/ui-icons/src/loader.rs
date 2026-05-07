@@ -1,6 +1,7 @@
 //! RON `.icons.ron` manifest loader.
 //!
 //! Each icon set ships with a single manifest file mapping `IconName`
+//!
 //! strings to relative SVG file paths. The manifest format is a tagged
 //! RON struct so future fields (license attribution, default size hint,
 //! etc.) can be added without breaking the wire format.

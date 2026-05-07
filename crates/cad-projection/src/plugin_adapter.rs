@@ -6,6 +6,23 @@
 //! [`PluginContext`], drives `self.projection.tick(...)`, and puts the
 //! resources back. Demonstrates the v1 resource registry pattern end-to-end.
 //!
+//! # Why this looks duplicated across the four canaries
+//!
+//! The take-resources / do-work / put-resources-back shape repeats verbatim
+//! across [`cad-projection::CadProjectionPlugin`](self::CadProjectionPlugin)
+//! / `gfx::GfxPlugin` / `physics::PhysicsPlugin` / `audio::AudioPlugin`.
+//! That repetition is **intentional** per PLAN §10.4 dogfood rule: each
+//! canary is a stand-alone teaching example demonstrating the kernel
+//! substrate against a different resource family. Adding a kernel-level
+//! helper that wraps the take/insert pattern would be *unfair* to Tier-3
+//! plugin authors (who don't have access to the helper) and would erode
+//! the dogfood-rule's value (Tier-2 canaries are supposed to use only
+//! what Tier-3 has). The canonical pattern documentation lives at
+//! [`docs/§18/PLUGIN_HOST_PATTERNS.md`](../../../docs/§18/PLUGIN_HOST_PATTERNS.md);
+//! design rationale + rejected alternatives at
+//! [`docs/adr/ADR-114-pluginctx-owned-handoff.md`](../../../docs/adr/ADR-114-pluginctx-owned-handoff.md).
+//! Other canaries cross-reference this section.
+//!
 //! # Why this exists
 //!
 //! Closes Pairing-3 of the 2026-05-07 deep audit. Before this dispatch, the

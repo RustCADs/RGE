@@ -30,7 +30,7 @@ pub enum ReflectKind {
     NamedStruct,
     /// Tuple struct — Phase 2 deliverable.
     TupleStruct,
-    /// Enum — Phase 2 deliverable; `EnumDropdown` UiHint is a placeholder.
+    /// Enum — Phase 2 deliverable; `EnumDropdown` `UiHint` is a placeholder.
     Enum,
 }
 
@@ -205,7 +205,7 @@ mod tests {
 
         fn get_field_dyn(&self, name: &str) -> Result<ReflectValue, ReflectError> {
             match name {
-                "a" => Ok(ReflectValue::I64(self.a as i64)),
+                "a" => Ok(ReflectValue::I64(i64::from(self.a))),
                 "b" => Ok(ReflectValue::F64(f64::from(self.b))),
                 other => Err(ReflectError::UnknownField(field_name_static(other))),
             }
@@ -214,11 +214,23 @@ mod tests {
         fn set_field_dyn(&mut self, name: &str, value: ReflectValue) -> Result<(), ReflectError> {
             match (name, value) {
                 ("a", ReflectValue::I64(v)) => {
-                    self.a = v as i32;
+                    #[allow(
+                        clippy::cast_possible_truncation,
+                        reason = "test fixture: hand-rolled `Hand` mirrors the i32-narrowing path the macro emits for fields whose source type is i32 read through a ReflectValue::I64 carrier"
+                    )]
+                    {
+                        self.a = v as i32;
+                    }
                     Ok(())
                 }
                 ("b", ReflectValue::F64(v)) => {
-                    self.b = v as f32;
+                    #[allow(
+                        clippy::cast_possible_truncation,
+                        reason = "test fixture: hand-rolled `Hand` mirrors the f32-narrowing path the macro emits for fields whose source type is f32 read through a ReflectValue::F64 carrier"
+                    )]
+                    {
+                        self.b = v as f32;
+                    }
                     Ok(())
                 }
                 ("a", v) => Err(ReflectError::TypeMismatch {

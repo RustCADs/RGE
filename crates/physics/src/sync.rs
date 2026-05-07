@@ -55,6 +55,7 @@ impl Default for Transform {
 impl Transform {
     /// Convenience constructor placing the entity at `position` with identity
     /// rotation.
+    #[must_use]
     pub fn at(position: [f32; 3]) -> Self {
         Self {
             position,

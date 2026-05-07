@@ -57,7 +57,10 @@ pub struct Checkpoint {
     /// Immutable snapshot of the graph at commit time.
     pub snapshot: GraphSnapshot<OperatorNode, EdgeKind>,
     /// The graph's root at commit time, if any.
-    #[allow(clippy::struct_field_names)]
+    #[allow(
+        clippy::struct_field_names,
+        reason = "field name disambiguates from `parent` and `id` (also Checkpoint-relative); the `_at_checkpoint` suffix communicates 'value frozen at commit time' at destructure sites"
+    )]
     pub root_at_checkpoint: Option<NodeId>,
     /// Parent checkpoint in the linear history. `None` only on the root
     /// checkpoint (id 0).

@@ -16,7 +16,7 @@
 //! Each variant carries its own payload (slider min/max, file-extension
 //! whitelist, multiline row count). A bag of bool flags would force the
 //! inspector to look up payload from a side table, which fights the
-//! "FieldDescriptor is `&'static`" invariant.
+//! "`FieldDescriptor` is `&'static`" invariant.
 
 use serde::Serialize;
 
@@ -26,10 +26,11 @@ use serde::Serialize;
 /// `editor-ui/menus`) needs for a non-trivial inspector. The order is
 /// stable; serde uses externally-tagged form (default for serde + RON),
 /// so adding variants at the end is forward-compatible.
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub enum UiHint {
     /// No hint — inspector picks a default widget for the field type
     /// (e.g. text-edit for strings, drag-value for f32).
+    #[default]
     Default,
 
     /// Bounded numeric — inspector renders a slider. Min/max in the source
@@ -91,12 +92,6 @@ pub enum UiHint {
     /// Hide from inspector entirely (still serialized — use
     /// `#[reflect(skip)]` to also skip serde).
     Hidden,
-}
-
-impl Default for UiHint {
-    fn default() -> Self {
-        UiHint::Default
-    }
 }
 
 impl UiHint {

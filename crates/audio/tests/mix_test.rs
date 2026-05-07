@@ -13,6 +13,15 @@ use rge_audio::test_support::FrameCapture;
 use rge_audio::waveform::sine_wave;
 use rge_audio::{audio_schedule_step, AudioManager, AudioSchedule, PlaybackState};
 
+// Sources need to live for the duration of the schedule call; collect them
+// all into this fixture struct so we can build the slice without temporary
+// lifetime issues.
+struct PreparedSource {
+    entity: Entity,
+    transform: Transform,
+    source: AudioSource,
+}
+
 #[test]
 fn eight_sources_do_not_clip() {
     const SR: u32 = 48_000;
@@ -49,13 +58,6 @@ fn eight_sources_do_not_clip() {
     mgr.register_listener(listener, &Transform::default())
         .unwrap();
 
-    // Sources need to live for the duration of the schedule call; collect
-    // them all so we can build the slice without temporary lifetime issues.
-    struct PreparedSource {
-        entity: Entity,
-        transform: Transform,
-        source: AudioSource,
-    }
     let mut prepared = Vec::with_capacity(N_SOURCES);
     for i in 0..N_SOURCES {
         let entity = Entity((i as u64) + 100);
@@ -109,7 +111,12 @@ fn eight_sources_do_not_clip() {
             );
         }
     }
-    let rms = (sum_sq / (2.0 * n as f32)).sqrt();
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "RMS divisor; n is bounded by frames.len().min(4096), far below f32 mantissa limit"
+    )]
+    let denom = 2.0 * n as f32;
+    let rms = (sum_sq / denom).sqrt();
     // Sanity: the renderer actually produced mixed output. With 8 distinct
     // frequencies we expect noticeable RMS, well above noise floor.
     assert!(

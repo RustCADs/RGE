@@ -96,6 +96,7 @@ impl Image {
     }
 
     /// Pack a slice of `f32` quartets into the byte buffer for `Rgba32F`.
+    #[must_use]
     pub fn from_rgba32f(width: u32, height: u32, samples: &[f32]) -> Self {
         let pixel_count = (width as usize) * (height as usize);
         assert_eq!(samples.len(), pixel_count * 4);
@@ -112,6 +113,7 @@ impl Image {
     }
 
     /// Pack a slice of `u16` quartets into the byte buffer for `Rgba16`.
+    #[must_use]
     pub fn from_rgba16(width: u32, height: u32, samples: &[u16]) -> Self {
         let pixel_count = (width as usize) * (height as usize);
         assert_eq!(samples.len(), pixel_count * 4);
@@ -128,6 +130,7 @@ impl Image {
     }
 
     /// Construct an `Rgba8` image directly from RGBA bytes.
+    #[must_use]
     pub fn from_rgba8(width: u32, height: u32, rgba: Vec<u8>) -> Self {
         let pixel_count = (width as usize) * (height as usize);
         assert_eq!(rgba.len(), pixel_count * 4);

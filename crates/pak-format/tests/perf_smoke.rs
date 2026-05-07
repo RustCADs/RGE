@@ -14,13 +14,14 @@
 //! Run with `cargo test -p rge-pak-format --release -- --ignored perf_load_100mb_under_500ms --nocapture`.
 //! Marked `#[ignore]` so CI default doesn't pay the ~10s cook cost.
 
+use std::io::Write as _;
 use std::time::Instant;
 
 use rge_pak_format::{AssetKind, PakReader, PakWriter};
 use tempfile::NamedTempFile;
 
 #[test]
-#[ignore]
+#[ignore = "perf gate; ~10s cook cost — opt in via `cargo test -- --ignored`"]
 fn perf_load_100mb_under_500ms() {
     // Build a pak whose decompressed payload sums to ~100 MB. We
     // use highly-compressible filler (constant byte) so the
@@ -58,7 +59,6 @@ fn perf_load_100mb_under_500ms() {
     );
 
     let mut tmp = NamedTempFile::new().unwrap();
-    use std::io::Write;
     tmp.write_all(&bytes).unwrap();
     tmp.flush().unwrap();
 

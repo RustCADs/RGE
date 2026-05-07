@@ -100,6 +100,10 @@ impl EcsBridge {
     ///
     /// Returns a [`wasmtime::Error`] if any function name conflicts with an
     /// already-registered import.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "ECS host-function installation is a flat dispatch table — each `linker.func_wrap` declaration registers one `rge.ecs.*` import; splitting into helpers would obscure the wire shape and force callers to thread an opaque registry"
+    )]
     pub fn install(linker: &mut Linker<HostState>) -> Result<(), wasmtime::Error> {
         // ------------------------------------------------------------------
         // rge.ecs::entity_count() -> i64

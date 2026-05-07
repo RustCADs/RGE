@@ -281,6 +281,7 @@ impl World {
     /// entities mutated since the last [`advance_tick`] are yielded.
     ///
     /// Returns a [`Query`] iterator of `(EntityId, &F::Component)` pairs.
+    #[must_use]
     pub fn query<F: QueryFilter>(&self) -> Query<'_, F::Component> {
         let filter_type_id = F::filter_type_id();
         let last_tick = self.last_tick;

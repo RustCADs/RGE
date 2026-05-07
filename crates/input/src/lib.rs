@@ -2,6 +2,15 @@
 //
 //! `rge-input` — winit + gilrs fan-in into a unified `InputEvent` stream.
 //!
+//! Failure class: recoverable
+//!
+//! Per PLAN §1.13: input failures (gilrs gamepad disconnect, dead-zone
+//! reload error, key-translation table miss) are transient and recoverable
+//! in-place — the event is dropped, the gamepad re-polled, or the user
+//! surfaced a diagnostic. `Input<T>` resource state is per-frame and
+//! reproducible from the next event stream; no PIE state is owned. Matches
+//! audio + ui-theme (stateless / per-frame I/O subsystems).
+//!
 //! W13 deliverable: a single ordered event vocabulary across keyboard,
 //! mouse, gamepad, touch, and stylus, plus `Input<T>` resources for
 //! frame-stable "is currently pressed?" queries.

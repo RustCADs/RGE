@@ -87,6 +87,11 @@ impl TypeId {
 
     /// Lower-hex render — drives [`Display`] and human-friendly debug output.
     #[must_use]
+    #[allow(
+        clippy::wrong_self_convention,
+        clippy::trivially_copy_pass_by_ref,
+        reason = "public-API signature pinned at `&self` per `docs/§18/KERNEL_TYPES.md` spec; the [`Display`] and [`Debug`] impls below already pass through `self` (auto-deref), so the API surface is identical to a by-value receiver"
+    )]
     pub fn to_hex(&self) -> String {
         let mut s = String::with_capacity(32);
         for byte in self.0 {

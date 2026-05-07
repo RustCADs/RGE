@@ -84,6 +84,7 @@ pub struct LoadedPlugin {
 
 impl LoadedPlugin {
     /// Recover the plugin's source-level name.
+    #[must_use]
     pub fn name_static(&self) -> &str {
         &self.name
     }
@@ -101,6 +102,12 @@ impl LoadedPlugin {
 /// - `LoadError::BadMagic` if the first 4 bytes aren't `\0asm`.
 /// - `LoadError::UnsupportedVersion` for unknown wasm version bytes.
 /// - `LoadError::BadManifest` if the rcad-effects section is malformed.
+///
+/// # Panics
+///
+/// Panics if a 4-byte slice from a checked `bytes.len() >= WASM_HEADER_BYTES`
+/// region fails to convert to `[u8; 4]` — unreachable in practice; the
+/// `expect` annotation marks the contract violation.
 pub fn load_wasm_blob(name: impl Into<String>, bytes: &[u8]) -> Result<LoadedPlugin, LoadError> {
     if bytes.len() < WASM_HEADER_BYTES {
         return Err(LoadError::TooShort(bytes.len()));
@@ -146,11 +153,7 @@ fn parse_rcad_effects(bytes: &[u8]) -> Result<EffectSet, LoadError> {
     let body_str = core::str::from_utf8(body)
         .map_err(|_| LoadError::BadManifest("rcad-effects body not valid UTF-8".into()))?;
     let mut set = EffectSet::EMPTY;
-    for tag in body_str
-        .split(',')
-        .map(|t| t.trim())
-        .filter(|t| !t.is_empty())
-    {
+    for tag in body_str.split(',').map(str::trim).filter(|t| !t.is_empty()) {
         let Some(eff) = crate::effect_specifier::Effect::from_tag(tag) else {
             return Err(LoadError::BadManifest(format!(
                 "unknown effect tag `{tag}`"
@@ -247,6 +250,12 @@ impl WasmRuntime {
 // ---------------------------------------------------------------------------
 
 /// Sub-instantiate a `Plugin<EFFECTS>` against a `CapTicket<CAPS>`.
+///
+/// # Errors
+///
+/// - [`GrantError`] when the plugin's declared `EFFECTS` require capabilities
+///   not granted by `ticket`'s `CAPS`. The compile-time `bind` overload at
+///   [`Plugin::bind`] is preferable when both bitmasks are const-known.
 pub fn bind_plugin<const EFFECTS: u32, const CAPS: u32>(
     plugin: Plugin<EFFECTS>,
     ticket: CapTicket<CAPS>,

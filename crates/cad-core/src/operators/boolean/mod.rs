@@ -62,6 +62,7 @@ use crate::tessellation::Tessellation;
 /// Per ADR-112's API-shape recommendation. `Xor` is intentionally not exposed
 /// at this milestone — csgrs supports it but ADR-112 did not include it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum BooleanMode {
     /// `lhs ∪ rhs` — combined volume.
     Union,

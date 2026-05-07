@@ -1,6 +1,17 @@
 // adapted from rustforge::crates::runtime-wasmtime on 2026-05-05 — engine_wasmtime feature activated
 //! WASM bytecode execution engine — **Phase 3 critical path**.
 //!
+//! Failure class: plugin-fatal
+//!
+//! Per PLAN §1.13: WASM execution failures (wasmtime trap, instantiate
+//! failure due to missing import, capability denial at host-fn binding,
+//! out-of-fuel) are plugin-fatal — the engine quarantines the offending
+//! plugin via [`panic_recovery::PanicRegistry`] and continues running
+//! sibling plugins and the kernel itself. Matches kernel/plugin-host +
+//! script-host classification (plugin-isolation per PLAN §10.1 dogfood
+//! rule). Multi-plugin sandboxing is the headline contract — one trap must
+//! not take down the editor.
+//!
 //! As of W04 (2026-05-05) the deferred `engine_wasmtime` feature is
 //! ON by default; this crate now pulls `wasmtime` + `wit-bindgen` and
 //! exposes [`Engine::compile`] / [`Engine::instantiate`] for the

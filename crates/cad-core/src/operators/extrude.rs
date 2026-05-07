@@ -33,6 +33,18 @@
 //! * Extrusion direction is fixed to `+Z`. Arbitrary-axis extrusion is
 //!   achieved by chaining a downstream [`crate::TransformOp`].
 //! * No taper / draft angle.
+//!
+//! # Capability surface (per ADR-104)
+//!
+//! * `boolean_robust_under_tolerance`: true (no boolean op).
+//! * `deterministic_triangulation`: true (fan from vertex 0; no
+//!   float-comparison-dependent triangulation choice).
+//! * `t_junction_handling`: true (closed prism has none).
+//! * `concave_input_supported`: **false** — fan-triangulation produces
+//!   inverted cap triangles on concave profiles; rejected at evaluate time.
+//!   Lifted by future earcut dispatch.
+//! * `arity`: 0 (profile is a parameter, not an upstream input).
+//! * `output_labeled_when_input_labeled`: false (no inputs).
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;

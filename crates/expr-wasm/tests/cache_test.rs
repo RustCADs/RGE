@@ -24,6 +24,10 @@ fn same_source_hits_cache() {
 }
 
 #[test]
+#[allow(
+    clippy::float_cmp,
+    reason = "integer-input integer-output expression evaluation yields exact f32 values; bit-equality is the intended assertion"
+)]
 fn distinct_sources_distinct_artifacts() {
     let compiler = Compiler::new();
     let h1 = compiler.compile("x + 1").unwrap();
@@ -38,6 +42,11 @@ fn distinct_sources_distinct_artifacts() {
 }
 
 #[test]
+#[allow(
+    clippy::float_cmp,
+    clippy::cast_precision_loss,
+    reason = "small-integer iterator (0..32) lossless in f32; integer-square integer-add yields exact f32 values; bit-equality is the intended assertion"
+)]
 fn cached_eval_repeated_calls() {
     // Sanity: once compiled, repeated eval must produce stable results
     // (no state leak between calls).

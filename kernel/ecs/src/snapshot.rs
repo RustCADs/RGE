@@ -69,6 +69,7 @@ pub trait SnapshotComponent: Component + Serialize + DeserializeOwned {
     /// Determines sort order and acts as the type identifier in the snapshot
     /// bytes. Override for migration / cross-version compatibility; by default
     /// returns [`std::any::type_name::<Self>()`].
+    #[must_use]
     fn snapshot_name() -> &'static str {
         std::any::type_name::<Self>()
     }

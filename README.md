@@ -50,7 +50,7 @@ The moat (per [PLAN.md §0.2](./plans/PLAN.md)):
 | physics::Plugin canary (§10.4 dogfood-rule three-substrate proof) | **done** — 3rd real Tier-2 plugin closing §10.4 dogfood-rule canary suite at three different resource families: CAD-graph (cad-projection) + GPU (gfx) + physics-world (this dispatch). New `crates/physics/src/plugin_adapter.rs` (325L; 9 unit tests at file foot) takes rapier3d `World` (10 arenas + IntegrationParameters + PhysicsPipeline) + `AuditLedger`, advances one simulation step, puts both back. ContractViolation paths validated; **RuntimeFault NOT exercised** because rapier3d's `step` is infallible (canonical "no-RuntimeFault straight-line subcase" pattern). New `crates/physics/tests/plugin_adapter_smoke.rs` (499L; 6 integration tests + `PanickingTickPlugin` sibling fixture). **Third-substrate proof point for ADR-114**: rapier3d 0.32's `World` composition is Send out of the box with `enhanced-determinism`; no `Mutex` / no `Arc` / no `unsafe`. Owned-handoff pattern generalizes cleanly across THREE substrate families with **zero kernel-side substrate change** between them. **§10.4 dogfood-rule canary count: 3 of N** (cad-projection + gfx + physics). physics 9 → 24; workspace 1634 → 1649 |
 | §18 companion docs (first batch) + ADR-114 amendment | **done** — pure-docs dispatch (zero test-count delta). ADR-114 amended (162L → 214L; +52L `Amendment 2026-05-08 — Three-substrate validation` section) substantiating the three-substrate proof + pattern dichotomy (straight-line vs lazy-build-on-first-tick) + no-RuntimeFault subcase; Followup #1 (gfx::Plugin canary) marked RESOLVED. First `docs/§18/` directory landing with convention defined (five-row header table per doc). **`docs/§18/PLUGIN_HOST_PATTERNS.md`** (282L): plugin authoring guide — owned-handoff contract, Pattern A straight-line + Pattern B lazy-build pseudocode, error classification cheat-sheet, idempotent-failure-put-back invariant, multi-plugin isolation, 12-16-test recipe template. **`docs/§18/PLUGIN_API.md`** (289L): API-surface reference for kernel/plugin-host with full Plugin/PluginContext/PluginError/PluginPhase/PluginHost docs + layering invariants. **§18 companion-doc count: 2 of 27** (was 0). New ADR-114 followup added: audio canary as 4th-substrate Send-shape cross-check on cpal::Stream RAII handles |
 | audio::Plugin canary (ADR-114 four-substrate proof closure) | **done** — 4th real Tier-2 plugin per ADR-114 amendment's new followup. **Send finding (best-case outcome)**: `AudioManager<MockBackend>` + `AudioManager<DefaultBackend>` + `AudioFrame` all `Send + 'static` (verified empirically via permanent `assert_send_static<T>()` lib test). Kira's wrapper around cpal renders the `cpal::Stream` non-Send concern moot at the public-API layer — Kira keeps the platform handle on a backend-owned thread and routes commands through a `Send` channel. Plugin canary required NO Mutex / NO Arc / NO unsafe. **Four-substrate proof CLOSED.** New `crates/audio/src/plugin_adapter.rs` (609L; 13 unit tests at file foot) + `crates/audio/tests/plugin_adapter_smoke.rs` (521L; 6 integration tests + `PanickingTickPlugin` sibling fixture). **First canary combining Pattern A (straight-line tick) + fallible inner work (RuntimeFault mapping)** — `audio_schedule_step` returns `Result<(), ManagerError>`; `ManagerError::UnknownClip` → `PluginError::RuntimeFault`. Distinct from physics's no-RuntimeFault subcase and gfx's lazy-build pattern. **§10.4 dogfood-rule canary count: 4 of N** (cad-projection + gfx + physics + audio). audio 28 → 48; workspace 1649 → 1668 |
-| Tests | **1702 / 1702 pass** (`cargo test --workspace --all-targets --no-fail-fast`) across 200 binaries (2 ignored intentionally) |
+| Tests | **1692 / 1692 pass** (`cargo test --workspace --all-targets --no-fail-fast`) across 211 binaries (2 ignored intentionally). Plus **16 doctests pass** (`cargo test --workspace --doc --no-fail-fast`; 11 ignored — typically marker-only `text` blocks). |
 
 Live snapshot of work in progress: [`Status.md`](./Status.md). Running history: [`change.md`](./change.md). Perf baselines: [`plans/BASELINE.md`](./plans/BASELINE.md).
 
@@ -60,8 +60,11 @@ Live snapshot of work in progress: [`Status.md`](./Status.md). Running history: 
 # Build the whole workspace
 cargo check --workspace --all-targets
 
-# Run all tests (1702)
+# Run all tests (1692 unit + integration; --all-targets excludes doctests)
 cargo test --workspace --all-targets --no-fail-fast
+
+# Run workspace doctests (16 pass + 11 ignored as of 2026-05-09)
+cargo test --workspace --doc --no-fail-fast
 
 # Run all 9 architecture lints against the workspace
 cargo run -q -p rge-tool-architecture-lints -- all
@@ -70,7 +73,7 @@ cargo run -q -p rge-tool-architecture-lints -- all
 cargo run -q -p rge-tool-architecture-lints -- forbidden-dep
 ```
 
-CI gates live in [`.github/workflows/`](./.github/workflows): `architecture.yml` (9 lints + lint tests), `deny.yml` (cargo-deny supply-chain matrix: advisories / bans / licenses / sources, weekly cron), `fmt.yml` (nightly rustfmt for the nightly-only `imports_granularity`/`group_imports` options).
+CI gates live in [`.github/workflows/`](./.github/workflows): `architecture.yml` (9 lints + lint tests), `tests.yml` (workspace tests via `--all-targets` + doctests via `--doc`), `deny.yml` (cargo-deny supply-chain matrix: advisories / bans / licenses / sources, weekly cron), `fmt.yml` (nightly rustfmt for the nightly-only `imports_granularity`/`group_imports` options).
 
 ## Architecture enforcement (Phase 0.2)
 

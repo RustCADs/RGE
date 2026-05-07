@@ -14,6 +14,7 @@ mod graph_foundation;
 mod kernel_isolation;
 mod no_utils;
 mod projection_modules;
+mod snapshot_participate;
 mod split_exemption;
 
 use std::process::ExitCode;
@@ -55,7 +56,14 @@ enum Cmd {
     KernelIsolation,
     /// PLAN.md §1.13: every Tier-1 + Tier-2 crate must declare its failure class in lib.rs.
     FailureClass,
+    /// PLAN.md §13.2: every stateful Tier-2 crate should impl `SnapshotParticipate`
+    /// (warning-level / supplementary; v1.0 gate; never fails CI today).
+    SnapshotParticipate,
     /// Run every lint above and aggregate the results.
+    ///
+    /// `all` runs the 9 enforcement lints (which can fail with exit code 1)
+    /// plus the warning-level `snapshot-participate` lint as a 10th
+    /// supplementary check (which always exits 0).
     All,
 }
 
@@ -85,6 +93,7 @@ fn run() -> Result<bool> {
         Cmd::ProjectionModules => vec![projection_modules::run(&root)?],
         Cmd::KernelIsolation => vec![kernel_isolation::run(&root)?],
         Cmd::FailureClass => vec![failure_class::run(&root)?],
+        Cmd::SnapshotParticipate => vec![snapshot_participate::run(&root)?],
         Cmd::All => vec![
             forbidden_dep::run(&root)?,
             split_exemption::run(&root)?,
@@ -95,6 +104,10 @@ fn run() -> Result<bool> {
             projection_modules::run(&root)?,
             kernel_isolation::run(&root)?,
             failure_class::run(&root)?,
+            // Supplementary / warning-level: always returns 0 violations.
+            // See snapshot_participate.rs module doc for the v1.0 gate
+            // promotion path.
+            snapshot_participate::run(&root)?,
         ],
     };
 

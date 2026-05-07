@@ -46,6 +46,7 @@ pub struct PhysicsHandle {
 
 impl PhysicsHandle {
     /// Stable per-body identity. Survives across reads of the same world.
+    #[must_use]
     pub fn id(self) -> u64 {
         self.id
     }
@@ -82,6 +83,7 @@ pub struct World {
 impl World {
     /// Construct an empty world with default earth gravity and the 60 Hz fixed
     /// timestep configured.
+    #[must_use]
     pub fn new() -> Self {
         let params = IntegrationParameters {
             dt: crate::step::FIXED_DT,
@@ -184,6 +186,7 @@ impl World {
     /// Read the current world-space position + orientation of a body.
     ///
     /// Returns `None` if the handle has been removed.
+    #[must_use]
     pub fn body_pose(&self, handle: PhysicsHandle) -> Option<([f32; 3], [f32; 4])> {
         let b = self.bodies.get(handle.body)?;
         let t = b.position().translation;
@@ -193,6 +196,7 @@ impl World {
     }
 
     /// Read linear + angular velocity of a body.
+    #[must_use]
     pub fn body_velocity(&self, handle: PhysicsHandle) -> Option<([f32; 3], [f32; 3])> {
         let b = self.bodies.get(handle.body)?;
         let l = b.linvel();
@@ -208,11 +212,13 @@ impl World {
     }
 
     /// Number of active (non-sleeping) bodies. Test convenience.
+    #[must_use]
     pub fn active_body_count(&self) -> usize {
         self.bodies.iter().filter(|(_, b)| !b.is_sleeping()).count()
     }
 
     /// Number of bodies (active + sleeping).
+    #[must_use]
     pub fn body_count(&self) -> usize {
         self.bodies.iter().count()
     }
@@ -227,8 +233,11 @@ impl World {
     /// sleeping)` tuple in stable handle order. Two runs that diverge in any
     /// of those will produce different bytes; two runs that match will produce
     /// the same bytes.
-    #[allow(clippy::type_complexity)] // local-only ad-hoc tuple is clearer
-                                      // than naming a one-shot record type.
+    #[must_use]
+    #[allow(
+        clippy::type_complexity,
+        reason = "local-only ad-hoc tuple is clearer than naming a one-shot record type for the per-body (idx, pos, rot, linvel, angvel, sleep) row"
+    )]
     pub fn serialize_state(&self) -> Vec<u8> {
         // Stable order: collect (raw_index, slot) pairs and sort. Rapier's
         // arena reuses indices on remove+insert, but within a single run

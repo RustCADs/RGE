@@ -1,0 +1,43 @@
+name: Workspace tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  tests:
+    name: cargo test --workspace --all-targets + --doc
+    runs-on: ubuntu-latest
+    # 1692 unit/integration tests + 16 doctests across 211 binaries; cold cache
+    # build dominates, but the per-test runtime is small. 60 min headroom.
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain (per rust-toolchain.toml)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          # rust-toolchain.toml pins 1.92.0 + components; the action honors it.
+          toolchain: stable
+
+      - name: Cache cargo registry + target
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: workspace-tests
+          # Falls back to default target dir on Linux runners.
+
+      # Two cargo invocations: --all-targets covers unit + integration tests
+      # (211 binaries; 1692 passing as of 2026-05-09); --doc covers doctests
+      # which --all-targets deliberately excludes per cargo semantics. Both
+      # must pass for the workspace to be considered green.
+      - name: Run unit + integration tests
+        run: cargo test --workspace --all-targets --no-fail-fast
+
+      - name: Run doctests
+        run: cargo test --workspace --doc --no-fail-fast

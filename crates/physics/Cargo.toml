@@ -17,8 +17,24 @@ publish                = false
 # ("same-platform replay" per PLAN.md §1.6.8). On rapier 0.32 this feature
 # is not enabled by default and is mutually exclusive with `parallel` and
 # SIMD; determinism is non-negotiable for §1.6.8 so we accept the perf cost.
-rapier3d = { workspace = true, features = ["enhanced-determinism"] }
+#
+# `serde-serialize` derives `Serialize` / `Deserialize` on the persistent
+# Rapier types (`RigidBodySet`, `ColliderSet`, `IslandManager`, broadphase,
+# narrowphase, joint sets, `IntegrationParameters`, `CCDSolver`). Required
+# for the `SnapshotParticipate` impl in `participate.rs`. Compatible with
+# `enhanced-determinism` (rapier3d/src/lib.rs only forbids the SIMD ↔
+# enhanced-determinism combo, not serde + enhanced-determinism).
+rapier3d = { workspace = true, features = [
+    "enhanced-determinism",
+    "serde-serialize",
+] }
 serde    = { workspace = true }
+# Binary wire format for the `SnapshotParticipate` payload. Workspace
+# convention per `kernel/ecs/src/participate.rs` doc-comment "Serialization-
+# format policy" — postcard is the default; RON is reserved for participants
+# whose state contains internally-tagged enums (cad-core's `OperatorNode`).
+# Physics state has no such enum so postcard is the right choice.
+postcard = { workspace = true }
 # Tier-1 plugin substrate — physics hosts a Tier-2 plugin canary
 # (`PhysicsPlugin`, the third canary after cad-projection + gfx per ADR-114).
 # Tier-2 → Tier-1 dep is allowed under the `forbidden-dep` lint (rule 1
@@ -26,6 +42,18 @@ serde    = { workspace = true }
 # substrate).
 rge-kernel-plugin-host = { workspace = true }
 rge-kernel-diagnostics = { workspace = true }
+# Tier-1 ECS substrate — needed for the `SnapshotParticipate` trait
+# (`kernel/ecs/src/participate.rs`). Tier-2 → Tier-1 is allowed under the
+# `forbidden-dep` lint.
+rge-kernel-ecs         = { workspace = true }
+
+[dev-dependencies]
+# BLAKE3 hashing — used in `participate.rs` round-trip tests to assert
+# capture output is byte-identical before + after a restore cycle. Same
+# pattern as `crates/cad-core/src/checkpoints/participate.rs::tests`
+# (which uses blake3 as a regular dep because production hashing also
+# needs it; physics only needs it in tests).
+blake3 = { workspace = true }
 
 [lints]
 workspace = true

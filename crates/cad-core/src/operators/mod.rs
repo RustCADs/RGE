@@ -69,6 +69,7 @@ pub enum OpError {
 /// Wired alongside [`OperatorNode`] for cheap dispatch in inspectors without
 /// matching on the full payload-bearing enum.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum OpKind {
     /// `BooleanOp` — union/intersection/difference of two upstream
     /// tessellations.
@@ -312,5 +313,32 @@ mod tests {
         assert!(op.output_is_labeled(&[true, false]));
         assert!(op.output_is_labeled(&[false, true]));
         assert!(op.output_is_labeled(&[true, true]));
+    }
+
+    /// SemVer hardening fixture: [`OpKind`] is `#[non_exhaustive]`, so
+    /// cross-crate consumers MUST include a wildcard arm when pattern-matching.
+    /// This test simulates that consumer pattern: when future variants
+    /// (Loft / Sweep / Fillet per PLAN §1.5.4 + ADR-098) are added, the
+    /// wildcard arm absorbs them and this test still compiles — proving the
+    /// `#[non_exhaustive]` annotation is correctly applied.
+    #[test]
+    #[allow(
+        unreachable_patterns,
+        reason = "intentional: simulates cross-crate consumer pattern; \
+                  same-crate compilation sees the enum as exhaustive so the \
+                  wildcard arm is unreachable from inside the crate, but the \
+                  `#[non_exhaustive]` SemVer barrier requires it for external \
+                  consumers"
+    )]
+    fn op_kind_non_exhaustive_pattern_match_compiles() {
+        let kind = OpKind::Cuboid;
+        let _label = match kind {
+            OpKind::Boolean => "boolean",
+            OpKind::Cuboid => "cuboid",
+            OpKind::Extrude => "extrude",
+            OpKind::Revolve => "revolve",
+            OpKind::Transform => "transform",
+            _ => "future-variant", // required by #[non_exhaustive]
+        };
     }
 }

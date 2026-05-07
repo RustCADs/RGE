@@ -24,21 +24,16 @@ use serde::{Deserialize, Serialize};
 /// What the gameplay layer wants this source to do. The schedule step in
 /// [`crate::schedule`] reads this value, compares against the engine-side
 /// [`SourceState`], and dispatches Kira commands to make them agree.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum PlaybackState {
     /// Source is silent and the playhead is at zero (or at `loop_region`
     /// start if a region is configured).
+    #[default]
     Stopped,
     /// Source is paused — playhead held at its current position.
     Paused,
     /// Source is producing samples.
     Playing,
-}
-
-impl Default for PlaybackState {
-    fn default() -> Self {
-        Self::Stopped
-    }
 }
 
 impl PlaybackState {
@@ -115,13 +110,13 @@ impl SourceState {
 mod tests {
     use super::*;
 
-    /// PlaybackState round-trip through RON for snapshot/replication friendliness.
+    /// `PlaybackState` round-trip through RON for snapshot/replication friendliness.
     #[test]
     fn playback_state_default_is_stopped() {
         assert_eq!(PlaybackState::default(), PlaybackState::Stopped);
     }
 
-    /// from_kira covers every kira state without panic.
+    /// `from_kira` covers every kira state without panic.
     #[test]
     fn from_kira_is_total() {
         assert_eq!(

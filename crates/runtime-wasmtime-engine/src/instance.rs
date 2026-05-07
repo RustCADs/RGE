@@ -50,11 +50,13 @@ impl Instance {
     }
 
     /// Plugin id (blake3 of the .wasm bytes).
+    #[must_use]
     pub fn plugin_id(&self) -> blake3::Hash {
         self.plugin_id
     }
 
     /// Read-only access to the host state for assertion in tests.
+    #[must_use]
     pub fn host(&self) -> &HostState {
         self.store.data()
     }
@@ -65,6 +67,7 @@ impl Instance {
     }
 
     /// Tick counter on the host side.
+    #[must_use]
     pub fn tick_count(&self) -> u32 {
         self.store.data().tick_counter
     }
@@ -72,11 +75,13 @@ impl Instance {
     /// True iff the instance has been quarantined after a wasm trap.
     /// Quarantined instances ignore further `tick()` calls and surface
     /// the original panic report on inspection.
+    #[must_use]
     pub fn is_quarantined(&self) -> bool {
         self.quarantined.is_some()
     }
 
     /// Recorded panic report, if any.
+    #[must_use]
     pub fn panic_report(&self) -> Option<&PanicReport> {
         self.quarantined.as_ref()
     }

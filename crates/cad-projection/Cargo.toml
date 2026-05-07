@@ -25,5 +25,27 @@ tracing                     = { workspace = true }
 # The authoritative EntityId definition lives in rge-kernel-ecs.
 ulid                        = { version = "1", features = ["serde"] }
 
+[dev-dependencies]
+# Cross-substrate composition tests (audit-2026-05-09 round 6 C3 + H4 closure).
+# The `multi_canary_integration` test stages all four Tier-2 canary substrates
+# (cad-projection, gfx, physics, audio) into a single PluginContext, so we
+# need their crate handles in test scope. The `cross_substrate_determinism`
+# 3-way PIE test additionally needs `rge-physics::World` for the third
+# participant and `blake3` for digest comparison. These are dev-only —
+# production cad-projection still only depends on cad-core + kernel — so the
+# [forbidden-dep] lint's existing logic treats Tier-2→Tier-2 cad-projection →
+# {gfx,physics,audio} as benign: cad-projection is not cad-core, not
+# editor-ui, not physics, and not a renderer crate, so none of rules 1-6 fire.
+rge-gfx                     = { path = "../gfx" }
+rge-physics                 = { path = "../physics" }
+rge-audio                   = { path = "../audio" }
+# kira's MockBackend is required to construct an AudioManager headlessly,
+# matching the audio canary's plugin smoke-test pattern.
+kira                        = { workspace = true }
+# BLAKE3 hashing — used in the 3-way PIE round-trip test to digest physics
+# state and projected-mesh bytes for byte-identity comparison. Same pattern
+# as physics/Cargo.toml dev-dependencies (BLAKE3 is already a workspace dep).
+blake3                      = { workspace = true }
+
 [lints]
 workspace = true

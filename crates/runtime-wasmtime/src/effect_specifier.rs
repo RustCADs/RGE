@@ -91,6 +91,7 @@ impl Effect {
     }
 
     /// Round-trip the WIT tag literal back to an `Effect`.
+    #[must_use]
     pub fn from_tag(s: &str) -> Option<Self> {
         match s {
             "<computes>" => Some(Effect::Computes),
@@ -103,6 +104,7 @@ impl Effect {
     }
 
     /// Iterate over all five effects in declaration order.
+    #[must_use]
     pub const fn all() -> [Effect; 5] {
         [
             Effect::Computes,
@@ -237,6 +239,7 @@ impl Capability {
     }
 
     /// Inverse of [`code`]; round-trip parser.
+    #[must_use]
     pub fn from_code(s: &str) -> Option<Self> {
         match s {
             "compute.exec" => Some(Capability::ComputeExec),
@@ -345,6 +348,7 @@ pub struct CapTicket<const CAPS: u32> {
 
 impl<const CAPS: u32> CapTicket<CAPS> {
     /// Construct a ticket carrying the capabilities encoded in `CAPS`.
+    #[must_use]
     pub const fn new(plugin_id: blake3::Hash, issuer: &'static str) -> Self {
         Self {
             plugin_id,
@@ -430,6 +434,7 @@ pub struct Plugin<const EFFECTS: u32> {
 
 impl<const EFFECTS: u32> Plugin<EFFECTS> {
     /// Construct a plugin handle.
+    #[must_use]
     pub const fn new(plugin_id: blake3::Hash, name: &'static str) -> Self {
         Self { plugin_id, name }
     }
@@ -440,6 +445,7 @@ impl<const EFFECTS: u32> Plugin<EFFECTS> {
     /// **The compile-time gate.** Bind a plugin to a capability ticket
     /// whose const-generic `CAPS` is a superset of this plugin's
     /// `EFFECTS.required_caps()`.
+    #[must_use]
     pub const fn bind<const CAPS: u32>(
         self,
         ticket: CapTicket<CAPS>,
@@ -482,6 +488,10 @@ macro_rules! assert_compile_time_gate {
 /// Const-fn predicate: is `callee` effect bitmask a **subset** of
 /// `caller` effect bitmask?
 #[must_use]
+#[allow(
+    clippy::similar_names,
+    reason = "`caller` / `callee` is the canonical pair for control-flow effect propagation; renaming would diverge from the surrounding §1.13 doctrine and the matching parameter names in linker.rs"
+)]
 pub const fn effect_set_subset(caller: u32, callee: u32) -> bool {
     (caller & callee) == callee
 }
@@ -534,7 +544,7 @@ mod tests {
 
     #[test]
     fn effect_bits_disjoint() {
-        let bits: Vec<u32> = Effect::all().into_iter().map(|e| e.bit()).collect();
+        let bits: Vec<u32> = Effect::all().into_iter().map(super::Effect::bit).collect();
         for (i, &a) in bits.iter().enumerate() {
             for (j, &b) in bits.iter().enumerate() {
                 if i != j {

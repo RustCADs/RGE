@@ -25,6 +25,10 @@ pub fn load_png(bytes: &[u8]) -> Result<Image> {
     convert_dynimage_to_png_image(dyn_img)
 }
 
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "match arms call methods like `to_rgba8()` / `to_rgba16()` that take `&self` — clippy's heuristic doesn't see the consume-via-pattern shape; passing `&DynamicImage` would force `(&dyn_img).to_rgba8()` everywhere without functional benefit"
+)]
 fn convert_dynimage_to_png_image(dyn_img: DynamicImage) -> Result<Image> {
     let width = dyn_img.width();
     let height = dyn_img.height();

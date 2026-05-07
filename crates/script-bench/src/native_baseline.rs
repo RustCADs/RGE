@@ -118,6 +118,10 @@ mod tests {
     use crate::workloads::{generate_entities, Vec3, ENTITY_SEED, PER_FRAME_ENTITY_COUNT};
 
     #[test]
+    #[allow(
+        clippy::float_cmp,
+        reason = "asserting y/z were untouched: input 0.0 + integration of zero velocity must equal exact 0.0; bit-equality is the intended contract"
+    )]
     fn script_tick_makes_progress() {
         let t = Transform {
             translation: Vec3::new(0.0, 0.0, 0.0),

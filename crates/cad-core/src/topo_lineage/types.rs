@@ -71,6 +71,7 @@ pub enum LineageError {
 /// entries with the same `from` (Split) or same `to` (Merged) instead of
 /// nesting the IDs into the enum payload.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum TopologyEvolution {
     /// Identity unchanged — input face boundary preserved bit-identical.
     Preserved,
@@ -301,5 +302,33 @@ mod tests {
             1
         );
         assert_eq!(g.edges_by_evolution(TopologyEvolution::Split).count(), 0);
+    }
+
+    /// SemVer hardening fixture: [`TopologyEvolution`] is `#[non_exhaustive]`,
+    /// so cross-crate consumers MUST include a wildcard arm when
+    /// pattern-matching. ADR-098 explicitly tags this enum as "v0 prototype" —
+    /// future variants are likely. This test simulates the consumer pattern:
+    /// when future variants are added, the wildcard arm absorbs them and this
+    /// test still compiles — proving the `#[non_exhaustive]` annotation is
+    /// correctly applied.
+    #[test]
+    #[allow(
+        unreachable_patterns,
+        reason = "intentional: simulates cross-crate consumer pattern; \
+                  same-crate compilation sees the enum as exhaustive so the \
+                  wildcard arm is unreachable from inside the crate, but the \
+                  `#[non_exhaustive]` SemVer barrier requires it for external \
+                  consumers"
+    )]
+    fn topology_evolution_non_exhaustive_pattern_match_compiles() {
+        let evo = TopologyEvolution::Preserved;
+        let _label = match evo {
+            TopologyEvolution::Preserved => "preserved",
+            TopologyEvolution::Split => "split",
+            TopologyEvolution::Merged => "merged",
+            TopologyEvolution::Deleted => "deleted",
+            TopologyEvolution::Reinterpreted => "reinterpreted",
+            _ => "future-variant", // required by #[non_exhaustive]
+        };
     }
 }

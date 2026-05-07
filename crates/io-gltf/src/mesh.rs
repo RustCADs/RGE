@@ -2,7 +2,7 @@
 //! Mesh extraction & cache insertion.
 //!
 //! glTF organises geometry as `mesh -> primitives[]` where each primitive is
-//! one draw call (one POSITION accessor, optional NORMAL, TEXCOORD_0,
+//! one draw call (one POSITION accessor, optional NORMAL, `TEXCOORD_0`,
 //! indices, material). Our [`MeshAsset`] is the simplest unit: a single
 //! primitive's vertex / index data plus the originating glTF material index
 //! (resolved to a [`crate::MaterialHandle`] in [`crate::scene_builder`]).
@@ -24,7 +24,7 @@ pub struct MeshAsset {
     /// Vertex normals; empty when the glTF primitive omitted NORMAL.
     pub normals: Vec<[f32; 3]>,
     /// Vertex UV0 coordinates; empty when the glTF primitive omitted
-    /// TEXCOORD_0.
+    /// `TEXCOORD_0`.
     pub texcoords: Vec<[f32; 2]>,
     /// Triangle indices (flat — every three values is one triangle).
     pub indices: Vec<u32>,
@@ -118,7 +118,7 @@ pub fn extract_meshes(
 
             let normals = reader
                 .read_normals()
-                .map(|it| it.collect::<Vec<[f32; 3]>>())
+                .map(std::iter::Iterator::collect::<Vec<[f32; 3]>>)
                 .unwrap_or_default();
 
             let texcoords = reader

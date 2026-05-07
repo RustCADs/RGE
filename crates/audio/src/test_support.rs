@@ -62,6 +62,12 @@ impl FrameCapture {
     }
 
     /// Drain the captured frames, leaving the sink empty.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal capture mutex has been poisoned by a previous
+    /// panic in [`CaptureEffect::process`]. In test usage the effect's
+    /// `process` body never panics so poisoning is unreachable in practice.
     #[must_use]
     pub fn take(&self) -> Vec<Frame> {
         let mut guard = self.inner.lock().expect("capture mutex poisoned");
@@ -69,6 +75,12 @@ impl FrameCapture {
     }
 
     /// Number of frames currently buffered.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal capture mutex has been poisoned by a previous
+    /// panic in [`CaptureEffect::process`]. In test usage the effect's
+    /// `process` body never panics so poisoning is unreachable in practice.
     #[must_use]
     pub fn len(&self) -> usize {
         self.inner.lock().expect("capture mutex poisoned").len()

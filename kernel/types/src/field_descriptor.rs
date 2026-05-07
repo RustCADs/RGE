@@ -12,7 +12,7 @@
 //! 2. The reflection layer can be used in `no_std` profiles later (Phase 5
 //!    — wasm runtime) without a heap allocator.
 //!
-//! # adapted from rustforge::macros::rcad-property — generalized
+//! # adapted from `rustforge::macros::rcad-property` — generalized
 //!
 //! Rustforge's `PropertyDescriptor` carried dental-domain `RcadUnit`. We drop
 //! that and add `default: DefaultValue`, `ui_hint: UiHint`, `serde_skip: bool`
@@ -86,10 +86,11 @@ pub struct RangeMeta {
 /// `Deserialize<'de>: 'static` lifetime trap, the de side is custom: a
 /// helper [`DefaultValue::deserialize_owned`] is provided for round-trip
 /// tests, but the macro-emitted const path never round-trips through serde.
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub enum DefaultValue {
     /// Use the `Default::default()` impl of the field type at load time.
     /// Default for fields without an explicit `#[reflect(default = "...")]`.
+    #[default]
     DeriveDefault,
 
     /// `()` — the field has no meaningful default; deserializing an empty
@@ -114,12 +115,6 @@ pub enum DefaultValue {
     /// invoke it (would require an indirection table); the inspector layer
     /// uses it for "Reset" actions and shows the symbol name on hover.
     Custom(&'static str),
-}
-
-impl Default for DefaultValue {
-    fn default() -> Self {
-        DefaultValue::DeriveDefault
-    }
 }
 
 impl FieldDescriptor {
@@ -151,7 +146,13 @@ mod tests {
         assert_eq!(FD.name, "foo");
         assert!(matches!(FD.default, DefaultValue::DeriveDefault));
         assert!(matches!(FD.ui_hint, UiHint::Default));
-        assert!(!FD.serde_skip);
+        #[allow(
+            clippy::assertions_on_constants,
+            reason = "intentional: pinning the const-built descriptor's `serde_skip` default to `false` so a future API change to that default trips this test"
+        )]
+        {
+            assert!(!FD.serde_skip);
+        }
     }
 
     #[test]
@@ -170,8 +171,8 @@ mod tests {
         // Serialize-only: descriptor types travel from binary-to-disk for
         // diagnostics, never disk-to-binary. The macro emits these as
         // const literals.
-        let dv = DefaultValue::Float(3.14);
+        let dv = DefaultValue::Float(2.5);
         let s = ron::to_string(&dv).unwrap();
-        assert!(s.contains("3.14"));
+        assert!(s.contains("2.5"));
     }
 }

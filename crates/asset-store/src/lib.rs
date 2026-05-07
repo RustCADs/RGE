@@ -2,6 +2,16 @@
 
 //! `rge-asset-store` — content-addressed local cache for general assets.
 //!
+//! Failure class: recoverable
+//!
+//! Per PLAN §1.13: asset-store failures (filesystem I/O / asset-id parse /
+//! corrupted index) are transient and recoverable in-place — the caller
+//! surfaces the error to the user, retries on a different cache root, falls
+//! back to recooking from upstream sources, or skips the asset. No PIE state
+//! is owned by asset-store itself; the cache is a content-addressed view over
+//! reproducible cooked-asset bytes. Matches pak-format + io-image + io-gltf
+//! (transient I/O / format failures).
+//!
 //! Implements PLAN §1.2.4 (zero-copy asset views — this crate is the
 //! resolve-the-bytes seam) and §1.6.3 (cooked binary — the cooker
 //! stores its outputs here, keyed by their own content).
