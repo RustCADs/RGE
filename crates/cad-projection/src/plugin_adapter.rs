@@ -50,7 +50,7 @@
 
 use rge_cad_core::{CadGraph, Tolerance};
 use rge_kernel_ecs::World;
-use rge_kernel_plugin_host::{Plugin, PluginContext, PluginError, PluginId};
+use rge_kernel_plugin_host::{CanaryPlugin, Plugin, PluginContext, PluginError, PluginId};
 
 use crate::CadProjection;
 
@@ -200,6 +200,15 @@ impl Plugin for CadProjectionPlugin {
     }
 }
 
+/// ADR-116 §10.4 dogfood-rule canary protocol impl. Delegates to the
+/// inherent `ticks_run` accessor; backwards-compat per ADR-116
+/// Sub-decision 2.
+impl CanaryPlugin for CadProjectionPlugin {
+    fn successful_ticks(&self) -> u64 {
+        self.ticks_run()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use rge_kernel_diagnostics::DiagnosticAggregator;
@@ -277,5 +286,17 @@ mod tests {
         let result = plugin.tick(&mut ctx);
         assert!(result.is_err());
         assert_eq!(plugin.ticks_run(), 0);
+    }
+
+    /// ADR-116 acceptance: `CadProjectionPlugin` impls the `CanaryPlugin`
+    /// protocol. Trait method delegates to the existing inherent
+    /// `ticks_run` accessor; calling through `&dyn CanaryPlugin` exercises
+    /// the dynamic-dispatch path future cross-canary tooling will use.
+    #[test]
+    fn cad_projection_plugin_impls_canary_protocol() {
+        let plugin = CadProjectionPlugin::new();
+        let canary: &dyn CanaryPlugin = &plugin;
+        assert_eq!(canary.successful_ticks(), 0);
+        assert_eq!(canary.successful_ticks(), plugin.ticks_run());
     }
 }

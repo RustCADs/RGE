@@ -1,6 +1,6 @@
 # RGE Handoff Document
 
-> **Snapshot**: 2026-05-10 05:30. Continuation pointer for the next session.
+> **Snapshot**: 2026-05-10 06:30. Continuation pointer for the next session.
 >
 > **Read first**: this file. Then [`Status.md`](./Status.md) (current snapshot) and [`change.md`](./change.md) (full history).
 
@@ -10,7 +10,7 @@
 
 | Pillar | State |
 |---|---|
-| Workspace tests | **1737 / 1737 pass** across 214+ binaries (2 ignored intentionally hardware-gated). Plus **16 doctests pass / 0 fail / 11 ignored** (`cargo test --workspace --doc`). |
+| Workspace tests | **1743 / 1743 pass** across 214+ binaries (2 ignored intentionally hardware-gated). Plus **16 doctests pass / 0 fail / 11 ignored** (`cargo test --workspace --doc`). |
 | Architecture lints | **9 enforcement + 1 supplementary PASS** exit 0 (forbidden-dep, split-exemption, no-utils, graph-foundation, editor-state-ownership, command-bus, projection-modules, kernel-isolation, failure-class — enforcement; snapshot-participate — warning-level supplementary, K=0 missing) |
 | `cargo +nightly fmt --check` | exit 0 |
 | `cargo check --workspace --all-targets` | 0 errors, ~130 pre-existing ui-theme `missing_docs` warnings (deferred per Status.md) |
@@ -22,7 +22,18 @@
 
 ## What just shipped (this session — completed work)
 
-1. **H5 canary accessor symmetry closed** (closes ultra-deep round-6 H5 finding: 3 of 4 plugin canaries had telemetry accessors; cad-projection lacked one; +2 net tests):
+1. **ADR-116 + `CanaryPlugin` trait formalization** (Path-C of 2026-05-10 ChatGPT cross-review #4 recommendations; +6 net tests; pure-additive on public API; backwards-compat preserved; cross-review's "minimal-not-meta" caution honored structurally):
+   - **NEW `docs/adr/ADR-116-canary-protocol.md`** (271L; in 250-350L target band). Captures binding decisions: `CanaryPlugin: Plugin` super-trait extension; single uniform method `successful_ticks(&self) -> u64`; backwards-compat policy (existing inherent methods stay; trait method delegates); dyn-safety mandate (`&dyn CanaryPlugin` + `Box<dyn CanaryPlugin>` both compile); increment-only-on-success invariant codified at the trait level. 5 alternatives explicitly rejected (don't formalize at all / structured `CanaryTelemetry` type now / rename inherent methods / promote to base `Plugin` trait / per-canary const-id-as-trait-associated-const). 8 followups including structured `CanaryTelemetry` deferral / auto-registration deferral / editor-ui canary adoption / Tier-3 sandboxed WASM plugin shape.
+   - **NEW `kernel/plugin-host/src/canary.rs`** (170L) — trait definition + 2 dyn-safety tests (`canary_plugin_is_dyn_safe` + `canary_plugin_extends_plugin`) + in-module `MockCanary` test helper avoiding kernel-isolation-lint trip from importing real Tier-2 canaries.
+   - **`kernel/plugin-host/src/lib.rs`**: `pub mod canary;` + `pub use canary::CanaryPlugin;`.
+   - **4 retroactive `impl CanaryPlugin for X` blocks** (~5L each; backwards-compat preserved): `CadProjectionPlugin` (delegates to `ticks_run()`); `GfxPlugin` (delegates to `frames_recorded()`); `PhysicsPlugin` (delegates to `steps_run()`); `AudioPlugin` (delegates to `frames_advanced()` — note: the dispatch brief incorrectly stated `steps_run()` for audio; agent used source-of-truth name; 1 stale doc-string drift in cad-projection plugin_adapter.rs:74 + HANDOFF.md flagged for next-session cleanup).
+   - **4 per-canary acceptance tests**: `<canary>_plugin_impls_canary_protocol` (one per plugin_adapter.rs foot; instantiates plugin → takes `&dyn CanaryPlugin` → asserts `successful_ticks() == 0` initially; pins the trait conformance contract).
+   - **Cross-review's "minimal-not-meta" caution honored structurally**: trait carries exactly ONE method; no `CanaryTelemetry` struct; no auto-registration; no architecture-lint enforcement. Future amendments deferred per ADR-116 followups when canary diversity grows beyond 4.
+   - **Property-1 (static `PLUGIN_ID`) intentionally NOT codified on the trait** — agent flagged in ADR-116 rejection: associated consts can't be queried through `&dyn CanaryPlugin`, conflicting with Sub-decision 3 dyn-safety. Existing `pub const X_PLUGIN_ID: &str` convention retained per-crate.
+   - **ADR backlog**: 7 → **8 landed** (+ADR-116) + 3 deferred (099/101/102 per §18 doctrine).
+   - Workspace state: **1743 tests / 16 doctests / 9 enforcement + 1 supplementary lints PASS / fmt clean**. Substantive lint exemption: 1 (LayoutNodeId).
+   - Cross-review's framing: "you are transitioning from individual subsystem implementations to codified engine governance patterns. That is how serious engines evolve." ADR-116 + `CanaryPlugin` trait realize this transition at the trait level. Future canaries (editor-ui M2 deferral / Tier-3 sandboxed WASM plugins / future post-v1.0 protocols) are now bound by an explicit contract instead of inherited-by-convention.
+2. **H5 canary accessor symmetry closed** (closes ultra-deep round-6 H5 finding: 3 of 4 plugin canaries had telemetry accessors; cad-projection lacked one; +2 net tests):
    - **NEW** `CadProjectionPlugin::ticks_run(&self) -> u64` accessor with `#[must_use]`. New `ticks_run: u64` field on the struct (initialized to 0 in `new()` + `from_projection()`). Increment moved into a match arm so `Ok(_)` increments the counter while `Err(_)` paths (ContractViolation + RuntimeFault) leave it at 0 — canonical "increment-only-on-success" semantics that mirrors gfx::frames_recorded / physics::steps_run / audio::steps_run.
    - **All 4 plugin canaries now expose telemetry accessors with parallel naming**:
      - cad-projection: `ticks_run()`

@@ -56,10 +56,12 @@
 
 #![forbid(unsafe_code)]
 
+pub mod canary;
 pub mod context;
 pub mod host;
 pub mod plugin;
 
+pub use canary::CanaryPlugin;
 pub use context::PluginContext;
 pub use host::{
     InitReport, PluginHost, PluginHostError, PluginRecord, PluginState, ShutdownReport, TickReport,

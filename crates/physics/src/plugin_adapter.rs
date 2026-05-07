@@ -71,7 +71,7 @@
 //! wrapper or a non-Send compromise — matching the gfx canary's data point
 //! for GPU resources.
 
-use rge_kernel_plugin_host::{Plugin, PluginContext, PluginError, PluginId};
+use rge_kernel_plugin_host::{CanaryPlugin, Plugin, PluginContext, PluginError, PluginId};
 
 use crate::physics_input_ledger::PhysicsInputLedger;
 use crate::step::physics_step;
@@ -196,6 +196,15 @@ impl Plugin for PhysicsPlugin {
         // retrieve. Mirrors the cad-projection + gfx precedent of a default
         // Ok(()) shutdown.
         Ok(())
+    }
+}
+
+/// ADR-116 §10.4 dogfood-rule canary protocol impl. Delegates to the
+/// inherent `steps_run` accessor; backwards-compat per ADR-116
+/// Sub-decision 2.
+impl CanaryPlugin for PhysicsPlugin {
+    fn successful_ticks(&self) -> u64 {
+        self.steps_run()
     }
 }
 
@@ -333,5 +342,17 @@ mod tests {
         let mut diags = DiagnosticAggregator::new();
         let mut ctx = PluginContext::new(&mut diags);
         assert!(plugin.shutdown(&mut ctx).is_ok());
+    }
+
+    /// ADR-116 acceptance: `PhysicsPlugin` impls the `CanaryPlugin` protocol.
+    /// Trait method delegates to the existing inherent `steps_run` accessor;
+    /// calling through `&dyn CanaryPlugin` exercises the dynamic-dispatch
+    /// path future cross-canary tooling will use.
+    #[test]
+    fn physics_plugin_impls_canary_protocol() {
+        let plugin = PhysicsPlugin::new();
+        let canary: &dyn CanaryPlugin = &plugin;
+        assert_eq!(canary.successful_ticks(), 0);
+        assert_eq!(canary.successful_ticks(), plugin.steps_run());
     }
 }

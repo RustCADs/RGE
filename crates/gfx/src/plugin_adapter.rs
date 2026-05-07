@@ -54,7 +54,7 @@
 //! design generalizes cleanly to GPU resources without forcing a `Mutex`
 //! wrapper or a non-Send compromise.
 
-use rge_kernel_plugin_host::{Plugin, PluginContext, PluginError, PluginId};
+use rge_kernel_plugin_host::{CanaryPlugin, Plugin, PluginContext, PluginError, PluginId};
 
 use crate::context::GfxContext;
 use crate::frame::FrameRecorder;
@@ -233,6 +233,15 @@ impl Plugin for GfxPlugin {
         // the plugin. wgpu RAII cleans up the GPU resources at drop. Mirrors
         // the cad-projection precedent of a default Ok(()) shutdown.
         Ok(())
+    }
+}
+
+/// ADR-116 §10.4 dogfood-rule canary protocol impl. Delegates to the
+/// inherent `frames_recorded` accessor; backwards-compat per ADR-116
+/// Sub-decision 2.
+impl CanaryPlugin for GfxPlugin {
+    fn successful_ticks(&self) -> u64 {
+        self.frames_recorded()
     }
 }
 
@@ -446,5 +455,17 @@ mod tests {
             display_str.starts_with("plugin runtime fault:"),
             "RuntimeFault Display must use 'plugin runtime fault:' prefix; got: {display_str}",
         );
+    }
+
+    /// ADR-116 acceptance: `GfxPlugin` impls the `CanaryPlugin` protocol.
+    /// Trait method delegates to the existing inherent `frames_recorded`
+    /// accessor; calling through `&dyn CanaryPlugin` exercises the
+    /// dynamic-dispatch path future cross-canary tooling will use.
+    #[test]
+    fn gfx_plugin_impls_canary_protocol() {
+        let plugin = GfxPlugin::new();
+        let canary: &dyn CanaryPlugin = &plugin;
+        assert_eq!(canary.successful_ticks(), 0);
+        assert_eq!(canary.successful_ticks(), plugin.frames_recorded());
     }
 }
