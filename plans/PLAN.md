@@ -1075,7 +1075,7 @@ WASM, capability-gated. Examples: USD/FBX importers · DLSS/FSR extensions · lo
 
 ### 10.4 Dogfood rule
 
-Tier 2 uses the same `Plugin` trait as Tier 3. Includes `cad-core`, `cad-projection`, `kernel/graph-foundation` consumers in contract tests.
+Tier 2 uses the same `Plugin` trait as Tier 3. Includes `cad-core`, `cad-projection`, `kernel/graph-foundation` consumers in contract tests; 5/5 Tier-2 plugin canaries (`audio`, `cad-projection`, `editor-ui`, `gfx`, `physics`) landed per ADR-116.
 
 ---
 
@@ -1304,13 +1304,13 @@ ADR-001..ADR-096 from v0.5/v0.6 preserved.
 **New ADRs from v0.7:**
 
 - **ADR-097** — cad-projection internal split into 6 modules (god-bridge avoidance)
-- **ADR-098** — Topology lineage graph with `TopologyEvolution` enum
+- **ADR-098** — Topology lineage substrate
 - **ADR-099** — Execution domains naming (CPU gameplay / GPU shading / GPU compute / Expression)
 - **ADR-100** — Constitutional principle #8: editor extends runtime, never replaces
 - **ADR-101** — `kernel/graph-foundation` Tier-1 substrate (primitives, not runtime). [Deferred; companion doc shipped at `docs/§18/GRAPH_FOUNDATION.md`.]
 - **ADR-102** — Failure containment model with 5 classes
 - **ADR-103** — Networking is authoritative CAD serialization, not replicated topology
-- **ADR-104** — CAD kernel non-equivalence doctrine + capability surface
+- **ADR-104** — Capability surface for CAD operators
 - **ADR-105** — WASM constitutional lock-in promoted to top-tier risk; per-category fallbacks documented
 
 **New ADRs from v0.8:**
@@ -1320,11 +1320,11 @@ ADR-001..ADR-096 from v0.5/v0.6 preserved.
 
 **Post-v0.8 ADRs accepted (substrate-landed; ADR file status noted):**
 
-- **ADR-112** — cad-core Boolean CSG library scoping (csgrs over parry / truck / roll-our-own). File: `docs/adr/ADR-112-cad-boolean-csg-library.md`.
+- **ADR-112** — cad-core Boolean CSG library. File: `docs/adr/ADR-112-cad-boolean-csg-library.md`.
 - **ADR-113-deferred** — truck cad-native backend (deferred per freeze policy until cad-native consumer pressure surfaces). [File pending.]
-- **ADR-114** — PluginContext owned-resources-handoff (`BTreeMap<TypeId, Box<dyn Any + Send>>` registry; catch_unwind discipline; 5-variant PluginError + PluginPhase enum). File: `docs/adr/ADR-114-pluginctx-owned-handoff.md` (with 2026-05-08 three-substrate + 2026-05-08 four-substrate amendments).
+- **ADR-114** — PluginContext owned-resources-handoff design (`BTreeMap<TypeId, Box<dyn Any + Send>>` registry; catch_unwind discipline; 5-variant PluginError + PluginPhase enum). File: `docs/adr/ADR-114-pluginctx-owned-handoff.md` (with 2026-05-08 three-substrate + 2026-05-08 four-substrate amendments).
 - **ADR-115** — Graph-metrics substrate design (kernel-tier; tier-stratified A/B/C; event-sourced; snapshot-versioned; 6-module split). File: `docs/adr/ADR-115-graph-metrics-substrate-design.md` (with 2026-05-10 amendment — runtime-vs-analytical metric boundary doctrine, reclassifying max_depth / SCC count / dependency diameter / topology lineage breadth from Tier-B → Tier-C).
-- **ADR-116** — Canary protocol formalization (`CanaryPlugin: Plugin` super-trait with single `successful_ticks() -> u64` method; backwards-compat preserved; dyn-safety mandate). File: `docs/adr/ADR-116-canary-protocol.md`.
+- **ADR-116** — Canary protocol — `CanaryPlugin` trait. File: `docs/adr/ADR-116-canary-protocol.md`.
 
 ADR file status summary: **8 ADRs accepted** (097/098/104/112/113-deferred/114/115/116; 097 + 113-deferred ADR files pending — substrate decisions applied but ADR-format files not yet authored). **3 deferred per §18 doctrine** (099/101/102 — see EXECUTION_DOMAINS.md / GRAPH_FOUNDATION.md / RECOVERY_MODEL.md respectively).
 
@@ -1343,6 +1343,8 @@ ADRs land as files in `RGE/ADR/` (workspace path: `docs/adr/`).
 ---
 
 ## 18. Companion documents
+
+> *[Note: §18 below is the original Track-F **intent inventory** (the planned companion-doc set). The canonical inventory of **landed** §18 companion docs lives at `docs/§18/` (27 files as of 2026-05-10). Filenames here may differ from landed paths because the intent set predates the file-naming reconciliation.]*
 
 Spawned from Track F (Month 1) unless noted:
 

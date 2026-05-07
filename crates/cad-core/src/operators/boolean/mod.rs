@@ -15,16 +15,28 @@
 //! side synthesizing per-triangle [`TopologyFaceId::DEGENERATE`] (downstream
 //! lineage classifies as Reinterpreted).
 //!
-//! # csgrs features / capability surface (per ADR-104 §"Initial field set")
+//! # Capability surface (per ADR-104)
 //!
-//! csgrs 0.20.1 `default-features = false` + `["f64", "earcut"]` (f64 avoids
-//! rapier3d 0.24/0.32 conflict; bridge converts f32 ↔ f64). ADR-104's 6 canonical
-//! fields: `boolean_robust_under_tolerance: false` (BSP, no exact arithmetic) /
-//! `deterministic_triangulation: true` (200-iter soak gate) / `t_junction_handling:
-//! false` (csgrs upstream TODO) / `concave_input_supported: true` / `arity: 2` /
-//! `output_labeled_when_input_labeled: true` (matches default `any-labeled-input ⇒
-//! labeled-output`). Supplemental: `healing_strategies: none` (csgrs runs no
-//! mesh-healing passes; not in ADR-104 canonical set).
+//! Backed by csgrs 0.20.1 `default-features = false` + `["f64", "earcut"]`
+//! (f64 avoids rapier3d 0.24/0.32 conflict; bridge converts f32 ↔ f64).
+//!
+//! * `boolean_robust_under_tolerance`: **false** — BSP-tree CSG, no exact
+//!   arithmetic; degenerate-triangle pre-filter mitigates but does not eliminate
+//!   the tolerance-sensitivity.
+//! * `deterministic_triangulation`: true (200-iter soak gate verifies
+//!   bit-identity across re-evaluations).
+//! * `t_junction_handling`: **false** — csgrs upstream TODO; T-junctions can
+//!   appear at intersection seams.
+//! * `concave_input_supported`: true (csgrs handles arbitrary triangle-mesh
+//!   inputs including concave volumes).
+//! * `arity`: 2 (`lhs` ∘ `rhs`).
+//! * `output_labeled_when_input_labeled`: true (matches the default
+//!   `any-labeled-input ⇒ labeled-output` rule; mixed labeled/unlabeled inputs
+//!   produce a labeled output with the unlabeled side synthesizing
+//!   `TopologyFaceId::DEGENERATE` per-triangle).
+//!
+//! Supplemental (not in ADR-104 canonical set): `healing_strategies: none`
+//! (csgrs runs no mesh-healing passes).
 //!
 //! # Failure handling
 //!

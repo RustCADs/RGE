@@ -9,6 +9,8 @@
 
 > Convention defined by `PLUGIN_HOST_PATTERNS.md` §header. Pairs naturally with `CAD_CORE_MODEL.md` — this doc is the "ECS-side projection of the operator graph", that one is the "operator graph itself". The two are co-evolving substrates: every change to one touches the other.
 
+**Elaborates**: SCENE_EXTRACTION_CONTRACT.md §3 (Layer-3 — projection layer ownership boundary; "renderer never owns authoritative geometry").
+
 ## 1. The bridge problem
 
 `cad-core::OperatorGraph` operates in its own universe — `NodeId`s, `Tessellation`s, `CheckpointId`s. ECS operates in another — `EntityId`s, `Component`s, `World`. Editor users see entities (the things they click on, drag, transform) and want to manipulate the parametric history behind them (the operator graph that produced those meshes).

@@ -9,6 +9,8 @@
 
 > Convention defined by `PLUGIN_HOST_PATTERNS.md` §header. This doc is the workspace-wide reference for the gfx render-tier substrate as it stands today (Phase 6.1 + PBR-lite shipped); subsystem-specific render integrations (the future `editor-ui` viewport, the future material-graph runtime) will document their consumer surfaces in their own §18 docs.
 
+**Elaborates**: SCENE_EXTRACTION_CONTRACT.md §3 (Layer-4 — render state is downstream-only) + REACTIVE_INVALIDATION.md §1 (Layer 4 — GPU upload).
+
 ## 1. Render-tier separation per §1.5.2
 
 PLAN §1.5.2 specifies the render-thread / sim-thread separation: render thread sees an immutable snapshot of `(ECS_tick_N, CadCheckpointId_N)` while sim builds N+1. The substrate is being built **incrementally**:

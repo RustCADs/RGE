@@ -9,6 +9,8 @@
 
 > Convention defined by `PLUGIN_HOST_PATTERNS.md` §header. ADR-098 captures the *why* (design space, rejected alternatives, deferred fields per PLAN §1.5.4.3); this doc captures the *how* — using the substrate to query face lineage and to design new operators that participate in it.
 
+**Elaborates**: REACTIVE_INVALIDATION.md §1 (Layer 2 — topology lineage emission inside Layer-1 transactions).
+
 ## 1. Quick concept
 
 Every CAD operator's output faces have a lineage relation to its input faces — one of five evolutions:

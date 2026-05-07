@@ -9,6 +9,8 @@
 
 > Convention defined by `PLUGIN_HOST_PATTERNS.md` §header. Per PLAN §13.2 the substrate's quality gate is "all stateful Tier-2 has `SnapshotParticipate`" — this doc documents how to satisfy that gate.
 
+**Elaborates**: SCENE_EXTRACTION_CONTRACT.md §3 + §6 (Canonical-vs-Derived snapshot semantics; SnapshotParticipate participants).
+
 ## 1. What is PIE
 
 Play-in-Editor (PIE) is the workflow where the editor captures a runtime snapshot, the user plays the simulation forward, and the editor restores the prior state when play ends. The snapshot must capture enough state that the post-restore world is byte-identically the pre-play world.
@@ -134,6 +136,8 @@ Violating any of the three breaks byte-identity. The most common violation in im
 - **`Serde(String)`** — a participant id field is not valid UTF-8.
 
 The validation is layered: magic comes first (cheapest reject), then version, then per-field length-checked reads. The `from_bytes` implementation uses internal `read_bytes!` / `read_u16!` / `read_u32!` macros that bound-check before slicing, so OOB reads on a truncated buffer are impossible by construction.
+
+Tier-C analytical outputs are NOT serialized in the snapshot envelope; they are recomputed on-demand at inspection time per ADR-115's 2026-05-10 amendment (binding doctrine).
 
 ## 6. `PieSnapshot::capture` — orchestrating capture
 

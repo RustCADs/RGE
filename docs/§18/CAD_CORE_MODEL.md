@@ -9,6 +9,8 @@
 
 > Convention defined by `PLUGIN_HOST_PATTERNS.md` §header. ADR-104 captures the capability-surface design (doc-comment-canonical until trigger fires); ADR-112 captures the Boolean CSG library choice; ADR-098 captures the topology lineage substrate (sibling doc). This doc captures the shape of the runtime model that downstream consumers build on.
 
+**Elaborates**: REACTIVE_INVALIDATION.md §1 (Layer 1 — graph mutations / authoritative origin of every reactive ripple).
+
 ## 1. Three-layer model
 
 ```text
