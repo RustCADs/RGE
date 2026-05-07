@@ -1,6 +1,6 @@
 # RGE Handoff Document
 
-> **Snapshot**: 2026-05-10 04:00. Continuation pointer for the next session.
+> **Snapshot**: 2026-05-10 04:30. Continuation pointer for the next session.
 >
 > **Read first**: this file. Then [`Status.md`](./Status.md) (current snapshot) and [`change.md`](./change.md) (full history).
 
@@ -10,7 +10,7 @@
 
 | Pillar | State |
 |---|---|
-| Workspace tests | **1726 / 1726 pass** across 214+ binaries (2 ignored intentionally hardware-gated). Plus **16 doctests pass / 0 fail / 11 ignored** (`cargo test --workspace --doc`). |
+| Workspace tests | **1735 / 1735 pass** across 214+ binaries (2 ignored intentionally hardware-gated). Plus **16 doctests pass / 0 fail / 11 ignored** (`cargo test --workspace --doc`). |
 | Architecture lints | **9 enforcement + 1 supplementary PASS** exit 0 (forbidden-dep, split-exemption, no-utils, graph-foundation, editor-state-ownership, command-bus, projection-modules, kernel-isolation, failure-class — enforcement; snapshot-participate — warning-level supplementary, K=0 missing) |
 | `cargo +nightly fmt --check` | exit 0 |
 | `cargo check --workspace --all-targets` | 0 errors, ~130 pre-existing ui-theme `missing_docs` warnings (deferred per Status.md) |
@@ -22,7 +22,22 @@
 
 ## What just shipped (this session — completed work)
 
-1. **ADR-115 phase-1 Tier-A counters landed** (first real C1 implementation step; bounded scope per ADR-115 phase-1 acceptance criteria; +7 net workspace tests; pure-additive):
+1. **ADR-115 phase-2 Tier-B fanout metrics landed** (second C1 implementation step; +9 net workspace tests; bounded scope — fanout-related Tier-B subset; depth/SCC/diameter explicitly deferred to phase-2.5+):
+   - **5 new public methods on `Graph<N, E>`** (all `#[must_use]`):
+     - `node_in_degree(&self, node: NodeId) -> u32` — Tier-B per-node; O(1) via incoming adjacency cache
+     - `node_out_degree(&self, node: NodeId) -> u32` — Tier-B per-node; O(1) via outgoing adjacency cache
+     - `max_in_fanout(&self) -> u32` — Tier-B workspace; O(1) read; cached field maintained on mutations
+     - `max_out_fanout(&self) -> u32` — Tier-B workspace; O(1) read; cached field maintained on mutations
+     - `average_fanout(&self) -> f64` — Tier-B derived; O(1) `edge_count / node_count` (returns 0.0 for empty graph)
+   - **Tier-B classification justified per-mutation**: `insert_edge` O(1) (one max comparison); `remove_edge` / `remove_node` O(1) when affected node didn't hold cached max; else partial recomputation via private `recompute_max_in_fanout` / `recompute_max_out_fanout` helpers (bounded by node_count). This is "partial recomputation around affected regions" per ADR-115 Tier-B framing.
+   - **2 internal cached fields** on `Graph<N, E>`: `max_out_fanout: u32` + `max_in_fanout: u32`. Auto-serialized via existing Serialize/Deserialize derive (plain u32). Default-initialized to 0; no manual Default impl needed.
+   - **9 new tests** in `kernel/graph-foundation/src/graph/tests.rs` (extracted to sibling module per Phase-5 split precedent — see split note below): empty/unknown-node/add-edge/remove-edge/cascade-on-remove-node/max-after-add/max-recompute-on-remove-of-max-node/max-unchanged-on-remove-of-non-max/average-various-states. graph-foundation tests 52 → 61 (+9).
+   - **`graph.rs` Phase-5 split required** to stay under 1000L cap. Adding ~243L of phase-2 prod+tests pushed graph.rs from 887L → 1130L. Following Phase-5 split precedent (mirrors host.rs split from 2026-05-09 ultra-deep round 6): extracted entire `#[cfg(test)] mod tests` block to NEW `kernel/graph-foundation/src/graph/tests.rs` (451L; well under cap). Production `graph.rs` lands at 697L (303L headroom). NO SPLIT-EXEMPTION annotations needed — clean split. Mirrors HANDOFF's stated discipline ("split, don't exempt").
+   - **ADR-115 updated** (no amendment needed; binding decisions intact): phase-2 row in Implementation guidance rollout table got closing sentence ("Phase 2 fanout subset shipped 2026-05-10..."); Followup "Tier-B incremental algorithms" rewritten with ship-date + full method enumeration + cost-class summary + explicit phase-2.5 deferral rationale per metric (max_depth: not naturally incremental — adding edge can change depth of many descendants; SCC count: requires Tarjan/Kosaraju, not naturally incremental at all; dependency diameter: O(V*(V+E)) full BFS-from-each-node, not incremental; topology lineage breadth: cad-core domain-specific, would live there not graph-foundation).
+   - **Convention discoveries**: NodeId-by-value (16-byte type; workspace clippy `trivially_copy_pass_by_ref` enforces by-value; matches existing `Graph::node(id: NodeId)`). `average_in_fanout` skipped in favor of single `average_fanout` (for any directed graph these are structurally equal; documented in "Symmetry note" docstring section).
+   - Workspace state: **1735 tests / 16 doctests / 9 enforcement + 1 supplementary lints PASS / fmt clean**. Substantive lint exemption: 1 (LayoutNodeId).
+   - **C1 status**: phase-1 (Tier-A counters) + phase-2 (Tier-B fanout subset) BOTH CLOSED. Phase-2.5 (max_depth + SCC + diameter), phase-3 (revision/version integration), phase-4 (event sourcing), phases 5-7 still deferred per ADR-115.
+2. **ADR-115 phase-1 Tier-A counters landed** (first real C1 implementation step; bounded scope per ADR-115 phase-1 acceptance criteria; +7 net workspace tests; pure-additive):
    - **3 Tier-A O(1) counters formalized**:
      - `kernel/graph-foundation::Graph::node_count(&self) -> usize` — already existed in source; gained ADR-115-aligned docstring + `#[must_use]` + cross-links to companion metrics + explicit flag for deferred constraint_count/invalidation_count.
      - `kernel/graph-foundation::Graph::edge_count(&self) -> usize` — same shape; already existed; ADR-115-aligned docstring upgrade.
