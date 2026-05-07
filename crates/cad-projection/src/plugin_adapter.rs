@@ -6,11 +6,12 @@
 //! [`PluginContext`], drives `self.projection.tick(...)`, and puts the
 //! resources back. Demonstrates the v1 resource registry pattern end-to-end.
 //!
-//! # Why this looks duplicated across the four canaries
+//! # Why this looks duplicated across the five canaries
 //!
 //! The take-resources / do-work / put-resources-back shape repeats verbatim
 //! across [`cad-projection::CadProjectionPlugin`](self::CadProjectionPlugin)
-//! / `gfx::GfxPlugin` / `physics::PhysicsPlugin` / `audio::AudioPlugin`.
+//! / `gfx::GfxPlugin` / `physics::PhysicsPlugin` / `audio::AudioPlugin`
+//! / `editor-ui::EditorUiPlugin`.
 //! That repetition is **intentional** per PLAN §10.4 dogfood rule: each
 //! canary is a stand-alone teaching example demonstrating the kernel
 //! substrate against a different resource family. Adding a kernel-level
@@ -55,7 +56,7 @@ use rge_kernel_plugin_host::{CanaryPlugin, Plugin, PluginContext, PluginError, P
 use crate::CadProjection;
 
 /// Stable [`PluginId`] reported by every [`CadProjectionPlugin`] instance.
-pub const CAD_PROJECTION_PLUGIN_ID: &str = "cad-projection.brep-handles-plugin";
+pub const CAD_PROJECTION_PLUGIN_ID: &str = "rge-cad-projection.brep-handles-plugin";
 
 /// Tier-2 plugin adapter wrapping a [`CadProjection`].
 ///
@@ -71,8 +72,9 @@ pub struct CadProjectionPlugin {
     /// Number of successful `tick()` calls. Incremented only when the
     /// projection's inner work succeeds (errors don't increment). Telemetry
     /// accessor for canary parity with gfx::GfxPlugin::frames_recorded /
-    /// physics::PhysicsPlugin::steps_run / audio::AudioPlugin::frames_advanced
-    /// (closes audit-6 round-6 H5 finding: canary accessor symmetry).
+    /// physics::PhysicsPlugin::steps_run / audio::AudioPlugin::frames_advanced /
+    /// editor_ui::EditorUiPlugin::observations_completed (closes audit-6
+    /// round-6 H5 finding: canary accessor symmetry).
     ticks_run: u64,
 }
 
@@ -118,7 +120,8 @@ impl CadProjectionPlugin {
     ///
     /// Telemetry accessor for canary parity with the rest of the §10.4
     /// dogfood-rule canaries (gfx::GfxPlugin::frames_recorded /
-    /// physics::PhysicsPlugin::steps_run / audio::AudioPlugin::frames_advanced).
+    /// physics::PhysicsPlugin::steps_run / audio::AudioPlugin::frames_advanced /
+    /// editor_ui::EditorUiPlugin::observations_completed).
     /// Incremented only on successful ticks; ContractViolation /
     /// RuntimeFault paths do NOT increment. Useful for tests asserting
     /// "tick was called N times".
@@ -220,7 +223,7 @@ mod tests {
         let plugin = CadProjectionPlugin::new();
         assert_eq!(
             plugin.id(),
-            PluginId::new("cad-projection.brep-handles-plugin")
+            PluginId::new("rge-cad-projection.brep-handles-plugin")
         );
         assert_eq!(plugin.id().as_str(), CAD_PROJECTION_PLUGIN_ID);
     }
@@ -249,14 +252,15 @@ mod tests {
 
     /// Audit-6 round-6 H5 closure — canary accessor symmetry.
     ///
-    /// The 4 §10.4 dogfood-rule canaries (cad-projection / gfx /
-    /// physics / audio) now each expose a telemetry accessor for
-    /// "successful tick count":
+    /// The 5 §10.4 dogfood-rule canaries (cad-projection / gfx /
+    /// physics / audio / editor-ui) now each expose a telemetry
+    /// accessor for "successful tick count":
     ///
     /// * cad-projection: `ticks_run()` — this method
     /// * gfx: `frames_recorded()`
     /// * physics: `steps_run()`
     /// * audio: `frames_advanced()`
+    /// * editor-ui: `observations_completed()`
     ///
     /// Pre-H5 the cad-projection canary lacked one (audit asymmetry
     /// finding). The accessor returns 0 on a fresh plugin and is

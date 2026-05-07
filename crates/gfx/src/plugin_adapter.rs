@@ -19,11 +19,11 @@
 //! family (GPU resources vs ECS world / CAD graph / tolerance scalar) without
 //! requiring any change to the kernel substrate.
 //!
-//! The take/insert pattern this module repeats verbatim across all 4 canaries
-//! (cad-projection / gfx / physics / audio) is intentional per PLAN §10.4
-//! dogfood rule — see [`rge_cad_projection::plugin_adapter`]'s `# Why this
-//! looks duplicated across the four canaries` section for the canonical
-//! rationale.
+//! The take/insert pattern this module repeats verbatim across all 5 canaries
+//! (cad-projection / gfx / physics / audio / editor-ui) is intentional per
+//! PLAN §10.4 dogfood rule — see [`rge_cad_projection::plugin_adapter`]'s
+//! `# Why this looks duplicated across the five canaries` section for the
+//! canonical rationale.
 //!
 //! # Resource contract
 //!
@@ -386,9 +386,9 @@ mod tests {
     }
 
     /// Audit-2 closure (deep audit 2026-05-09 round 2): `tick_inner`'s
-    /// doc-comment (`plugin_adapter.rs:222`) promises "any pipeline-build
-    /// failure surfaces as [`PluginError::RuntimeFault`]". Today, the only
-    /// fallible call site in `tick_inner` is
+    /// doc-comment (see the `tick_inner` function in this file) promises
+    /// "any pipeline-build failure surfaces as [`PluginError::RuntimeFault`]".
+    /// Today, the only fallible call site in `tick_inner` is
     /// [`crate::pipeline::TrianglePipeline::new`], which is
     /// `#[allow(clippy::unnecessary_wraps)]` because the embedded WGSL never
     /// fails to compile. The fallible API surface is preserved for future

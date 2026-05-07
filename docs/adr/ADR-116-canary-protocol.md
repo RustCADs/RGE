@@ -5,7 +5,7 @@
 | Date | 2026-05-10 |
 | Deciders | (RGE architecture review; informed by 2026-05-10 ChatGPT cross-review #4 archived in `change.md`) |
 | PLAN references | §10.4 (dogfood rule — Tier-2 plugins use the same `Plugin` trait as Tier-3), §1.13 (failure containment — plugin-fatal isolation) |
-| ADR references | ADR-097 (cad-projection split — first canary user), ADR-114 (PluginContext owned-handoff — substrate this trait extends), ADR-115 (graph-metrics substrate design — peer ADR; same cross-review chain provenance) |
+| ADR references | ADR-097 (cad-projection split — first canary user), ADR-114 (PluginContext owned-handoff — substrate this trait extends), ADR-115 (graph-metrics substrate design — peer ADR; same cross-review chain provenance; with 2026-05-10 amendment) |
 | Implementation phase | Tier-1 kernel substrate (`kernel/plugin-host/src/canary.rs`); retroactive impls on the four §10.4 canaries (`crates/cad-projection`, `crates/gfx`, `crates/physics`, `crates/audio`) |
 
 ## Context

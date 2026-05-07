@@ -23,11 +23,11 @@
 //! cpal-style backend assumption — without requiring any change to the kernel
 //! substrate.
 //!
-//! The take/insert pattern this module repeats verbatim across all 4 canaries
-//! (cad-projection / gfx / physics / audio) is intentional per PLAN §10.4
-//! dogfood rule — see [`rge_cad_projection::plugin_adapter`]'s `# Why this
-//! looks duplicated across the four canaries` section for the canonical
-//! rationale.
+//! The take/insert pattern this module repeats verbatim across all 5 canaries
+//! (cad-projection / gfx / physics / audio / editor-ui) is intentional per
+//! PLAN §10.4 dogfood rule — see [`rge_cad_projection::plugin_adapter`]'s
+//! `# Why this looks duplicated across the five canaries` section for the
+//! canonical rationale.
 //!
 //! # Resource contract
 //!
@@ -55,10 +55,11 @@
 //! surfaces as [`PluginError::RuntimeFault`] — the plugin code (or the staged
 //! frame data) misbehaved; this is distinct from a missing-resource contract
 //! violation. Resources are still put back along the runtime-fault path.
-//! Unlike physics's no-`RuntimeFault` subcase, audio's `audio_schedule_step`
-//! is fallible at the call boundary, so this canary exercises the
-//! `RuntimeFault` mapping, mirroring the gfx canary's
-//! pipeline-build-failure path.
+//! Unlike the no-`RuntimeFault` subcase (physics was the first member;
+//! editor-ui is the second — both have infallible inner work at the
+//! plugin-adapter boundary), audio's `audio_schedule_step` is fallible at
+//! the call boundary, so this canary exercises the `RuntimeFault` mapping,
+//! mirroring the gfx canary's pipeline-build-failure path.
 //!
 //! # Send + 'static bound
 //!

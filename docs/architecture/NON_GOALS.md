@@ -65,7 +65,7 @@ The v1 substrate (lineage + persistent IDs + deterministic replay) is the precon
 
 ### 2.5 NOT a procedural-content-generation platform
 
-The cross-review identifies Houdini Geometry Nodes as a competitor frame; RGE's reactive substrate could grow into procedural-PCG but v1 is CAD authoring, not procedural-PCG. Not in scope:
+The cross-review identifies Houdini Geometry Nodes as a competitor frame; RGE's reactive substrate could grow into procedural-PCG but v1 is CAD authoring, not procedural-PCG. *("Reactive substrate" here is shorthand for the layered Layer-1-through-Layer-4 invalidation hierarchy in `REACTIVE_INVALIDATION.md` plus the *Canonical* / *Derived* / *Advisory* tier vocabulary formalized in ADR-115's 2026-05-10 amendment.)* Not in scope:
 
 - **Visual scripting graphs that generate scene content** — `script-graph` ships as a stub (per PLAN §10.1 + IMPLEMENTATION.md phase order); a full visual-scripting authoring environment is not v1.
 - **Geometry-node-style procedural authoring** — the ADR-115 cross-review explicitly notes this future; v1 ships the reactive substrate, not the procedural-graph editor.

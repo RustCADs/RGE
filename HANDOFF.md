@@ -17,7 +17,7 @@
 | Implementation footprint | **43 IMPLEMENTED / 3 PARTIAL / 48 EMPTY-STUB** of 94 workspace members (~46%) |
 | Tier 1 kernel | **10 of 15 implemented**: types / diagnostics / events / app / schedule / ecs / audit-ledger / asset / graph-foundation / **plugin-host**. **5 stubs**: shared, asset-view, asset-streaming, io-scheduler, job-system |
 | Phase 7 operator catalog | **Cuboid + Transform + Extrude + Revolve + Boolean** (5 operators) + topology-lineage prototype (D-7.4) |
-| Failure-class exemptions | **23 of original 81 cleared** (58 remain — rollout debt; cleared as each crate gets first real impl) |
+| Failure-class exemptions | **45 of original 81 cleared** (36 remain — rollout debt; cleared as each crate gets first real impl) |
 | Substantive non-rollout-debt exemption | **1**: `crates/editor-ui/src/layout/node.rs` graph-foundation NodeId rename TODO (file-doc'd as conceptually distinct from substrate NodeId; rename to `LayoutNodeId` later) |
 
 ## What just shipped (this session — completed work)
@@ -676,7 +676,7 @@ Pick one. All four are bounded single-agent dispatches.
 
 - **5 empty kernel stubs** (shared, asset-view, asset-streaming, io-scheduler, job-system) — partial subset addressed by future Phase 5+ work; plugin-host shipped 2026-05-07 (Option C)
 - **`physics` has no kernel/diagnostics integration** (uses inline `physics_input_ledger::PhysicsInputLedger` per-tick domain ledger separate from `kernel/audit-ledger`'s generic event ledger; see physics_input_ledger.rs module-doc for the divergence rationale) — small refactor, not pressing
-- **10 of 27 §18 companion docs missing** (was 13; +3 landed 2026-05-09: KERNEL_AUDIT_LEDGER.md / KERNEL_APP_FRAME_LOOP.md / CAD_CORE_KERNEL_ADAPTERS.md). Notable absences: RECOVERY_MODEL.md / EXECUTION_DOMAINS.md / KERNEL_SCHEDULE.md / KERNEL_TYPES.md / RUNTIME_ORCHESTRATOR.md / IO_FORMATS.md / etc. — governance debt; tackled in chunks. ADRs now: ADR-112 + ADR-098 + ADR-104 + ADR-114 (with two amendments) all landed; **ADR-097/101 still unwritten**.
+- **§18 companion docs**: **27 of 27 landed** (cumulative LoC ~7,700+; closes the prior absence list — RECOVERY_MODEL.md / EXECUTION_DOMAINS.md / KERNEL_SCHEDULE.md / KERNEL_TYPES.md / RUNTIME_ORCHESTRATOR.md / IO_FORMATS.md / KERNEL_AUDIT_LEDGER.md / KERNEL_APP_FRAME_LOOP.md / CAD_CORE_KERNEL_ADAPTERS.md). ADR backlog: **8 accepted** (097/098/104/112/113-deferred/114/115/116; 097 + 113-deferred ADR files pending — decisions applied to substrate but ADR-format files not yet authored) + **3 deferred per §18 doctrine** (099/101/102 — see EXECUTION_DOMAINS.md / GRAPH_FOUNDATION.md / RECOVERY_MODEL.md respectively).
 - **`cargo bench` not wired in CI** — formal Phase 3 perf gates unrun (Option E addresses)
 - **WASM cold-start baseline (904µs) measured on wasmtime 23**, not re-validated post bump to 44 — small re-run task
 - **`io-3mf` crate entirely missing** from workspace despite PLAN §1.6.5 listing it as required

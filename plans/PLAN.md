@@ -1318,7 +1318,17 @@ ADR-001..ADR-096 from v0.5/v0.6 preserved.
 - **ADR-110** — `editor-state` as narrow coordination crate (5 categories: selection/hover/active-tool/modal-state/drag-drop). Coordination-not-authority rule. Five-category bound fixed at v0.8.
 - **ADR-111** — Architecture freeze policy post-v0.8. Future first-class subsystems require: (1) demonstrated implementation pressure, (2) 3+ reproducible failure scenarios, (3) cost/benefit analysis vs alternatives, (4) justification why a smaller primitive (Resource, module, trait, CI rule) wouldn't suffice. Architecture serves implementation; implementation does not serve architecture.
 
-ADRs land as files in `RGE/ADR/`.
+**Post-v0.8 ADRs accepted (substrate-landed; ADR file status noted):**
+
+- **ADR-112** — cad-core Boolean CSG library scoping (csgrs over parry / truck / roll-our-own). File: `docs/adr/ADR-112-cad-boolean-csg-library.md`.
+- **ADR-113-deferred** — truck cad-native backend (deferred per freeze policy until cad-native consumer pressure surfaces). [File pending.]
+- **ADR-114** — PluginContext owned-resources-handoff (`BTreeMap<TypeId, Box<dyn Any + Send>>` registry; catch_unwind discipline; 5-variant PluginError + PluginPhase enum). File: `docs/adr/ADR-114-pluginctx-owned-handoff.md` (with 2026-05-08 three-substrate + 2026-05-08 four-substrate amendments).
+- **ADR-115** — Graph-metrics substrate design (kernel-tier; tier-stratified A/B/C; event-sourced; snapshot-versioned; 6-module split). File: `docs/adr/ADR-115-graph-metrics-substrate-design.md` (with 2026-05-10 amendment — runtime-vs-analytical metric boundary doctrine, reclassifying max_depth / SCC count / dependency diameter / topology lineage breadth from Tier-B → Tier-C).
+- **ADR-116** — Canary protocol formalization (`CanaryPlugin: Plugin` super-trait with single `successful_ticks() -> u64` method; backwards-compat preserved; dyn-safety mandate). File: `docs/adr/ADR-116-canary-protocol.md`.
+
+ADR file status summary: **8 ADRs accepted** (097/098/104/112/113-deferred/114/115/116; 097 + 113-deferred ADR files pending — substrate decisions applied but ADR-format files not yet authored). **3 deferred per §18 doctrine** (099/101/102 — see EXECUTION_DOMAINS.md / GRAPH_FOUNDATION.md / RECOVERY_MODEL.md respectively).
+
+ADRs land as files in `RGE/ADR/` (workspace path: `docs/adr/`).
 
 ---
 

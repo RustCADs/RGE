@@ -13,7 +13,7 @@
 
 The cross-review #2 2026-05-10 framing: "this separation matters enormously later." Without an explicit contract on which subsystem owns geometry vs which consumes it, RGE risks "renderer drift" — the renderer becoming the de-facto source of truth for scene state because it's the most-touched code path during interactive editing, while the CAD operator pipeline's truth diverges silently from what the user sees on screen.
 
-The contract this doc fixes: **the CAD-graph + topology layers are authoritative; the projection layer extracts a derived view; the renderer consumes that view downstream-only.** No path lets the renderer mutate geometry. No path lets the projection layer become a CAD-graph alternate. No path lets a "convenient" cache become an authoritative shadow.
+The contract this doc fixes: **the CAD-graph + topology layers are authoritative; the projection layer extracts a derived view; the renderer consumes that view downstream-only.** No path lets the renderer mutate geometry. No path lets the projection layer become a CAD-graph alternate. No path lets a "convenient" cache become an authoritative shadow. *(The "authoritative" / "derived" split here matches ADR-115 amendment's *Canonical* / *Derived* glossary terms verbatim — this doc's contract makes the ownership consequences of the amendment's tier vocabulary explicit at the cross-substrate boundary.)*
 
 The contract is binding ahead of full implementation. Today's substrate realises Layer 3 (cad-projection) cleanly; Layer 4 (gfx render-snapshot) is single-threaded headless rendering with the formal participant deferred to Phase 6 per `docs/§18/GFX_RENDER_TIER.md` §1. The doctrine fixes the shape so when Phase 6 lands, it slots into a predetermined position rather than reinventing the boundary.
 
@@ -80,7 +80,7 @@ These subsystems own state that, if lost, cannot be recovered from anything else
 | `gfx` GPU buffers | `wgpu::Device` + pipeline-internal buffers / textures / pipelines; non-Send-serializable wgpu resource state | `recoverable` (declared on gfx lib.rs) |
 | `editor-ui` viewport overlays | gizmo bindings, picking surfaces, selection highlights — pending; future `projection_editor` module home | `recoverable` (declared on editor-state lib.rs for the coordination state side) |
 
-Derived subsystems are reactive — they re-derive from authoritative state on the next tick. Loss of a derived state is recoverable: the subsystem rebuilds itself from upstream. This classification is the same one `docs/architecture/REACTIVE_INVALIDATION.md` §5.3 enforces; this doc's contract makes the consequences for ownership explicit.
+Derived subsystems are reactive — they re-derive from authoritative state on the next tick. Loss of a derived state is recoverable: the subsystem rebuilds itself from upstream. This classification is the same one `docs/architecture/REACTIVE_INVALIDATION.md` §5.3 enforces; this doc's contract makes the consequences for ownership explicit. *(In ADR-115 amendment vocabulary: this is the *Derived* tier — recoverable from *Canonical* state alone. The amendment's *Advisory* tier — telemetry / metric outputs — is a special case of *Derived* whose reads NEVER feed back into the deterministic state machine.)*
 
 ### 3.3 The renderer NEVER owns authoritative geometry
 

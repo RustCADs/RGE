@@ -16,8 +16,8 @@
 //! The take/insert pattern this module repeats verbatim across all five canaries
 //! (cad-projection / gfx / physics / audio / editor-ui) is intentional per
 //! PLAN §10.4 dogfood rule — see [`rge_cad_projection::plugin_adapter`]'s
-//! `# Why this looks duplicated across the four canaries` section for the
-//! canonical rationale (which now applies to five).
+//! `# Why this looks duplicated across the five canaries` section for the
+//! canonical rationale.
 //!
 //! # Tooling-observational design principle (cross-review #8 binding)
 //!

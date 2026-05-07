@@ -25,7 +25,7 @@ Reactive recomputation in RGE is organised into four layers, ordered by mutation
 
 ### Layer 1 — Graph mutations (operator changes / constraint changes / parameter edits)
 
-The authoritative origin of every reactive ripple. The `cad-core::OperatorGraph` is mutated inside a `CadGraph::begin_operation` / `commit` bracket per PLAN §1.5.4 and `docs/§18/CAD_CORE_MODEL.md`; mutation outside an open transaction is a hard-error (`CheckpointError::MutationOutsideOperation`). Each commit advances `CheckpointHistory::head` to a new `CheckpointId` and captures a new `GraphSnapshot` per `kernel/graph-foundation::Graph<N, E>` substrate.
+The authoritative origin of every reactive ripple *(matches ADR-115 amendment's *Canonical* tier — the source-of-truth state PIE snapshots serialize and replay reconstructs byte-identically)*. The `cad-core::OperatorGraph` is mutated inside a `CadGraph::begin_operation` / `commit` bracket per PLAN §1.5.4 and `docs/§18/CAD_CORE_MODEL.md`; mutation outside an open transaction is a hard-error (`CheckpointError::MutationOutsideOperation`). Each commit advances `CheckpointHistory::head` to a new `CheckpointId` and captures a new `GraphSnapshot` per `kernel/graph-foundation::Graph<N, E>` substrate.
 
 The recompute trigger is `OperatorGraph::effective_hash_and_label`: a recursive BLAKE3 over the operator's local `structural_hash` + per-port `(port_index, upstream_hash)` + the upstream-labeled-bitmap. Any change at any upstream node produces a different effective hash at every dependent node — the hash recursion IS the change-propagation mechanism. The recursion is read-only (non-mutating) and cycle-guarded by an ancestor-set `HashSet<NodeId>` per `effective_hash_and_label_inner`.
 
@@ -33,7 +33,7 @@ The recompute trigger is `OperatorGraph::effective_hash_and_label`: a recursive 
 
 Hash-based persistent identity is unstable under boolean reorder, tolerance healing, edge merge/split, kernel switching. ADR-098 + `docs/§18/CAD_TOPOLOGY_LINEAGE.md` introduce the `TopologyEvolution` enum (`Preserved` / `Split` / `Merged` / `Deleted` / `Reinterpreted`) so the operator graph mutation produces an explicit lineage edge alongside its hash advance. The lineage advance is what makes constraints / replication / undo-visualization survive Layer-1 hash changes that are NOT identity-preserving.
 
-Layer 2 is downstream of Layer 1 in the strict sense that the lineage edge is emitted only inside the `CadGraph::commit` that closed Layer 1's transaction. The ordering is enforced by the substrate: there is no Layer-2 path that bypasses Layer-1's transaction bracket.
+Layer 2 is downstream of Layer 1 in the strict sense that the lineage edge is emitted only inside the `CadGraph::commit` that closed Layer 1's transaction *("downstream" here matches ADR-115 amendment's *Derived* tier — state computed from canonical state via deterministic functions; recoverable on snapshot restore)*. The ordering is enforced by the substrate: there is no Layer-2 path that bypasses Layer-1's transaction bracket.
 
 ### Layer 3 — Tessellation rebuilds (geometry regeneration / mesh extraction)
 
@@ -43,7 +43,7 @@ Above the tessellation cache lives the projection layer: `crates/cad-projection/
 
 ### Layer 4 — GPU uploads (viewport redraws / render synchronization)
 
-The `crates/gfx` substrate is single-threaded headless rendering today per `docs/§18/GFX_RENDER_TIER.md` §1; the `gfx.render-snapshot` `SnapshotParticipate` participant is anticipated alongside the Phase 6 frame-graph + render-snapshot separation per PLAN §1.5.2. The doctrine fixes the shape ahead of implementation: gfx render state is downstream-only, reproducible from the Layer-3 `ProjectedMesh`, never authoritative for geometry.
+The `crates/gfx` substrate is single-threaded headless rendering today per `docs/§18/GFX_RENDER_TIER.md` §1; the `gfx.render-snapshot` `SnapshotParticipate` participant is anticipated alongside the Phase 6 frame-graph + render-snapshot separation per PLAN §1.5.2. The doctrine fixes the shape ahead of implementation: gfx render state is downstream-only, reproducible from the Layer-3 `ProjectedMesh`, never authoritative for geometry *(in ADR-115 amendment vocabulary: gfx render state is *Derived* — recomputable from *Canonical* upstream — never *Canonical* itself)*.
 
 When Layer 4 lands, its invalidation trigger is the Layer-3 `ProjectionCache` reporting which `Arc<ProjectedMesh>` allocations changed since the prior render-tick — the GPU upload path consumes the projection layer's output, applies sim/render-thread snapshot semantics, and produces a frame. The doctrine forbids any path where Layer-4 mutates Layer-1, Layer-2, or Layer-3 state (§4 invariant `no-inversion`).
 

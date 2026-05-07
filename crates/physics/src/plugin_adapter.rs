@@ -20,11 +20,11 @@
 //! substrates exercising the same `PluginContext` design with no kernel-side
 //! changes between them is the proof point ADR-114 calls for.
 //!
-//! The take/insert pattern this module repeats verbatim across all 4 canaries
-//! (cad-projection / gfx / physics / audio) is intentional per PLAN §10.4
-//! dogfood rule — see [`rge_cad_projection::plugin_adapter`]'s `# Why this
-//! looks duplicated across the four canaries` section for the canonical
-//! rationale.
+//! The take/insert pattern this module repeats verbatim across all 5 canaries
+//! (cad-projection / gfx / physics / audio / editor-ui) is intentional per
+//! PLAN §10.4 dogfood rule — see [`rge_cad_projection::plugin_adapter`]'s
+//! `# Why this looks duplicated across the five canaries` section for the
+//! canonical rationale.
 //!
 //! # Resource contract
 //!
