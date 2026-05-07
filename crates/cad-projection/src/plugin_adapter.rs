@@ -71,7 +71,7 @@ pub struct CadProjectionPlugin {
     /// Number of successful `tick()` calls. Incremented only when the
     /// projection's inner work succeeds (errors don't increment). Telemetry
     /// accessor for canary parity with gfx::GfxPlugin::frames_recorded /
-    /// physics::PhysicsPlugin::steps_run / audio::AudioPlugin::steps_run
+    /// physics::PhysicsPlugin::steps_run / audio::AudioPlugin::frames_advanced
     /// (closes audit-6 round-6 H5 finding: canary accessor symmetry).
     ticks_run: u64,
 }
@@ -118,7 +118,7 @@ impl CadProjectionPlugin {
     ///
     /// Telemetry accessor for canary parity with the rest of the §10.4
     /// dogfood-rule canaries (gfx::GfxPlugin::frames_recorded /
-    /// physics::PhysicsPlugin::steps_run / audio::AudioPlugin::steps_run).
+    /// physics::PhysicsPlugin::steps_run / audio::AudioPlugin::frames_advanced).
     /// Incremented only on successful ticks; ContractViolation /
     /// RuntimeFault paths do NOT increment. Useful for tests asserting
     /// "tick was called N times".
@@ -256,7 +256,7 @@ mod tests {
     /// * cad-projection: `ticks_run()` — this method
     /// * gfx: `frames_recorded()`
     /// * physics: `steps_run()`
-    /// * audio: `steps_run()`
+    /// * audio: `frames_advanced()`
     ///
     /// Pre-H5 the cad-projection canary lacked one (audit asymmetry
     /// finding). The accessor returns 0 on a fresh plugin and is

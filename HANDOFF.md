@@ -34,12 +34,12 @@
    - Workspace state: **1743 tests / 16 doctests / 9 enforcement + 1 supplementary lints PASS / fmt clean**. Substantive lint exemption: 1 (LayoutNodeId).
    - Cross-review's framing: "you are transitioning from individual subsystem implementations to codified engine governance patterns. That is how serious engines evolve." ADR-116 + `CanaryPlugin` trait realize this transition at the trait level. Future canaries (editor-ui M2 deferral / Tier-3 sandboxed WASM plugins / future post-v1.0 protocols) are now bound by an explicit contract instead of inherited-by-convention.
 2. **H5 canary accessor symmetry closed** (closes ultra-deep round-6 H5 finding: 3 of 4 plugin canaries had telemetry accessors; cad-projection lacked one; +2 net tests):
-   - **NEW** `CadProjectionPlugin::ticks_run(&self) -> u64` accessor with `#[must_use]`. New `ticks_run: u64` field on the struct (initialized to 0 in `new()` + `from_projection()`). Increment moved into a match arm so `Ok(_)` increments the counter while `Err(_)` paths (ContractViolation + RuntimeFault) leave it at 0 — canonical "increment-only-on-success" semantics that mirrors gfx::frames_recorded / physics::steps_run / audio::steps_run.
+   - **NEW** `CadProjectionPlugin::ticks_run(&self) -> u64` accessor with `#[must_use]`. New `ticks_run: u64` field on the struct (initialized to 0 in `new()` + `from_projection()`). Increment moved into a match arm so `Ok(_)` increments the counter while `Err(_)` paths (ContractViolation + RuntimeFault) leave it at 0 — canonical "increment-only-on-success" semantics that mirrors gfx::frames_recorded / physics::steps_run / audio::frames_advanced.
    - **All 4 plugin canaries now expose telemetry accessors with parallel naming**:
      - cad-projection: `ticks_run()`
      - gfx: `frames_recorded()`
      - physics: `steps_run()`
-     - audio: `steps_run()`
+     - audio: `frames_advanced()`
    - **2 new tests in `crates/cad-projection/src/plugin_adapter.rs` foot**: `cad_projection_plugin_ticks_run_starts_at_zero` (fresh plugin and `from_projection` plugin both at 0); `cad_projection_plugin_ticks_run_unchanged_on_contract_violation` (asserts ContractViolation path leaves counter at 0). cad-projection lib tests +2.
    - Workspace state: **1737 tests / 16 doctests / 9 enforcement + 1 supplementary lints PASS / fmt clean**. Substantive lint exemption: 1 (LayoutNodeId).
    - **Public API surface remains symmetric across all 4 canaries**: each has `pub const X_PLUGIN_ID` + `pub fn id()` + `pub fn new()` + telemetry accessor. Closes the audit-5 round-6 finding "Plugin canary accessor inconsistency: 3 of 4 expose telemetry accessors; cad-projection doesn't". Future canaries (e.g. editor-ui::Plugin per audit-7 deferral) should follow the same pattern.
