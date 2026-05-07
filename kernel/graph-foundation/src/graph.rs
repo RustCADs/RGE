@@ -404,6 +404,8 @@ impl<N: Clone, E: Clone> Graph<N, E> {
 
     /// Returns the number of nodes currently in the graph.
     ///
+    /// **Tier-A** (canonical structural counter; ADR-115 phase-2.5 amendment).
+    ///
     /// O(1). Tier-A counter per ADR-115 phase-1 (graph-metrics substrate
     /// design, sub-decisions 1+2). Every mutation that adds or removes a
     /// node is transactional through [`Graph::insert_node`] /
@@ -429,6 +431,8 @@ impl<N: Clone, E: Clone> Graph<N, E> {
     }
 
     /// Returns the number of edges currently in the graph.
+    ///
+    /// **Tier-A** (canonical structural counter; ADR-115 phase-2.5 amendment).
     ///
     /// O(1). Tier-A counter per ADR-115 phase-1 (graph-metrics substrate
     /// design, sub-decisions 1+2). Every mutation that adds or removes
@@ -489,6 +493,8 @@ impl<N: Clone, E: Clone> Graph<N, E> {
     /// Returns the in-degree (number of incoming edges) of `node`. Returns
     /// `0` when the node is not present in the graph.
     ///
+    /// **Tier-B** (mutation-local incremental runtime metric; ADR-115 phase-2.5 amendment).
+    ///
     /// O(1). Tier-B per-node fanout accessor per ADR-115 phase-2
     /// (graph-metrics substrate design, sub-decision 2). The value is
     /// derived from the `incoming` adjacency cache via `BTreeSet::len`,
@@ -520,6 +526,8 @@ impl<N: Clone, E: Clone> Graph<N, E> {
     /// Returns the out-degree (number of outgoing edges) of `node`.
     /// Returns `0` when the node is not present in the graph.
     ///
+    /// **Tier-B** (mutation-local incremental runtime metric; ADR-115 phase-2.5 amendment).
+    ///
     /// O(1). Tier-B per-node fanout accessor per ADR-115 phase-2
     /// (graph-metrics substrate design, sub-decision 2). The value is
     /// derived from the `outgoing` adjacency cache via `BTreeSet::len`,
@@ -543,6 +551,8 @@ impl<N: Clone, E: Clone> Graph<N, E> {
 
     /// Returns the maximum out-degree across all nodes in the graph.
     /// Returns `0` when the graph has no edges.
+    ///
+    /// **Tier-B** (mutation-local incremental runtime metric; ADR-115 phase-2.5 amendment).
     ///
     /// Tier-B incremental structural metric per ADR-115 phase-2
     /// (graph-metrics substrate design, sub-decision 2). Cached in
@@ -577,6 +587,8 @@ impl<N: Clone, E: Clone> Graph<N, E> {
     /// Returns the maximum in-degree across all nodes in the graph.
     /// Returns `0` when the graph has no edges.
     ///
+    /// **Tier-B** (mutation-local incremental runtime metric; ADR-115 phase-2.5 amendment).
+    ///
     /// Tier-B incremental structural metric per ADR-115 phase-2
     /// (graph-metrics substrate design, sub-decision 2). Symmetric
     /// companion to [`Graph::max_out_fanout`] for incoming edges; the
@@ -596,6 +608,8 @@ impl<N: Clone, E: Clone> Graph<N, E> {
 
     /// Returns the average fanout (edges per node) across the graph.
     /// Returns `0.0` for an empty graph (no division by zero).
+    ///
+    /// **Tier-B** (mutation-local incremental runtime metric; ADR-115 phase-2.5 amendment).
     ///
     /// O(1). Tier-B incremental structural metric per ADR-115 phase-2
     /// (graph-metrics substrate design, sub-decision 2). Derived from

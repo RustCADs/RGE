@@ -222,6 +222,8 @@ impl OperatorGraph {
 
     /// Returns the number of operators in the graph.
     ///
+    /// **Tier-A** (canonical structural counter; ADR-115 phase-2.5 amendment).
+    ///
     /// Tier-A counter per ADR-115 phase-1 (graph-metrics substrate
     /// design, sub-decision 2). O(1). In an [`OperatorGraph`] every
     /// node is an operator-bearing variant ([`OperatorNode`]), so the

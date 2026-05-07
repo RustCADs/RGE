@@ -352,3 +352,113 @@ Violation of any of the five constraints is a substrate-level architectural regr
 - **`kernel/audit-ledger/src/event.rs`** — event-sourcing precedent (`Event`, `EventId`, BLAKE3-derived deterministic identifiers). Phase-4 reuses this infrastructure for `GraphEvent`.
 - **`kernel/graph-foundation/src/invalidation.rs`** — `Invalidation` + `InvalidationListener` precedent; `MetricSubscriber` mirrors this trait shape.
 - **change.md 2026-05-10 02:00 entry** — the ChatGPT cross-review #2 archived in full, mirroring the audit-1 cross-review precedent cited inline in ADR-114. The cross-review is the source-of-truth for the reframing; this ADR captures the binding decisions consistent with the workspace's existing architecture.
+
+## Amendment 2026-05-10 — Runtime-vs-analytical metric boundary doctrine
+
+*Phase-2.5 reclassification: `max_depth` / `scc_count` / `dependency_diameter` (and ADR-098's deferred `topology_lineage_breadth`), originally cited as Tier-B incremental in the original Decision §"sub-decision 2", are formalized as Tier-C analytical metrics. The reclassification follows the 2026-05-10 ChatGPT cross-review #6 directive (archived as the 6th 2026-05-10 cross-review in `change.md` 07:30 entry), which reframed phase-2.5 from "implementation sprint" to "doctrine-hardening session" and named the architectural pattern "Canonical Runtime Truth vs Analytical Interpretation Layers".*
+
+### Context
+
+The original ADR-115 Decision §"sub-decision 2" listed `max_depth`, `scc_count`, `dependency_diameter`, and `topology_lineage_breadth` as Tier-B examples. Phase-2 implementation (2026-05-10 04:20) shipped only the **fanout subset** (`node_in_degree` / `node_out_degree` / `max_in_fanout` / `max_out_fanout` / `average_fanout`) and deferred the remaining four with a brief Followup note: each is **not naturally incremental** — adding an edge can change the depth of many descendants, SCC count requires Tarjan/Kosaraju with no natural mutation-local update, and dependency diameter is O(V·(V+E)) full BFS-from-each-node. The phase-2 deferral was tactical; the question of *where these metrics belong in the tier taxonomy* was held open.
+
+ChatGPT cross-review #6 elevated the phase-2.5 work from "tactical Tier-B implementation" to a **boundary-definition problem, not a metrics problem**. The architectural question is: "Which graph metrics are semantically incremental runtime telemetry versus analytically derived inspection products?" Without an explicit answer, future systems accumulate hidden complexity debt: scheduler-coupled analytics, fragile cache invalidation, replay-stability erosion, editor-runtime entanglement.
+
+This amendment formalizes the deferral as **binding architectural doctrine**: the four metrics above are Tier-C analytical, not Tier-B incremental. The amendment also introduces explicit execution semantics, an invalidation model, snapshot semantics, and a terminology glossary that hardens the runtime-vs-analytical boundary across the broader workspace vocabulary.
+
+### Decision: 3-tier taxonomy refinement
+
+The three-tier partition from the original Decision §"sub-decision 2" is preserved; the example sets and per-tier characteristics are sharpened. The partition remains an architectural invariant — re-tiering a metric is a breaking change requiring an ADR amendment.
+
+**Tier-A — Canonical structural counters.**
+
+- Examples: `node_count` / `edge_count` / `operator_count`.
+- Characteristics: O(1) read; trivially derived from substrate state (e.g. `BTreeMap::len()`); no maintenance machinery; serializable as raw integers.
+- Maintenance: free (substrate-derived).
+
+**Tier-B — Mutation-local incremental runtime metrics.**
+
+- Examples: `node_in_degree` / `node_out_degree` / `max_in_fanout` / `max_out_fanout` / `average_fanout`.
+- Characteristics: O(1) read; cached value with mutation-local update; partial recomputation only around affected regions on remove (typical case O(1); worst case bounded by `node_count`). Scheduler-friendly; deterministic update path; naturally incremental.
+- Maintenance: transactional inside the `Graph<N, E>` mutation hot path; no allocation, no full-graph scan.
+
+**Tier-C — Analytical / on-demand derived metrics.**
+
+- Examples: `max_depth` / `scc_count` / `dependency_diameter` / global reachability / transitive closure / `topology_lineage_breadth` (cad-core domain-specific) / centrality measures.
+- Characteristics: traversal-heavy; potentially graph-global; unstable incremental economics; expensive invalidation semantics; **scheduler-hostile if maintained eagerly**.
+- Maintenance: **NONE**. Computed on-demand via explicit `analyze_<metric>()` method calls. Result NOT cached at the substrate level. Invalidated structurally on every graph mutation (no fine-grained tracking).
+
+### Decision: Tier-C execution semantics
+
+Four binding statements govern Tier-C metric execution:
+
+1. **Tier-C metrics are NOT scheduler-maintained.** The `kernel/app` orchestrator's tick loop will never call into a Tier-C analytical method. No background thread maintains them. No subscriber on a `GraphEvent` stream (when phase-4 lands) recomputes them.
+2. **Tier-C metrics may require whole-graph traversal.** The cost class is documented per-metric in its rustdoc and is allowed to be unbounded by mutation-local cost — the consumer accepts this tradeoff at the call site.
+3. **Tier-C metrics are tooling / editor / inspection-oriented.** The intended consumers are editor-ui overlays, debugging surfaces, AI-assisted CAD diagnostic flows, and CI-time analytical passes. Runtime-mode replay never invokes them.
+4. **Tier-C metrics are NOT part of deterministic runtime advancement state.** This is **load-bearing for replay determinism**: a runtime-mode replay (PLAN §1.6.8 Replay-Stable v1.0) must reach byte-identical canonical state from byte-identical input streams. Tier-C results are *derived from* canonical state at inspection time and cannot influence the state machine. PIE snapshots do NOT serialize Tier-C outputs (see Snapshot Semantics below).
+
+### Decision: Tier-C invalidation model
+
+> **Tier-C analytical metrics are invalidated structurally and recomputed on-demand rather than eagerly maintained.**
+
+Any graph mutation (node insert/remove, edge insert/remove, future constraint mutation) invalidates ALL Tier-C results uniformly. There is no fine-grained dependency tracking ("this mutation only invalidated metrics X and Y"); every `analyze_<metric>()` call walks the graph fresh from current canonical state.
+
+This is the **anti-pattern firewall** the cross-review #6 directive prescribes: do NOT optimize prematurely for "everything incremental" / "live metrics" / "always-hot graph analytics". That path produces invalidation hell, scheduler coupling, hidden recomputation cascades, fragile cache semantics, replay instability, and editor-runtime entanglement. The simpler "every read recomputes from canonical state" rule is honest about Tier-C's cost class and prevents the hidden-complexity-debt failure mode that real engines accumulate.
+
+Cross-references: PLAN §1.6.8 (Replay-Stable v1.0 — Tier-C metrics are explicitly outside the replay state machine); `docs/architecture/REACTIVE_INVALIDATION.md` (Layer 1 graph-mutation invalidations apply uniformly to all Tier-C results, not via the explicit invalidation substrate but via the implicit "any mutation invalidates everything" rule).
+
+### Decision: Tier-C snapshot semantics
+
+> **Snapshots serialize canonical state ONLY (Tier-A / Tier-B / structural). Tier-C outputs are NEVER serialized; recompute on-demand at inspection time.**
+
+The current PIE_SNAPSHOT envelope (`docs/§18/PIE_SNAPSHOT.md`) already excludes Tier-C by virtue of not currently mentioning analytical metrics; this amendment makes the exclusion **explicit doctrine**. Including a Tier-C output in a snapshot would create derived-state synchronization obligations: the runtime would need to detect "is this Tier-C result still valid for the current graph state?" — which is exactly the invalidation hell anti-pattern this amendment is built to prevent.
+
+Tier-A counters (`node_count` / `edge_count` / `operator_count`) and Tier-B caches (`max_out_fanout` / `max_in_fanout`) DO serialize, because they are mutation-local and trivially recoverable on snapshot restore (Tier-A from `BTreeMap::len()`; Tier-B from the cached `u32` fields restored alongside the adjacency caches). Tier-C results are NOT recoverable from a snapshot — they must be recomputed by the consumer that asks for them.
+
+The PIE_SNAPSHOT.md "What's not in the envelope" propagation is tracked as a **new followup** below; this amendment commits the doctrine without modifying the snapshot doc in this dispatch.
+
+### Reclassified metrics (was Tier-B, now Tier-C)
+
+| Metric | Was | Now | Rationale |
+|---|---|---|---|
+| `max_depth` | Tier-B | Tier-C | Adding an edge can change the depth of many descendants; not naturally incremental. Requires DFS with cycle handling on every read. |
+| `scc_count` | Tier-B | Tier-C | Requires Tarjan or Kosaraju; not naturally incremental at all. Single edge mutation can split or merge components arbitrarily. |
+| `dependency_diameter` | Tier-B | Tier-C | O(V·(V+E)) full BFS-from-each-node; expensive at any non-trivial graph size. |
+| `topology_lineage_breadth` | Tier-B | Tier-C (cad-core domain) | Domain-specific to cad-core's lineage substrate (ADR-098); lives there, not in `kernel/graph-foundation`. Whole-lineage walk on every read. |
+
+The phase-2 dispatch (2026-05-10 04:20) already deferred these four; the phase-2.5 amendment formalizes the deferral as **binding tier classification** rather than a tactical "we'll get to it later" Followup. Future implementations of any of the four MUST follow the Tier-C execution semantics above (on-demand `analyze_<metric>()` method; no eager maintenance; no caching at the `Graph<N, E>` level; no scheduler hooks).
+
+### Terminology glossary (Protocol Consolidation Phase doctrine)
+
+Per cross-review #5's "terminology precision" warning + cross-review #6's "these words are starting to carry architectural weight" framing, the following terms are defined precisely. The glossary is the workspace-canonical reference for these terms; future docs and ADRs should cite this section rather than re-defining.
+
+- **Runtime** — code paths that execute as part of the deterministic per-tick / per-frame advancement of state. Includes all Tier-A and Tier-B metric maintenance.
+- **Analytical** — code paths that compute derived results from canonical state, NOT part of runtime advancement. Includes all Tier-C metrics.
+- **Observational** — read-only inspection of canonical or derived state without mutation. All metric reads (Tier-A / Tier-B / Tier-C) are observational.
+- **Canonical** — the source-of-truth state that PIE snapshots serialize and replay reconstructs byte-identically. Excludes derived / analytical results.
+- **Derived** — state computed from canonical state via deterministic functions. Tier-B caches are derived but maintained mutation-locally; Tier-C results are derived and recomputed on-demand. Both are recoverable from canonical state alone.
+- **Deterministic** — the property that identical canonical state + identical input sequence produces byte-identical state advancement (PLAN §1.6.8 Replay-Stable v1.0).
+- **Advisory** — telemetry / metric / diagnostic outputs that inform consumers but do NOT influence subsequent runtime advancement. All metrics (Tier-A / Tier-B / Tier-C) are advisory by this definition; their reads never feed back into the deterministic state machine.
+
+### Implementation guidance for Tier-C (when consumers materialize)
+
+This amendment defers actual Tier-C implementation; no consumer currently exists. Per cross-review #6's binding "Avoid" list — caching frameworks / async analytics infra / graph-analysis scheduler / persistent analytical state / "smart" invalidation systems are **out of scope** until consumer pressure forces a concrete shape. ("Too early.")
+
+When the FIRST Tier-C consumer materializes (likely an editor-ui operator-picker overlay or a future cad-core analytical pass), the implementer MUST follow these rules:
+
+1. Add the analytical method to a NEW `kernel/graph-foundation/src/analytics/` sub-module (or, if a dedicated `kernel/graph-metrics` library crate has landed by then, the `analytics/` sub-module per ADR-115 sub-decision 5's module split).
+2. Method shape: `pub fn analyze_<metric>(&self) -> <Result>`. The name MUST start with `analyze_` to telegraph the cost class to readers at the call site (a `for n in graph.nodes()` loop calling `analyze_max_depth()` per iteration is the kind of latent disaster the naming convention is designed to make obvious).
+3. Docstring MUST cite ADR-115 phase-2.5 amendment + state the algorithmic complexity + state "Tier-C; on-demand; not cached; invalidated structurally on every graph mutation".
+4. NO eager maintenance. NO caching at the `Graph<N, E>` level. NO scheduler hooks. NO subscriber on a future `GraphEvent` stream that triggers recomputation.
+5. If a consumer needs caching across multiple reads (e.g. an editor panel rendering at 60Hz), the consumer caches at THEIR level + invalidates on a graph-revision-id change. The substrate stays clean.
+
+Cross-reference: `docs/architecture/REACTIVE_INVALIDATION.md` Layer 1 — graph-mutation invalidations apply uniformly to all Tier-C results regardless of which mutation occurred.
+
+### Followups updated post-amendment
+
+The original Followups list (above) is updated as follows:
+
+- **Tier-B incremental algorithms** — partial-recomputation strategies need detailed design at phase-2 dispatch. **RESOLVED** 2026-05-10 phase-2 + phase-2.5 amendment: the fanout subset shipped Tier-B inside `kernel/graph-foundation::Graph<N, E>` directly (5 public methods + 9 acceptance tests); `max_depth` / `scc_count` / `dependency_diameter` / `topology_lineage_breadth` reclassified Tier-C per this amendment.
+- **Tier-C analytical algorithms** (research-grade) — the depth / SCC / diameter implementations themselves remain deferred until a consumer materializes. Each is a known algorithm (DFS / Tarjan or Kosaraju / BFS-from-each-node) but algorithmic choice + cost-doc + module placement need consumer-pressure to ground.
+- **NEW: Canonical Runtime Truth vs Analytical Interpretation Layers terminology rollout** — cross-review #6's framing should propagate to two existing docs that currently lack the explicit boundary statement: (a) `docs/architecture/REACTIVE_INVALIDATION.md` Layer-1 vs Layer-Inspection clarification (the doc currently treats invalidation as a runtime concept; Tier-C analytical metrics need a "Layer-Inspection" classifier so future readers don't conflate "invalidated by Layer-1" with "needs eager recomputation by Layer-1"); (b) `docs/§18/PIE_SNAPSHOT.md` §"What's not in the envelope" should add an explicit "Tier-C analytical outputs are not serialized; recompute on-demand at inspection time" line. Tracked as a follow-on dispatch — out of scope for this amendment.
+
+The remaining original Followups (`tools/graph-metrics` rename, editor visualization layer coordination, cross-process metric sync, architecture-lint for Tier-C, §1.10.4 entropy-tracker convergence) are unchanged and remain open.
