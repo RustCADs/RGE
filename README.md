@@ -137,7 +137,7 @@ Per [`plans/fileandfolderstructure.md`](./plans/fileandfolderstructure.md):
 
 ```
 rge/
-├── kernel/              # Tier 1 — constitutional substrate (15 crates; 10 implemented, 5 stub)
+├── kernel/              # Tier 1 — constitutional substrate (15 crates; 10 implemented, 1 PARTIAL v0 cavity (io-scheduler), 4 stub)
 ├── crates/              # Tier 2 — privileged systems (65 crates; 32 implemented, 3 partial, 30 stub)
 ├── plugins/             # Tier 3 — sandboxed WASM examples
 ├── runtime/             # executable app targets (4 crates; all stub)

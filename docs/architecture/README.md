@@ -22,7 +22,7 @@ via explicit "defer to" cross-refs):
 
 `RFC` (experimental proposals) is reserved for post-v1.0 use; unused at v0.8.
 
-## Doctrine docs (3 of 3 landed)
+## Doctrine docs (4 of 4 landed)
 
 - **[`REACTIVE_INVALIDATION.md`](./REACTIVE_INVALIDATION.md)** (254L) — 4-layer
   invalidation hierarchy (graph mutations → topology evolution → tessellation
@@ -40,6 +40,23 @@ via explicit "defer to" cross-refs):
   generation platform / NOT simulation platform v1 / NOT marketplace / NOT
   Bevy-or-Fyrox fork); anti-sprawl criteria; 10 explicit deferrals.
   Companion to PLAN §0.2 + §0.6 + 2026-05-10 cross-review #1.
+- **[`INVARIANT_ENFORCEMENT_STRATEGY.md`](./INVARIANT_ENFORCEMENT_STRATEGY.md)**
+  (263L) — Phase 1 Executable Governance Architecture first deliverable;
+  6-term vocabulary table separating invariant / enforcement / escalation /
+  authority surface / verification surface / advisory guidance (importance
+  ≠ executability); 7-class invariant taxonomy + 5-tier enforcement
+  taxonomy; conservative graduation criteria (ALL-of-four, walk-every-cost
+  veto); load-bearing 7-cost catalog (rigidity / compatibility burden /
+  false authority / test substrate ossification / enforcement coupling /
+  abstraction pressure / future evolution cost); 7 system-level failure
+  modes of over-mechanization (ossified architecture / false confidence /
+  enforcement gaming / test-substrate coupling / framework gravity /
+  accidental public contracts / inability to evolve semantics safely);
+  6 prose-only doctrines; 7 anti-patterns; 5 round-9 deferred items framed
+  as classification probes (not backlog) plus 3 workspace-state probes
+  (warning-tier as legitimate steady state / exemption philosophy / rollout
+  debt as transitional equilibrium). Companion to ARCHITECTURE_LINTS.md +
+  ADR-115 phase-2.5 amendment + ADR-116.
 
 ## How to navigate
 
