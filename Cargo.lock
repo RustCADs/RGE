@@ -4227,6 +4227,10 @@ dependencies = [
 [[package]]
 name = "rge-kernel-asset-streaming"
 version = "0.0.1"
+dependencies = [
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "rge-kernel-asset-view"
