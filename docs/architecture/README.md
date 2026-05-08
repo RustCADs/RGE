@@ -34,11 +34,11 @@ via explicit "defer to" cross-refs):
   → Scene Extraction → GPU Resources); ownership rules ("renderer NEVER owns
   authoritative geometry"); 4 extraction principles (pure / incremental /
   deterministic / replaceable). Companion to PLAN §1.5.2 + ADR-114.
-- **[`NON_GOALS.md`](./NON_GOALS.md)** (205L) — 8 explicit non-goals (NOT
+- **[`NON_GOALS.md`](./NON_GOALS.md)** (138L) — 8 explicit non-goals (NOT
   general-purpose game engine / NOT competing CAD authoring tool v1 / NOT
   distributed runtime today / NOT AI-native CAD / NOT procedural-content-
   generation platform / NOT simulation platform v1 / NOT marketplace / NOT
-  Bevy-or-Fyrox fork); anti-sprawl criteria; 10 explicit deferrals.
+  Bevy-or-Fyrox fork); anti-sprawl criteria; 8 explicit deferrals.
   Companion to PLAN §0.2 + §0.6 + 2026-05-10 cross-review #1.
 - **[`INVARIANT_ENFORCEMENT_STRATEGY.md`](./INVARIANT_ENFORCEMENT_STRATEGY.md)**
   (263L) — Phase 1 Executable Governance Architecture first deliverable;

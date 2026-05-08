@@ -123,15 +123,13 @@ The pattern is documented (PLAN §0.6 + §1.15) and the precedent shows it works
 
 Concrete enumeration of currently-deferred items, each pinned to its source-truth.
 
-- **36 stub crates** — Tier-2 + Tier-1 stubs per HANDOFF.md "36 exemptions left in place — all verified empty stubs". The list: `anim-*` / `asset-pipeline` / `brep-render` / `build-pipeline` / `cad-native` / `cad-occt` / `errors` / `gfx-ir` / `hot-reload-watcher` / `input-gestures` / `io-{audio,obj,step,stl}` / `marketplace` / `marketplace-server` / `material-{graph,graph-editor,runtime}` / `math` / `physics-debug` / `plugin-discovery` / `replication` / `resources` / `script-{aot,graph}` (31 Tier-2) + `kernel/{shared, asset-view, asset-streaming, io-scheduler, job-system}` (5 Tier-1). Each lib.rs is verbatim `//! \`rge-<name>\` — stub crate. Architecture frozen at v0.8; implementation pending per IMPLEMENTATION.md.`
+- **35 rollout-debt stub crates** — Tier-2 + Tier-1 failure-class exemptions per HANDOFF.md. The list: `anim-*` / `asset-pipeline` / `brep-render` / `build-pipeline` / `cad-native` / `cad-occt` / `errors` / `gfx-ir` / `hot-reload-watcher` / `input-gestures` / `io-{audio,obj,step,stl}` / `marketplace` / `marketplace-server` / `material-{graph,graph-editor,runtime}` / `math` / `physics-debug` / `plugin-discovery` / `replication` / `resources` / `script-{aot,graph}` (31 Tier-2) + `kernel/{shared, asset-view, asset-streaming, job-system}` (4 Tier-1). `kernel/io-scheduler` is no longer empty; it is a PARTIAL v0 cavity with a declared failure class. Each remaining stub lib.rs is verbatim `//! \`rge-<name>\` — stub crate. Architecture frozen at v0.8; implementation pending per IMPLEMENTATION.md.`
 - **ADR-099 / ADR-101 / ADR-102** — formal ADR creation deferred per §18 companion-doc-suffices framing per PLAN §1.14 line 630 footnote. The companion docs (`EXECUTION_DOMAINS.md` for ADR-099, `GRAPH_FOUNDATION.md` for ADR-101, `RECOVERY_MODEL.md` for ADR-102) suffice until decision pressure exceeds what they capture.
 - **WASM cold-start re-validation** — measured at 904µs on wasmtime 23 per Status.md line 104; not re-validated post bump to wasmtime 44. Tracked as Status.md "Waiting" item; not blocking v1.0 but flagged for a future re-baseline dispatch.
 - **ui-theme + editor-ui missing-docs** — ~130 warnings per Status.md line 105; deferred to v0.0.1 docs pass per the same row. Not actionable until then; not blocking.
 - **AssemblyScript decision** — gated on ≥10 community requests per ADR-068 (referenced in PLAN §1.9 line 477 "AssemblyScript at v1.0 launch | deferred | demand-gated"). The escape clause exists; the trigger has not fired.
 - **`io-3mf` crate** — entirely missing per Status.md line 104; PLAN §1.6.5 lists it among the format-handler crates; deferred per freeze policy until format-handler implementation pressure surfaces.
 - **C1 graph-metrics phase-1 implementation** — ADR-115 landed 2026-05-10 with the binding architectural decisions; phase-1 (Tier A counters: `node_count` / `edge_count` / `operator_count` / `constraint_count` / `invalidation_count`) is bounded + small + ready-to-execute, but NOT yet executed. Implementation work is blocked only on a "go" signal, not on design.
-- **H5 canary accessor symmetry** — design decision deferred per HANDOFF.md "round-6 deferred items"; implement OR remove from gfx/physics/audio.
-- **M2 editor-ui::Plugin canary** — defer until editor-ui Phase 5 stabilisation.
 - **Reach product features per PLAN §0.4** — Lumen-equivalent / VSM / TSR (selective) / DQS skinning / compute-shader skinning / free-form retargeting / Tier-1 platform previews (iOS / Android / web) / multi-monitor workspaces / sub-graph composition / full theme editor / script debugger.
 
 ## 5. Why explicit non-goals matter
@@ -154,11 +152,11 @@ The cadence is what keeps the doc honest: a stale non-goals list that doesn't re
 
 The non-goals list is grounded in the workspace's verifiable state today. The cumulative pin per HANDOFF.md 2026-05-10:
 
-- **94 workspace members; 43 IMPLEMENTED / 3 PARTIAL / 48 EMPTY-STUB** — the EMPTY-STUB count IS the non-goals enumeration in concrete form.
-- **Tier 1 kernel: 10 of 15 implemented** — 5 stubs (`shared`, `asset-view`, `asset-streaming`, `io-scheduler`, `job-system`) on the deferral list.
+- **94 workspace members; 43 IMPLEMENTED / 4 PARTIAL / 47 EMPTY-STUB** — the EMPTY-STUB count IS the non-goals enumeration in concrete form.
+- **Tier 1 kernel: 10 of 15 implemented + 1 PARTIAL v0 cavity** — 4 stubs (`shared`, `asset-view`, `asset-streaming`, `job-system`) remain on the deferral list; `kernel/io-scheduler` now has vocabulary substrate but intentionally minimal behavior.
 - **Tier 2: ~32 implemented / 30+ stub** — the stub count grounds non-goals 2.6 / 2.7.
 - **8 ADRs accepted + 3 deferred per §18 doctrine** — the deferred ADRs (099 / 101 / 102) are NOT non-goals; they are companion-doc-suffices deferrals with materialization triggers documented.
-- **§18 companion docs: 27 of 27 landed** — substrate documentation is in scope; doctrine docs (this doc + the two siblings) ARE the new tier introduced by this dispatch.
+- **§18 companion docs: 27 of 27 landed** — substrate documentation is in scope; doctrine docs (this doc + the three siblings) ARE the new tier introduced by this dispatch.
 
 The list grounds the doctrine in implementation reality. A non-goal that the workspace already partially implements is misclassified; a non-goal whose corresponding stub crate is empty is correctly classified.
 

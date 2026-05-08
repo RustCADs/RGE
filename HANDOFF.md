@@ -484,7 +484,7 @@
    - `CadProjectionPlugin` migrated: missing-World/CadGraph → `ContractViolation`; projection-tick errors → `RuntimeFault`
    - 9 new tests: panic recovery in all 3 lifecycle phases + multi-plugin tick-failure isolation (closes audit-1 carryover) + resource-leak detection + ContractViolation Warning-severity + unregister Warning-severity + Panic variant Display + PluginPhase Display
    - **Plugin host now treats plugins as untrusted execution domains** (kernel/userspace boundary equivalent per ChatGPT framing carried into the dispatch motivation). NO new `unsafe` (`AssertUnwindSafe` is a safe-API marker type)
-   - host.rs at 1766L carries `// SPLIT-EXEMPTION:` annotation (impl ~670L; rest is the test fixture + 25+ lifecycle tests)
+   - host.rs reached 1766L immediately after this hardening with a `// SPLIT-EXEMPTION:` annotation (impl ~670L; rest was the test fixture + 25+ lifecycle tests). The Phase-5 split (2026-05-09) later moved tests into `kernel/plugin-host/src/host/host_tests/`; production `host.rs` now sits at 695L with no `SPLIT-EXEMPTION` annotation.
 2. **Plugin diagnostic auto-emit** (post-audit LOW #5; 5 new tests; kernel/plugin-host 33 → 38):
    - Closes Pairing-5 of the 2026-05-07 deep audit (plugin failures swallowed into `*Report.failed[i].1` String, never reached the diagnostic sink)
    - `PluginHost::init_all` / `tick_all` / `shutdown_all` now auto-emit a synthetic `Diagnostic::error` with structured prefix `"plugin <id> init failed: <err>"` (or `tick failed` / `shutdown failed`) whenever a plugin returns `Err`
@@ -714,7 +714,7 @@ Pick one. All four are bounded single-agent dispatches.
 
 ## Persistent gaps (carry-over — none of B/C/D/E directly addresses, but worth tracking)
 
-- **5 empty kernel stubs** (shared, asset-view, asset-streaming, io-scheduler, job-system) — partial subset addressed by future Phase 5+ work; plugin-host shipped 2026-05-07 (Option C)
+- **4 empty kernel stubs** (shared, asset-view, asset-streaming, job-system) + **1 PARTIAL v0 cavity** (`io-scheduler`) — partial subset addressed by future Phase 5+ work; plugin-host shipped 2026-05-07 (Option C)
 - **`physics` has no kernel/diagnostics integration** (uses inline `physics_input_ledger::PhysicsInputLedger` per-tick domain ledger separate from `kernel/audit-ledger`'s generic event ledger; see physics_input_ledger.rs module-doc for the divergence rationale) — small refactor, not pressing
 - **§18 companion docs**: **27 of 27 landed** (cumulative LoC ~7,700+; closes the prior absence list — RECOVERY_MODEL.md / EXECUTION_DOMAINS.md / KERNEL_SCHEDULE.md / KERNEL_TYPES.md / RUNTIME_ORCHESTRATOR.md / IO_FORMATS.md / KERNEL_AUDIT_LEDGER.md / KERNEL_APP_FRAME_LOOP.md / CAD_CORE_KERNEL_ADAPTERS.md). ADR backlog: **8 accepted** (097/098/104/112/113-deferred/114/115/116; 097 + 113-deferred ADR files pending — decisions applied to substrate but ADR-format files not yet authored) + **3 deferred per §18 doctrine** (099/101/102 — see EXECUTION_DOMAINS.md / GRAPH_FOUNDATION.md / RECOVERY_MODEL.md respectively).
 - **`cargo bench` not wired in CI** — formal Phase 3 perf gates unrun (Option E addresses)
@@ -726,7 +726,7 @@ Pick one. All four are bounded single-agent dispatches.
 ## How to resume
 
 1. **Verify env**: cargo at `A:\RustCache\cargo\bin\cargo.exe` (NOT on PATH); set `CARGO_HOME=A:\RustCache\cargo`, `RUSTUP_HOME=A:\RustCache\rustup`. Run from `A:\RCAD\RGE\`.
-2. **Verify state matches this doc**: `cargo run -q -p rge-tool-architecture-lints -- all` should exit 0; `cargo test --workspace --all-targets --no-fail-fast` should report 1702 passed.
+2. **Verify state matches this doc**: `cargo run -q -p rge-tool-architecture-lints -- all` should exit 0; `cargo test --workspace --all-targets --no-fail-fast` should report 1794 passed across 216 binaries (2 ignored).
 3. **Pick a dispatch option** (B/C/D/E above). Each has the spec inline; turn it into an Agent prompt with the same template structure as prior dispatches.
 4. **After dispatch completes**: verify all 9 lints PASS, run workspace tests, append entries to [`change.md`](./change.md) with timestamp + test count delta + LLVM lines + any complications, update [`Status.md`](./Status.md) with new state, update [`README.md`](./README.md) test count if changed.
 
@@ -765,13 +765,13 @@ Parallel/duplicated representations (labeled vs unlabeled mesh; handle vs map ca
 5. **~~LOW #5~~ DONE 2026-05-08** — Plugin diagnostic auto-emit (closes Pairing-5)
 6. **~~Test-gap-followup~~ DONE 2026-05-08** — Audit 2's bounded test-coverage gaps. 5 new integration test files (15 explicit tests + 16 fmt-incidental backfills); workspace 1587 → 1618 (+31 net). csgrs `catch_unwind` shield classified **defensive-only-no-known-trigger** at csgrs 0.20.1; cross-substrate 100-iter PIE-determinism soak byte-identical; CadGraph corruption-recovery atomic; RevolveOp `new↔partial(2π)` hash equality verified; all 5 ProjectionError variants exercised.
 7. **~~gfx::Plugin canary~~ DONE 2026-05-08** — second real Tier-2 plugin (proves PluginContext v1 design isn't cad-projection-specific; ADR-114 followup). 16 tests; gfx 44 → 60; workspace 1618 → 1634. **Design-generalization data point**: wgpu 29 core types Send+Sync, no Mutex/unsafe needed; owned-handoff pattern from cad-projection generalized cleanly. Lazy-build-on-first-tick pattern surfaced as a useful template for future canaries.
-8. §18 companion docs (governance debt; substrates stable: GRAPH_FOUNDATION.md / CAD_TOPOLOGY_LINEAGE.md / PLUGIN_API.md / CAD_CORE_MODEL.md)
-9. Remaining kernel stubs (shared / asset-view / asset-streaming / io-scheduler / job-system)
+8. **~~§18 companion docs~~ DONE** — 27 of 27 landed; no companion-doc absence remains in the current snapshot.
+9. Remaining kernel stubs (shared / asset-view / asset-streaming / job-system) + io-scheduler v0 cavity follow-up when real driver pressure appears
 
-**All 5 audit-1 architectural-debt findings + all 5 audit-2 phases shipped + four-substrate canary proof CLOSED + ADR-114 carries TWO amendments + 17 of 27 §18 companion docs landed + physics+audio failure-class declarations land + 23-of-81 audit-1 rollout-debt exemptions cleared. Deep audit 2026-05-09 surfaced 4 CRITICAL + 4 HIGH findings; ALL CLOSED via 4 corrective dispatches (Phase 5 split + forbidden-dep + test-coverage + DependencyGraph migration). 3 NEW findings surfaced during corrective work — track in debt registry.** **Open audit-debt registry post-corrective-round** (3 NEW findings + carryover MEDIUMs):
+**All 5 audit-1 architectural-debt findings + all 5 audit-2 phases shipped + five-substrate canary proof CLOSED + ADR-114 carries TWO amendments + 27 of 27 §18 companion docs landed + physics+audio failure-class declarations land + 46-of-81 audit-1 rollout-debt exemptions cleared. Deep audit 2026-05-09 surfaced 4 CRITICAL + 4 HIGH findings; ALL CLOSED via 4 corrective dispatches (Phase 5 split + forbidden-dep + test-coverage + DependencyGraph migration). 3 NEW findings surfaced during corrective work — track in debt registry.** **Open audit-debt registry post-corrective-round** (3 NEW findings + carryover MEDIUMs):
 
 - **~~kernel_isolation.rs same-class rge- prefix~~ DONE 2026-05-09 03:40** — orchestrator inline fix; `is_io_crate` extended with `pkg.name.starts_with("rge-io-")` OR `starts_with("io-")` — both name-prefix paths now active; bare-name fixture-test convention preserved for backward compat; 1 new test `test_rge_prefixed_io_crates_overlap_detected_via_name_path` exercises rge-io- name-path explicitly via `pkgs/foo/Cargo.toml` (where manifest-path fallback can't fire). 6 → 7 tests; workspace 1695 → 1696.
-- **NEW (carryover from test-coverage dispatch)**: `host.rs` at 1899L approaching natural split point (was 1766L pre-dispatch; +133L from Gap 4 init+shutdown leak-detection tests). SPLIT-EXEMPTION still honored, but future test additions may need compaction or splitting tests into a sibling integration-test file (Phase 5 pattern). **MEDIUM**.
+- **~~host.rs split pressure~~ DONE 2026-05-09** — Phase-5 split extracted the host lifecycle test matrix into `kernel/plugin-host/src/host/host_tests/`; production `host.rs` is now under the 1000L cap with no SPLIT-EXEMPTION annotation. Follow-on work is coverage-only, not file-size relief.
 - **~~graph-foundation lint coverage gap~~ DONE 2026-05-09 04:45** — Check 2 added detecting `BTreeMap<K, BTreeSet<K>>` / `HashMap<K, HashSet<K>>` adjacency-pair shapes via syn AST walk + native PartialEq for K==V comparison. Bonus catch: surfaced `asset-store::DepGraph` (not in original audit scope); migrated to `Graph<AssetId, ()>` mirroring kernel/asset Option B template; exemption deleted post-migration; 62/62 asset-store tests pass unchanged.
 - **Carryover MEDIUM batch from deep audit**:
   - Cargo.toml dep-style normalization (4 canaries use 3 patterns: path / mixed / workspace=true)
@@ -787,14 +787,11 @@ Parallel/duplicated representations (labeled vs unlabeled mesh; handle vs map ca
 2. ~~HIGH graph-foundation lint extension + asset-store migration~~ DONE 2026-05-09 04:45
 3. ~~MEDIUM batch (partial closure)~~ DONE 2026-05-09 05:25
 4. ~~physics AuditLedger option-(b) rename~~ DONE 2026-05-09 06:35
-5. **§18 docs pack 7** (KERNEL_SCHEDULE.md / KERNEL_TYPES.md / RUNTIME_ORCHESTRATOR.md; 10 of 27 still missing)
-6. **host.rs pre-emptive split** (1899L SPLIT-EXEMPTION-honored; Phase 5 tests-sub-module pattern; pair with PluginError×PluginPhase 4-cell auto-emit tests to avoid further size growth)
-7. **PluginError×PluginPhase 4-cell auto-emit tests** (audit-2 coverage gap — ContractViolation × Init/Shutdown + RuntimeFault × Init/Shutdown; pair with host.rs split)
-8. **csgrs catch_unwind recovery branch test** (needs feature-flag design)
-9. **clippy pedantic in physics+audio libs** (~17 warnings; small mechanical clean-up)
-10. **cad-projection broader dep-style sweep** (rge-kernel-ecs + rge-kernel-graph-foundation; small mechanical)
-11. **editor-ui::Plugin canary** (defer until editor-ui Phase 5 stabilises singleton shape)
-12. **Remaining kernel stubs** (5 stubs)
+5. **PluginError×PluginPhase 4-cell auto-emit tests** (audit-2 coverage gap — ContractViolation × Init/Shutdown + RuntimeFault × Init/Shutdown; host.rs split already complete)
+6. **csgrs catch_unwind recovery branch test** (needs feature-flag design)
+7. **clippy pedantic in physics+audio libs** (~17 warnings; small mechanical clean-up)
+8. **cad-projection broader dep-style sweep** (rge-kernel-ecs + rge-kernel-graph-foundation; small mechanical)
+9. **Remaining kernel stubs** (4 stubs; `io-scheduler` is PARTIAL v0 cavity, not empty)
 
 ## Reference index
 

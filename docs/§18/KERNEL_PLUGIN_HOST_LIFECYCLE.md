@@ -5,9 +5,9 @@
 | Status | Stable v1; lifecycle hardened post-2026-05-08 audit-2 Phase 0 + LOW #5 closures (catch_unwind shield + leak-detection diff + per-phase auto-emit policy regression-tested) |
 | Audience | plugin-host maintainers + advanced plugin authors who need to reason about lifecycle ordering, failure isolation, and resource-leak detection invariants |
 | Sibling doc | `PLUGIN_API.md` — author-facing API surface; `PLUGIN_HOST_PATTERNS.md` — pattern-level guide for canary authors |
-| Reference impls | `kernel/plugin-host/src/host.rs` (1766L; carries `// SPLIT-EXEMPTION:`) · `kernel/plugin-host/src/plugin.rs` (`Plugin` trait + `PluginError` taxonomy + `PluginPhase`) · `kernel/plugin-host/src/context.rs` (`PluginContext` registry + `snapshot_resource_ids`) · `kernel/plugin-host/src/lib.rs` (failure-class + dogfood declaration) |
+| Reference impls | `kernel/plugin-host/src/host.rs` (under the 1000L cap after the Phase-5 test split) · `kernel/plugin-host/src/host/host_tests/` (split lifecycle test matrix) · `kernel/plugin-host/src/plugin.rs` (`Plugin` trait + `PluginError` taxonomy + `PluginPhase`) · `kernel/plugin-host/src/context.rs` (`PluginContext` registry + `snapshot_resource_ids`) · `kernel/plugin-host/src/lib.rs` (failure-class + dogfood declaration) |
 
-> Convention defined by `PLUGIN_HOST_PATTERNS.md` §header. For the plugin-author API surface read `PLUGIN_API.md` first; for canary authoring patterns read `PLUGIN_HOST_PATTERNS.md`. This doc covers the *host-side* lifecycle machinery — state machine, reports, leak detection, locking, the SPLIT-EXEMPTION justification.
+> Convention defined by `PLUGIN_HOST_PATTERNS.md` §header. For the plugin-author API surface read `PLUGIN_API.md` first; for canary authoring patterns read `PLUGIN_HOST_PATTERNS.md`. This doc covers the *host-side* lifecycle machinery — state machine, reports, leak detection, locking, and the completed test split that keeps `host.rs` under the line cap.
 
 ## 1. Scope
 
@@ -18,7 +18,7 @@ This doc covers the host SIDE of the plugin substrate. Specifically:
 - The `catch_unwind` shield wrapping every host → plugin call.
 - The pre/post resource-snapshot diff that detects leaked resources.
 - The auto-emit policy that classifies each failure path's `Diagnostic::Severity`.
-- The 1766L `host.rs` SPLIT-EXEMPTION justification.
+- The completed Phase-5 split that moved the lifecycle test matrix out of `host.rs`.
 - The LIFO shutdown ordering rationale.
 - The plugin-fatal isolation guarantee per PLAN §1.13.
 - The "untrusted execution domains" framing.
@@ -155,7 +155,7 @@ Cross-ref `PLUGIN_API.md` §3 ("`PluginError` taxonomy") + `KERNEL_DIAGNOSTICS.m
 
 ## 7. Auto-emit policy
 
-Per audit-2 Phase 0 + LOW #5 closures (HANDOFF.md, 2026-05-08), the host auto-emits a structured `Diagnostic` on every plugin Err / Panic / leak path. The central dispatch helper (`emit_plugin_err_diagnostic`) lives at `host.rs` lines 666-678:
+Per audit-2 Phase 0 + LOW #5 closures (HANDOFF.md, 2026-05-08), the host auto-emits a structured `Diagnostic` on every plugin Err / Panic / leak path. The central dispatch helper (`emit_plugin_err_diagnostic`) lives in `host.rs` near the foot of the production implementation:
 
 ```rust
 fn emit_plugin_err_diagnostic(
@@ -188,32 +188,21 @@ fn emit_plugin_err_diagnostic(
 | Leak on Panic | `Error` | Compounded — leak + panic. |
 | Leak on `unregister`-shutdown (any outcome) | `Warning` | Host-initiated; non-fatal by design (matches the unregister policy). |
 
-All emitted via `&mut DiagnosticSink` borrowed from `PluginContext::diagnostics()`. The discrimination is pinned by two regression tests in `host.rs`: `tick_all_emits_warning_for_contract_violation` (line 1675) and `unregister_emits_warning_on_shutdown_failure` (line 1726).
+All emitted via `&mut DiagnosticSink` borrowed from `PluginContext::diagnostics()`. The discrimination is pinned by regression tests in `kernel/plugin-host/src/host/host_tests/diagnostics.rs`, including `tick_all_emits_warning_for_contract_violation`, `tick_all_emits_error_for_runtime_fault`, and `unregister_emits_warning_on_shutdown_failure`.
 
 Cross-ref `KERNEL_DIAGNOSTICS.md` §9 + `PLUGIN_API.md` §3 for the consumer-side and design rationale.
 
-## 8. The 1766L `host.rs` SPLIT-EXEMPTION
+## 8. Completed `host.rs` Test Split
 
-PLAN §1.3 Rule 3 requires any `.rs` >1000L to carry a `// SPLIT-EXEMPTION:` annotation justifying why splitting would harm cohesion. `host.rs` carries the annotation as the first line of the file:
+PLAN §1.3 Rule 3 requires any `.rs` >1000L to carry a `// SPLIT-EXEMPTION:` annotation. The old post-hardening shape kept production code and the lifecycle test matrix in one large `host.rs`, which briefly required an exemption. That state is obsolete.
 
-```text
-// SPLIT-EXEMPTION: implementation is ~670 lines; the rest is a unit-test
-// suite (a TestPlugin behavior matrix + ~25 lifecycle tests covering
-// register / init / tick / shutdown / unregister + the Phase 0 audit-2
-// catch_unwind / leak-detection / contract-violation / panic-recovery
-// closures). Splitting host.rs from its test module would force tests into
-// a sibling file and lose `super::*` access to the private `TestPlugin`
-// struct without a meaningful reduction in cohesion.
-```
+The Phase-5 split extracted the test matrix into `kernel/plugin-host/src/host/host_tests/`:
 
-The breakdown:
+- `fixtures.rs` owns the `TestPlugin` behavior matrix and `LyingPlugin`.
+- `registration.rs`, `lifecycle.rs`, `diagnostics.rs`, `panic_recovery.rs`, and `resource_leak.rs` group tests by lifecycle concern.
+- `mod.rs` documents why the tests remain sub-modules of `crate::host`: they still need `use super::super::*` access to private host helpers while avoiding a large single file.
 
-- **~670L impl** — `PluginState` / `PluginRecord` / `PluginHostError` / `PluginHost` + `register` / `unregister` / `init_all` / `tick_all` / `shutdown_all` / `get` / `state` / `count` / `iter_ids` + `InitReport` / `TickReport` / `ShutdownReport` + the two private helpers `emit_plugin_err_diagnostic` and `panic_payload_to_string`.
-- **~1100L tests** — a `TestPlugin` behaviour-matrix struct (configurable to fail at init / tick / shutdown / panic / leak) plus 25+ lifecycle tests + dogfood-smoke fixtures + the auto-emit + catch_unwind + leak-detection regression tests landed by audit-2 Phase 0 + LOW #5.
-
-> **Source-truth flag:** the dispatch spec listed `host.rs` as 1743L. The actual line count is 1766L. The spec's "1743L" is consistent with a recent prior state; the doc reflects the source-truth count of 1766L.
-
-Splitting would force the `TestPlugin` fixture into a separate module, losing `super::*` access to private types (`emit_plugin_err_diagnostic`, `panic_payload_to_string`) the regression tests need to exercise directly, without a meaningful reduction in cohesion. The `split-exemption` architecture lint accepts the annotation; cross-ref `tools/architecture-lints/src/split_exemption.rs` for the lint mechanics.
+The live source now has no `SPLIT-EXEMPTION` annotation in `host.rs`; the production implementation is under the line cap, and each extracted test file is also under the cap. The old `1766L host.rs` references should be read as historical audit context, not current source truth.
 
 ## 9. LIFO shutdown ordering
 
@@ -286,12 +275,13 @@ The catch_unwind shield + leak-detection diff + per-record state machine are the
 - **ADR-114** — design rationale for the owned-handoff substrate; see §"Decision" + §"Implementation guidance" + §"PluginError variant policy" + §"Amendment 2026-05-08 — Three-substrate validation".
 - **PLAN.md §10.4** — dogfood rule; Tier-2 plugins use the same `Plugin` trait as Tier-3.
 - **PLAN.md §1.13** — failure-class taxonomy; plugin-fatal isolation.
-- **PLAN.md §1.3 Rule 3** — `// SPLIT-EXEMPTION:` annotation requirement for `.rs` files >1000L.
+- **PLAN.md §1.3 Rule 3** — `// SPLIT-EXEMPTION:` annotation requirement for `.rs` files >1000L; current plugin-host production and test files stay under the cap.
 - **`PLUGIN_API.md`** — sibling §18 doc; full API surface for plugin authors. Use this for `Plugin` trait method semantics, `PluginContext` registry methods, `PluginError` constructor surface.
 - **`PLUGIN_HOST_PATTERNS.md`** — sibling §18 doc; pattern-level guide for canary authors.
-- **`KERNEL_DIAGNOSTICS.md`** — sibling §18 doc; plugin-host auto-emit consumer surface. The `emit_plugin_err_diagnostic` helper documented in §9 is the central dispatch.
-- **`kernel/plugin-host/src/host.rs`** — `PluginHost` lifecycle manager + `catch_unwind` + leak-detection wrap + `emit_plugin_err_diagnostic` (lines 666-678) + per-phase severity discrimination + the regression tests (`tick_all_emits_warning_for_contract_violation` line 1675, `unregister_emits_warning_on_shutdown_failure` line 1726).
+- **`KERNEL_DIAGNOSTICS.md`** — sibling §18 doc; plugin-host auto-emit consumer surface. The `emit_plugin_err_diagnostic` helper documented in §7 is the central dispatch.
+- **`kernel/plugin-host/src/host.rs`** — `PluginHost` lifecycle manager + `catch_unwind` + leak-detection wrap + `emit_plugin_err_diagnostic` + per-phase severity discrimination.
+- **`kernel/plugin-host/src/host/host_tests/`** — split test matrix covering registration, lifecycle, diagnostics, panic recovery, and resource leak paths.
 - **`kernel/plugin-host/src/plugin.rs`** — `Plugin` trait, `PluginError` taxonomy (5 variants; only 4 have public constructors), `PluginPhase` enum.
 - **`kernel/plugin-host/src/context.rs`** — `PluginContext` with type-erased resource registry; `snapshot_resource_ids()` host-only inspection method.
-- **`tools/architecture-lints/src/split_exemption.rs`** — the `split-exemption` lint that accepts host.rs's `// SPLIT-EXEMPTION:` annotation.
+- **`tools/architecture-lints/src/split_exemption.rs`** — the line-cap lint; plugin-host now satisfies it by splitting tests instead of carrying an exemption.
 - **`tools/architecture-lints/src/failure_class.rs`** — the `failure-class` lint that enforces the lib.rs declaration.
