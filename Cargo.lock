@@ -4231,6 +4231,10 @@ version = "0.0.1"
 [[package]]
 name = "rge-kernel-asset-view"
 version = "0.0.1"
+dependencies = [
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "rge-kernel-audit-ledger"
