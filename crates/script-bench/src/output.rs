@@ -25,7 +25,8 @@
 //! }
 //! ```
 //!
-//! Engines other than `native_rust` report `value: null` until W04 lands.
+//! Engines not yet wired report `value: null`; real script-host rows use
+//! [`Engine::ScriptHostCounter`].
 
 use std::fmt::Write as _;
 
@@ -38,14 +39,17 @@ pub const SCHEMA_VERSION: u32 = 1;
 /// [`crate::workloads::WorkloadId::as_str`].
 pub type Workload = String;
 
-/// Engine identifier. v0.0.1 publishes only the native baseline; further
+/// Engine identifier. v0.0.1 published only the native baseline; the
+/// script-host Counter row now covers the formal hot-reload gate. Further
 /// engines (`wasmtime_cranelift`, `wasmtime_singlepass`, `mlua`,
-/// `wasmer_singlepass`, `bevy_extism`) come online post-W04.
+/// `wasmer_singlepass`, `bevy_extism`) come online later.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Engine {
     /// Pure-Rust reference implementation (the "1.5×" denominator).
     NativeRust,
+    /// Real `rge-script-host` Counter fixture.
+    ScriptHostCounter,
     /// Wasmtime + Cranelift JIT — populated post-W04.
     WasmtimeCranelift,
     /// Wasmtime singlepass compiler — populated post-W04.
@@ -64,6 +68,7 @@ impl Engine {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::NativeRust => "native_rust",
+            Self::ScriptHostCounter => "script_host_counter",
             Self::WasmtimeCranelift => "wasmtime_cranelift",
             Self::WasmtimeSinglepass => "wasmtime_singlepass",
             Self::Mlua => "mlua",

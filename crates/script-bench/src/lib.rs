@@ -1,43 +1,44 @@
-//! `rge-script-bench` — scripting benchmark suite (v0.0.1 scaffold).
+//! `rge-script-bench` - scripting benchmark suite.
 //!
 //! Failure class: recoverable
 //!
 //! Per PLAN §1.13: benchmark-harness failures (workload setup error, JSON
 //! output write failure, engine-stub initialisation failure) are transient
-//! and recoverable in-place — the harness surfaces the error and re-runs
-//! or skips the workload. The crate is a measurement scaffold: no PIE
-//! participation, no runtime engine, no cross-call state. Matches gfx +
-//! ui-fonts (substrate / measurement crates with transient I/O risks).
+//! and recoverable in-place: the harness surfaces the error and re-runs or
+//! skips the workload. The crate is a measurement scaffold: no PIE
+//! participation, no runtime engine ownership, no cross-call state. Matches
+//! gfx + ui-fonts (substrate / measurement crates with transient I/O risks).
 //!
-//! Provides the **harness**, the **native-Rust baseline**, and the **output
-//! format** for the "fastest script engine" pillar verification per
-//! [PLAN.md §5.6](../../plans/PLAN.md). Real engine integration (wasmtime via
-//! W04) lands once `runtime-wasmtime-engine` is more than a stub; until then
-//! the engine column is wired through [`engine_stub`] and reports a placeholder
-//! "not-yet-measured" sentinel.
+//! Provides the **harness**, the **native-Rust baseline**, the **script-host
+//! formal gate harness**, and the **output format** for the "fastest script
+//! engine" pillar verification per [PLAN.md §5.6](../../plans/PLAN.md). The
+//! historical [`engine_stub`] remains available as a placeholder row, but
+//! Phase 3.3/3.4 now exercises the shipped `rge-script-host` substrate.
 //!
 //! ## Why this crate exists
 //!
-//! The "1.5× of native" claim in §5.6 needs an unambiguous denominator.  This
+//! The "1.5x of native" claim in §5.6 needs an unambiguous denominator. This
 //! crate publishes the methodology (see `METHODOLOGY.md`), the workload
-//! sources (`workloads.rs`), and the native-Rust reference implementation
-//! (`native_baseline.rs`). All numbers downstream of that — engine cold-start,
-//! per-tick throughput, hot-reload swap latency, memory overhead — are
-//! defined as ratios over the values produced here.
+//! sources ([`workloads`]), and the native-Rust reference implementation
+//! ([`native_baseline`]). All numbers downstream of that - engine cold-start,
+//! per-tick throughput, hot-reload swap latency, memory overhead - are defined
+//! as ratios over the values produced here.
 //!
-//! ## v0.0.1 scope
+//! ## Scope
 //!
 //! - Workload definitions: [`workloads`].
 //! - Native-Rust baseline: [`native_baseline`].
+//! - Real script-host hot-reload gate: [`script_host`].
 //! - JSON + Markdown output: [`output`].
-//! - Engine integration: stubbed at [`engine_stub`].
+//! - Historical placeholder engine row: [`engine_stub`].
 //!
-//! Comparison vs. Lua/mlua/Wasmer-singlepass/Bevy-extism is **out of scope**
-//! for v0.0.1 (post-Phase-3 work per `tasks/W20/PLAN.md`).
+//! Comparison vs. Lua/mlua/Wasmer-singlepass/Bevy-extism is out of scope for
+//! this dispatch (post-Phase-3 work per `tasks/W20/PLAN.md`).
 
 pub mod engine_stub;
 pub mod native_baseline;
 pub mod output;
+pub mod script_host;
 pub mod workloads;
 
 pub use output::{BenchReport, BenchResult, Engine, Workload};

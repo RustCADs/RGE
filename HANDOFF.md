@@ -1,6 +1,6 @@
 # RGE Handoff Document
 
-> **Snapshot**: 2026-05-11 07:00. Continuation pointer for the next session.
+> **Snapshot**: 2026-05-11 08:00. Continuation pointer for the next session.
 >
 > **Read first**: this file. Then [`Status.md`](./Status.md) (current snapshot) and [`change.md`](./change.md) (full history).
 
@@ -10,7 +10,7 @@
 
 | Pillar | State |
 |---|---|
-| Workspace tests | **1872 / 1872 pass** across 218 binaries (2 ignored intentionally hardware-gated). Plus **16 doctests pass / 0 fail / 12 ignored** (`cargo test --workspace --doc`). |
+| Workspace tests | **1877 / 1877 pass** across 218 binaries (3 ignored: 2 hardware-gated + 1 opt-in one-hour script-bench soak). Plus **16 doctests pass / 0 fail / 12 ignored** (`cargo test --workspace --doc`). |
 | Architecture lints | **9 enforcement + 1 supplementary PASS** exit 0 (forbidden-dep, split-exemption, no-utils, graph-foundation, editor-state-ownership, command-bus, projection-modules, kernel-isolation, failure-class — enforcement; snapshot-participate — warning-level supplementary, K=0 missing) |
 | `cargo +nightly fmt --check` | exit 0 |
 | `cargo check --workspace --all-targets` | 0 errors, ~130 pre-existing ui-theme `missing_docs` warnings (deferred per Status.md) |
@@ -21,6 +21,13 @@
 | Substantive non-rollout-debt exemption | **1**: `crates/editor-ui/src/layout/node.rs` graph-foundation NodeId rename TODO (file-doc'd as conceptually distinct from substrate NodeId; rename to `LayoutNodeId` later) |
 
 ## What just shipped (this session — completed work)
+
+1. **Phase 3.3/3.4 formal hot-reload bench gates** (measurement substrate over the real `rge-script-host` Counter swap protocol; +5 net workspace tests in `script-bench` plus 1 ignored opt-in one-hour soak; no new binary; no new ADR / no new lint / no new doctrine doc / no new §18 companion):
+   - **NEW** `crates/script-bench/src/script_host.rs` (~470L incl. tests). `ScriptHostBench` compiles the canonical Counter v1/v2 WAT fixtures from `crates/script-host`, seeds 1000 Counter-bearing ECS entities, runs 100 consecutive hot-reload cycles, poisons all counters before restore, and verifies the restored Counter sum every cycle. Public config/report surface: `HotReloadConfig`, `HotReloadReport`, `MemorySoakConfig`, `MemorySoakReport`, `FORMAL_HOT_RELOAD_ENTITY_COUNT`, `FORMAL_MEMORY_SOAK_DURATION`.
+   - **Formal gate result**: `cargo test -p rge-script-bench script_host::tests::formal_100_cycle_preservation_gate_uses_1000_entities -- --nocapture` prints p95 **9.761ms**, max 10.868ms, avg 7.992ms over 1,000 entities × 100 cycles. Budget is <100ms p95. The one-hour memory soak is compiled as `script_host::tests::phase_3_memory_soak_one_hour` and ignored by default.
+   - **Bench/docs wiring**: `cold_start` and `hot_reload_swap` Criterion benches now include real `script_host_counter` rows; `output::Engine` gained `ScriptHostCounter`; `BASELINE.md`, `METHODOLOGY.md`, and `docs/§18/SCRIPT_HOST.md` now record that hot-reload p95 + 100-cycle preservation are wired. Remaining Phase 3 measurement debt is ECS-via-WASM ratio and running the one-hour soak as a release-readiness job.
+   - **Verification gates ALL GREEN**: `cargo test -p rge-script-bench --all-targets --no-fail-fast -j 1` = 16 pass / 1 ignored plus Criterion binaries compile; `cargo test --workspace --all-targets --no-fail-fast -j 1` = **1877 / 1877 pass** across 218 binaries (3 ignored); `cargo test --workspace --doc --no-fail-fast -j 1` = **16 / 16 pass** across 81 doctest binaries (12 ignored); `cargo +nightly fmt --check` exit 0; `cargo run -q -p rge-tool-architecture-lints -- all` exit 0 (9 enforcement + 1 supplementary PASS).
+   - Files modified: `crates/script-bench/src/script_host.rs` (NEW); `crates/script-bench/{Cargo.toml,BASELINE.md,METHODOLOGY.md}`; `crates/script-bench/benches/{cold_start.rs,hot_reload_swap.rs}`; `crates/script-bench/src/{lib.rs,output.rs}`; `docs/§18/SCRIPT_HOST.md`; `Cargo.lock`; trackers. `Project_Imports/` remains untracked per standing exception.
 
 1. **Phase 6.3 material-runtime PSO cache substrate** (renderer-local bounded substrate dispatch; +19 net workspace tests, all unit tests in `pso_cache`; no new binary; no new ADR / no new lint / no new doctrine doc / no new §18 companion):
    - **NEW** `crates/gfx/src/pso_cache.rs` (~530L incl. 19 unit tests + module-doc with IS / NON-GOALS sections). Public cavity: `ShaderHash([u8; 32])` opaque BLAKE3 source digest with `const from_bytes` / `const as_bytes` / `from_source`; `VertexLayoutDescriptor { stride, step_mode, attributes }` owned hashable mirror of the `wgpu::VertexBufferLayout` key fields; `PsoKey { shader, layout }`; `PipelineCache<T>` generic cache storing `Arc<T>` by `PsoKey` with hit/miss counters, `get_or_insert`, `clear`, and query helpers.

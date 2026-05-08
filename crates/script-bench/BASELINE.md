@@ -1,12 +1,14 @@
-# `rge-script-bench` baseline (v0.0.1 — native-Rust only)
+# `rge-script-bench` baseline (native baseline + script-host hot-reload gate)
 
-Status: **scaffold**. Engine columns (`wasmtime_cranelift`, `wasmtime_singlepass`,
-`mlua`, `wasmer_singlepass`, `bevy_extism`) land post-W04 per `tasks/W20/PLAN.md`.
+Status: **script-host gate wired**. Native baseline rows remain the denominator
+for the "1.5x of native" claim. The real `rge-script-host` Counter fixture now
+backs the formal Phase 3 hot-reload gate: 1,000 entities preserved across 100
+consecutive swap cycles, with an opt-in one-hour memory soak.
 
 This file records the reference numbers for every workload defined in
 [`src/workloads.rs`](src/workloads.rs) when run on the
 **native-Rust baseline** (`src/native_baseline.rs`). All later "engine X is
-1.5× of native" claims are computed against the values here on the same host.
+1.5x of native" claims are computed against the values here on the same host.
 
 See [METHODOLOGY.md](METHODOLOGY.md) for what each row means and how to
 reproduce it.
@@ -18,7 +20,7 @@ reproduce it.
 | W1  | `script_tick_1m_iters`        | tight loop: `Transform.translation += dt * Transform.velocity`, 1M iterations  |
 | W2  | `per_frame_tick_10k_entities` | one frame over 10k entities, integration kernel applied once each              |
 | W3  | `cold_start`                  | empty-closure timer floor (no native module-load step exists)                  |
-| W4  | `hot_reload_swap`             | replace `Box<dyn Fn>` × 100 cycles                                             |
+| W4  | `hot_reload_swap`             | native closure swap plus real `script-host` 1000-entity / 100-cycle gate       |
 | W5  | `memory_overhead`             | `size_of::<fn(&mut Transform)>()` (function-pointer cost)                      |
 
 ## Baseline results
@@ -50,24 +52,47 @@ within +2.1%, W4 within -2.2%, W5 within ±0.3% — all comfortably inside the
 ±5% band. (W2 with `--quick` is noisy by design; the value above is from the
 default profile.)
 
+## Formal script-host hot-reload gate
+
+Recorded 2026-05-11 on the current Windows dev box via:
+
+```sh
+cargo test -p rge-script-bench \
+  script_host::tests::formal_100_cycle_preservation_gate_uses_1000_entities \
+  -- --nocapture
+```
+
+| workload | engine | scene | cycles | metric | value |
+| --- | --- | --- | --- | --- | --- |
+| `hot_reload_swap` | `script_host_counter` | 1,000 `Counter` entities | 100 | p95 swap window | 9.761 ms |
+| `hot_reload_swap` | `script_host_counter` | 1,000 `Counter` entities | 100 | max swap window | 10.868 ms |
+| `hot_reload_swap` | `script_host_counter` | 1,000 `Counter` entities | 100 | avg swap window | 7.992 ms |
+
+The p95 gate is **PASS** against PLAN §5.6's <100 ms budget. The test poisons
+all Counter components between capture and restore on every cycle, so the
+preservation assertion exercises the restore path rather than unchanged state.
+The one-hour memory-soak gate is compiled but ignored by default; run
+`script_host::tests::phase_3_memory_soak_one_hour` with `--ignored` when a
+release-readiness soak is desired.
+
 > **Filling in the table.** After running `cargo bench -p rge-script-bench`,
 > read `target/criterion/<group>/<name>/new/estimates.json` for each row and
 > paste the `mean.point_estimate` (in nanoseconds) into the value column.
 > This is intentionally manual at v0.0.1; the W04 follow-up wires automatic
 > JSON aggregation through `src/output.rs`.
 
-## Engine rows (placeholder)
+## Remaining engine rows (placeholder)
 
-The table below is what `BASELINE.md` *will* look like once the engine
-columns are populated. It is reproduced here so reviewers know the target
-shape.
+The table below is still the target comparison shape for future
+Lua/mlua/Wasmer-singlepass/Bevy-extism comparisons. The `script_host_counter`
+hot-reload gate above is the current real engine-backed row.
 
 | workload                       | native_rust | wasmtime_cranelift | wasmtime_singlepass | mlua | wasmer_singlepass | bevy_extism |
 | ------------------------------ | ----------- | ------------------ | ------------------- | ---- | ----------------- | ----------- |
 | `script_tick_1m_iters`         | _baseline_  | _pending W04_      | _pending W04_       | _post-Phase-3_ | _post-Phase-3_ | _post-Phase-3_ |
 | `per_frame_tick_10k_entities`  | _baseline_  | _pending W04_      | _pending W04_       | _post-Phase-3_ | _post-Phase-3_ | _post-Phase-3_ |
 | `cold_start`                   | 0 ns *      | _pending W04_      | _pending W04_       | _post-Phase-3_ | _post-Phase-3_ | _post-Phase-3_ |
-| `hot_reload_swap`              | _baseline_  | _pending W04_      | _pending W04_       | _post-Phase-3_ | _post-Phase-3_ | _post-Phase-3_ |
+| `hot_reload_swap`              | _baseline_  | _script-host gate wired_ | _pending_       | _post-Phase-3_ | _post-Phase-3_ | _post-Phase-3_ |
 | `memory_overhead`              | 8 B *       | _pending W04_      | _pending W04_       | _post-Phase-3_ | _post-Phase-3_ | _post-Phase-3_ |
 
 \* Native code has no module-load step and no per-module heap allocation;
@@ -88,7 +113,12 @@ this is fair.
 # from RGE workspace root
 cargo bench -p rge-script-bench
 # Reads target/criterion/**/new/estimates.json for each group/function and
-# updates this table. (Currently manual at v0.0.1.)
+# updates the native rows manually.
+
+cargo test -p rge-script-bench \
+  script_host::tests::formal_100_cycle_preservation_gate_uses_1000_entities \
+  -- --nocapture
+# Updates the formal script-host hot-reload gate rows.
 ```
 
 Methodology, including `--save-baseline`/`--baseline` flow and CI ratchet,

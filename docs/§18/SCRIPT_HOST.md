@@ -2,7 +2,7 @@
 
 | Companion to | PLAN.md §3 (sandboxed scripting via WASM/wasmtime) + §10 (Tier-3 plugin tier) + §1.13 line "WASM trap = plugin-fatal Tier-3 / recoverable Tier-2"; IMPLEMENTATION.md Phase 3.2 (`crates/script-host` substrate done) |
 |---|---|
-| Status | Substrate-done (per Status.md 2026-05-09 line 23 "done (substrate) — 4 tests"); the substrate gate is met (swap window 0.31ms vs 100ms p95 budget = 320× headroom; cold-start 9.1ms vs 50ms = 5× headroom) but the formal Phase 3 gates (1000-entity p95 / 1-hour memory / 100-cycle preservation) remain DEFERRED per Status.md "Waiting" + change.md; the runtime-wasmtime × plugin-host integration is also deferred per ADR-114 followup |
+| Status | Substrate-done (script-host smoke gates met: swap window 0.31ms vs 100ms p95 budget; cold-start 9.1ms vs 50ms) and formal script-bench hot-reload gate wired 2026-05-11 (1000 Counter entities × 100 swap cycles, p95 9.761ms, preservation asserted; one-hour memory soak compiled/ignored by default); the runtime-wasmtime × plugin-host integration remains deferred per ADR-114 followup |
 | Audience | Authors writing WASM scripts targeting RGE; reviewers verifying the call-scope `unsafe` pattern + SAFETY proofs; future Phase-4-Foundation authors graduating to a full WIT component-model bridge; orchestrator authors wiring script-host into the runtime tier |
 | Sibling doc | `PLUGIN_API.md` — Tier-2 host-side `Plugin` trait surface (script-host does NOT implement; it's the host for Tier-3 wasm scripts); `PLUGIN_HOST_PATTERNS.md` — Tier-2 plugin-author guide (parallel reference for the Tier-2 path); `EXECUTION_DOMAINS.md` — Expression / Script execution domain row that script-host is the substrate for |
 | Reference impls | `crates/script-host/src/lib.rs` (58L) · `crates/script-host/src/host_state.rs` (199L; the call-scope pointer pattern) · `crates/script-host/src/ecs_bridge.rs` (249L; 7 wasm host functions) · `crates/script-host/src/script_module.rs` (~234L; `ScriptModule` + `ScriptInstance`) · `crates/script-host/src/swap.rs` (171L; capture/restore for state-preserving hot-reload) · `crates/script-host/src/event_hooks.rs` (55L; advisory subscription tracker) · 3 integration test files at `crates/script-host/tests/` (4 tests) |
@@ -257,15 +257,15 @@ The class is enforced by the `failure-class` architecture lint (`ARCHITECTURE_LI
 
 The Tier-2 path (a future RGE feature where engine-internal subsystems run their *own* trusted wasm code) maps to **recoverable** rather than **plugin-fatal** — same wasmtime substrate, different recovery semantics: a trusted wasm module's trap is treated as a recoverable subsystem failure, not a quarantine event. The two paths share THIS substrate but classify failures differently per orchestrator.
 
-## 9. Phase 3 gates — STILL DEFERRED
+## 9. Phase 3 gates — SCRIPT-BENCH WIRED
 
-Per Status.md "Waiting" + change.md the formal Phase 3 gates remain:
+The formal Phase 3 gates now live in `crates/script-bench/src/script_host.rs`:
 
-- **1000-entity p95 swap < 100ms** — currently measured at single-entity (0.31ms / 320× headroom). Requires `crates/script-bench` rewire against real script-host + 1000-entity Counter fixture. Deferred per Status.md line 201 "Phase 3.3+3.4 formal hot-reload bench gates — script-bench rewire against real script-host + 1000-entity Counter fixture".
-- **1-hour memory soak** — runs the substrate for one wall-clock hour to verify no leaks across thousands of swap cycles. Deferred per Phase 3.4 plan.
-- **100-cycle preservation** — runs the swap loop 100 times consecutively, asserting state preservation across every cycle (no drift, no missing components). Deferred per Phase 3.4 plan.
+- **1000-entity p95 swap < 100ms** — wired against the real `rge-script-host` Counter fixture. Current host-local run: p95 **9.761ms**, max 10.868ms, avg 7.992ms over 1,000 Counter entities × 100 consecutive swap cycles.
+- **100-cycle preservation** — same formal test poisons all Counter components between capture and restore on every cycle, then asserts the restored sum. This exercises the restore path instead of unchanged world state.
+- **1-hour memory soak** — compiled as `script_host::tests::phase_3_memory_soak_one_hour` and ignored by default because it intentionally runs for one hour.
 
-The substrate gate (swap window 0.31ms / cold-start 9.1ms) is met today; the formal gates are gated on Phase 3.3 + 3.4 dispatch landing. Status.md cumulative count tracking does NOT include script-host as Phase-3-formally-shipped — it's tracked under "PARTIAL" per the per-crate test count breakdown (line 71: "script-host 4").
+The original single-entity substrate gate (swap window 0.31ms / cold-start 9.1ms) remains the smoke proof in `crates/script-host`; the rigorous 1000-entity gate is now owned by `crates/script-bench`.
 
 ### Cross-ref to PLUGIN_API + PLUGIN_HOST_PATTERNS — Tier-3 path is deferred
 

@@ -18,7 +18,9 @@ a methodology bump and a `BASELINE.md` reset on every supported host.
 | Schema version                   | 1                      | `output::SCHEMA_VERSION`                    |
 | Iteration count (W1)             | 1,000,000              | `workloads::SCRIPT_TICK_ITERATIONS`         |
 | Entity count (W2)                | 10,000                 | `workloads::PER_FRAME_ENTITY_COUNT`         |
+| Formal hot-reload entities (W4)  | 1,000                  | `script_host::FORMAL_HOT_RELOAD_ENTITY_COUNT` |
 | Hot-reload cycles (W4)           | 100                    | `workloads::HOT_RELOAD_CYCLES`              |
+| Formal memory soak duration (W5) | 1 hour                 | `script_host::FORMAL_MEMORY_SOAK_DURATION`  |
 | Fixed timestep                   | 1 / 60 s               | `workloads::FIXED_DT`                       |
 | Entity-buffer seed               | 0x5247_452D_5732_3031  | `workloads::ENTITY_SEED`                    |
 
@@ -69,9 +71,9 @@ component update. Engine FFI call cost shows up here.
 floor of measurement noise — the unavoidable overhead an engine cannot drop
 below.
 
-**Engine version (post-W04).** Construct a fresh
-`runtime_wasmtime_engine::Engine`, instantiate the canonical "tick"
-module, run one tick, stop the timer.
+**Script-host version.** Construct a fresh `wasmtime::Engine`, compile the
+canonical Counter fixture through `rge-script-host`, instantiate it, register
+one Counter entity, run one tick, stop the timer.
 
 **What is measured.** Wall-clock nanoseconds from "no engine yet" to "first
 tick has returned". Single-shot per sample (`sample_size = 50`).
@@ -84,12 +86,16 @@ tick has returned". Single-shot per sample (`sample_size = 50`).
 boxed closure, repeated `HOT_RELOAD_CYCLES = 100` times. The two closures
 differ only in `dt` to defeat compiler dead-code elimination.
 
-**Engine version (post-W04).** Build module v1 and module v2 ahead of the
-timer. In each cycle: instantiate v2, swap the live module pointer,
-quiesce v1, drop v1. Repeat 100 times.
+**Script-host version.** Build Counter module v1 and module v2 ahead of the
+timer. The formal gate seeds 1,000 Counter-bearing ECS entities. In each of
+100 cycles: capture the full Counter snapshot, poison all live counters,
+drop the old instance, instantiate the alternate module version, restore the
+snapshot, and verify the restored Counter sum. Poisoning ensures the restore
+path is doing real work rather than observing unchanged world state.
 
-**What is measured.** Total wall-clock nanoseconds for the 100 swap
-cycles. p95 derived from criterion's per-iteration distribution.
+**What is measured.** Per-cycle swap-window latency across 100 cycles. The
+formal unit gate reports p95 directly; the Criterion row wraps the same
+1000-entity / 100-cycle workload for repeatable benchmark comparisons.
 
 **Target.** p95 < 100 ms (PLAN.md §5.6).
 
@@ -100,11 +106,16 @@ cycles. p95 derived from criterion's per-iteration distribution.
 `Criterion::iter_custom`, encoded as a `Duration::from_nanos(bytes)` to
 ride the criterion timer infrastructure.
 
-**Engine version (post-W04).** Resident-set-size delta: measure RSS
-before any module is loaded; load N copies of the canonical "tick"
-module; measure RSS again; report `(after - before) / N`.
+**Script-host soak gate.** `script_host::ScriptHostBench::memory_soak`
+repeats the same 1000-entity preservation workload until a configured
+wall-clock duration elapses. The formal one-hour gate is exposed as an
+ignored test so ordinary workspace runs compile it without spending one hour.
+RSS-delta publication remains a future collector concern; this dispatch pins
+the preservation loop and leak-observation window.
 
-**What is measured.** Bytes of resident memory per loaded script module.
+**What is measured.** Default Criterion still records the native allocation
+floor. The formal soak gate records successful cycles, restored components,
+and wall-clock duration for leak observation.
 
 **Target.** < 1 MB per module (PLAN.md §5.6).
 
@@ -145,6 +156,28 @@ This runs every `[[bench]]` declared in `crates/script-bench/Cargo.toml`:
 
 Criterion writes per-bench JSON estimates to
 `target/criterion/<group>/<name>/new/estimates.json`.
+
+### Formal Phase 3 hot-reload gate
+
+```sh
+cargo test -p rge-script-bench \
+  script_host::tests::formal_100_cycle_preservation_gate_uses_1000_entities \
+  -- --nocapture
+```
+
+This runs the real `rge-script-host` Counter swap protocol across 1,000
+entities and 100 consecutive hot-reload cycles, then prints p95 / max / avg
+swap-window latency.
+
+### One-hour memory soak
+
+```sh
+cargo test -p rge-script-bench \
+  script_host::tests::phase_3_memory_soak_one_hour \
+  -- --ignored --nocapture
+```
+
+The soak is ignored by default because it intentionally runs for one hour.
 
 ### Stable-comparison flow (for "no regressions ±5%")
 
@@ -194,5 +227,8 @@ CI front-end is a pure plumbing job.
 
 ## Change log
 
+- **v0.0.2 gate wiring** - `script_host` harness added for the real
+  `rge-script-host` Counter fixture: W3 cold-start row, W4 1000-entity /
+  100-cycle preservation p95 gate, and W5 opt-in one-hour memory soak.
 - **v0.0.1** (this wave) — initial scaffold; native-Rust baseline only;
   engine rows pending W04. JSON schema v1 frozen.

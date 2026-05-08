@@ -10,8 +10,15 @@ authors.workspace      = true
 publish                = false
 
 [dependencies]
-serde       = { workspace = true }
-serde_json  = { workspace = true }
+rge-kernel-diagnostics = { path = "../../kernel/diagnostics" }
+rge-kernel-ecs         = { path = "../../kernel/ecs" }
+rge-kernel-events      = { path = "../../kernel/events" }
+rge-script-host        = { path = "../script-host" }
+
+serde      = { workspace = true }
+serde_json = { workspace = true }
+wasmtime   = { workspace = true }
+wat        = "1"
 
 [dev-dependencies]
 # v0.0.1: criterion is a local dep until promoted to a workspace pin.
