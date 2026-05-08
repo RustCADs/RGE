@@ -40,7 +40,8 @@ pub use checkpoints::{CadGraph, Checkpoint, CheckpointError, CheckpointHistory, 
 pub use graph::{EvalError, GraphBuildError, OperatorGraph};
 pub use operators::{
     BooleanMode, BooleanOp, CuboidOp, EdgeKind, ExtrudeOp, LoftOp, OpError, OpKind, Operator,
-    OperatorNode, Polygon2D, Polygon2DError, RevolveOp, TransformOp,
+    OperatorNode, Polygon2D, Polygon2DError, Polyline3D, Polyline3DError, RevolveOp, SweepOp,
+    TransformOp,
 };
 pub use tessellation::{
     CacheKey, Tessellation, TessellationCache, TessellationError, Tolerance, ToleranceError,

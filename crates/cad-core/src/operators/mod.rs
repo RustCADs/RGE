@@ -31,6 +31,7 @@ pub mod cuboid;
 pub mod extrude;
 pub mod loft;
 pub mod revolve;
+pub mod sweep;
 pub mod transform;
 
 pub use boolean::{BooleanMode, BooleanOp};
@@ -38,6 +39,7 @@ pub use cuboid::CuboidOp;
 pub use extrude::{ExtrudeOp, Polygon2D, Polygon2DError};
 pub use loft::LoftOp;
 pub use revolve::RevolveOp;
+pub use sweep::{Polyline3D, Polyline3DError, SweepOp};
 pub use transform::TransformOp;
 
 // ---------------------------------------------------------------------------
@@ -86,6 +88,8 @@ pub enum OpKind {
     Loft,
     /// `RevolveOp` — rotate a 2D profile around the Y-axis through 2π.
     Revolve,
+    /// `SweepOp` — sweep a 2D convex profile along a 3D polyline path.
+    Sweep,
     /// `TransformOp` — affine TRS applied to one upstream tessellation.
     Transform,
 }
@@ -189,6 +193,8 @@ pub enum OperatorNode {
     Loft(LoftOp),
     /// Revolve — see [`RevolveOp`].
     Revolve(RevolveOp),
+    /// Sweep — see [`SweepOp`].
+    Sweep(SweepOp),
     /// Transform — see [`TransformOp`].
     Transform(TransformOp),
 }
@@ -203,6 +209,7 @@ impl OperatorNode {
             OperatorNode::Extrude(op) => op,
             OperatorNode::Loft(op) => op,
             OperatorNode::Revolve(op) => op,
+            OperatorNode::Sweep(op) => op,
             OperatorNode::Transform(op) => op,
         }
     }
@@ -315,6 +322,22 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn operator_node_dispatches_sweep() {
+        let profile = Polygon2D::new(vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]])
+            .expect("sweep square profile");
+        let path =
+            sweep::Polyline3D::new(vec![[0.0, 0.0, 0.0], [0.0, 0.0, 1.0]]).expect("z-axis path");
+        let node = OperatorNode::Sweep(SweepOp::new(profile, path));
+        assert_eq!(node.op_kind(), OpKind::Sweep);
+        assert_eq!(node.arity(), 0);
+        let mesh = node.evaluate(&[]).expect("evaluate");
+        // n=4, m=2 ⇒ 8 vertices, 4n-4 = 12 triangles, 36 indices.
+        assert_eq!(mesh.vertex_count(), 8);
+        assert_eq!(mesh.triangle_count(), 12);
+        assert_eq!(mesh.indices.len(), 36);
+    }
+
     /// Default trait-level [`Operator::output_is_labeled`] returns `false` on
     /// an empty `inputs_labeled` slice — `Iterator::any` over empty is `false`,
     /// which is the desired arity-0 semantics (primitive operators emit
@@ -343,7 +366,7 @@ mod tests {
     /// SemVer hardening fixture: [`OpKind`] is `#[non_exhaustive]`, so
     /// cross-crate consumers MUST include a wildcard arm when pattern-matching.
     /// This test simulates that consumer pattern: when future variants
-    /// (Sweep / Fillet per PLAN §1.5.4 + ADR-098) are added, the wildcard arm
+    /// (Fillet per PLAN §1.5.4 + ADR-098) are added, the wildcard arm
     /// absorbs them and this test still compiles — proving the
     /// `#[non_exhaustive]` annotation is correctly applied.
     #[test]
@@ -363,6 +386,7 @@ mod tests {
             OpKind::Extrude => "extrude",
             OpKind::Loft => "loft",
             OpKind::Revolve => "revolve",
+            OpKind::Sweep => "sweep",
             OpKind::Transform => "transform",
             _ => "future-variant", // required by #[non_exhaustive]
         };
