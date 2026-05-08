@@ -1,6 +1,6 @@
 # Status
 
-> Snapshot: 2026-05-11 08:00. Workspace at `A:\RCAD\RGE\`. Architecture frozen at `plans/PLAN.md` v0.8.
+> Snapshot: 2026-05-11 09:00. Workspace at `A:\RCAD\RGE\`. Architecture frozen at `plans/PLAN.md` v0.8.
 
 ## Current
 
@@ -111,7 +111,7 @@ Plus smaller crates (cad-core 186 lib (+20 from D-Loft: 19 in loft.rs + 1 operat
 
 ## Active
 
-**Nothing currently running.** Last activity: Phase 3.3/3.4 formal hot-reload bench gates landed 2026-05-11 08:00 as measurement substrate over the real `rge-script-host` Counter swap protocol. +5 net workspace tests in `script-bench` plus 1 ignored opt-in one-hour soak; no new binary, no new ADR/lint/doctrine doc, no new §18 companion. New `crates/script-bench/src/script_host.rs` compiles Counter v1/v2 fixtures, seeds 1000 Counter-bearing ECS entities, runs 100 consecutive hot-reload cycles, poisons all counters before restore, and reports p95/max/avg swap-window latency. Current host-local gate: p95 9.761ms / max 10.868ms / avg 7.992ms vs <100ms budget. `cold_start` and `hot_reload_swap` Criterion benches now include real `script_host_counter` rows; `BASELINE.md`, `METHODOLOGY.md`, `output.rs`, and `docs/§18/SCRIPT_HOST.md` refreshed. Prior: Phase 6.3 PSO cache substrate landed 2026-05-11 07:00; prior bounded dispatches remain recorded in `change.md`.
+**Nothing currently running.** Last activity: `kernel/job-system` v0 cavity landed 2026-05-11 09:00 as the 12th Tier-1 kernel crate, mirroring `kernel/io-scheduler` exactly: 4-tier `JobPriority` enum (`Critical` < `High` < `Normal` < `Background`; `#[non_exhaustive]`) + opaque `JobId([u8; 16])` + `#[non_exhaustive]` `JobKind` (Placeholder v0 variant) + `Job` carrier + `BTreeMap`-backed `JobScheduler` priority queue with monotonic-sequence FIFO-within-priority. Failure class: recoverable. +18 net workspace tests = 3 priority + 5 job + 9 scheduler + 1 lib smoke. NON-GOALS section explicitly excludes 11 anti-goals (no work-stealing thread pool — the PLAN §10.1 listed feature is NOT here / no closure storage / no Tokio-async / no DAG / no cancellation / no priority inversion / no thread affinity / no reactive scheduling / no I/O scheduling — that's `kernel/io-scheduler` / no actual work execution / no new lint/ADR/doctrine/§18). Tier-1 kernel: 10 of 15 implemented + 2 PARTIAL v0 cavities (io-scheduler + job-system); 3 empty stubs remain (shared, asset-view, asset-streaming). `tools/architecture-lints/exemptions.toml` job-system rollout-debt entry REMOVED; failure-class lint actively pins `recoverable`. Prior: Phase 3.3/3.4 formal hot-reload bench gates landed 2026-05-11 08:00 as measurement substrate over the real `rge-script-host` Counter swap protocol. +5 net workspace tests in `script-bench` plus 1 ignored opt-in one-hour soak; no new binary, no new ADR/lint/doctrine doc, no new §18 companion. New `crates/script-bench/src/script_host.rs` compiles Counter v1/v2 fixtures, seeds 1000 Counter-bearing ECS entities, runs 100 consecutive hot-reload cycles, poisons all counters before restore, and reports p95/max/avg swap-window latency. Current host-local gate: p95 9.761ms / max 10.868ms / avg 7.992ms vs <100ms budget. `cold_start` and `hot_reload_swap` Criterion benches now include real `script_host_counter` rows; `BASELINE.md`, `METHODOLOGY.md`, `output.rs`, and `docs/§18/SCRIPT_HOST.md` refreshed. Prior: Phase 6.3 PSO cache substrate landed 2026-05-11 07:00; prior bounded dispatches remain recorded in `change.md`.
 
 For the canonical workspace state line (test counts / lint exit codes / fmt status / failure-class rollout-debt) see HANDOFF.md L13.
 
@@ -127,7 +127,7 @@ Remaining audit-debt items (low-priority, carried forward from audit-3 / audit-4
 
 **Per cross-review #8 + cross-review #10 binding STOP directives**: prescribed design pause before reflection/tooling architecture session + GPU abstraction session. Round-6 governance-surface reconciliation (substrate-completion) is the bookkeeping cleanup the STOP was protecting time for; following that, the next-session boundary holds.
 
-Last verification: `cargo test -p rge-script-bench --all-targets --no-fail-fast -j 1` = 16 pass / 1 ignored plus Criterion bench binaries compile; formal gate printout p95 9.761ms / max 10.868ms / avg 7.992ms; `cargo test --workspace --all-targets --no-fail-fast -j 1` = 1877 / 1877 pass across 218 binaries (3 ignored); `cargo test --workspace --doc --no-fail-fast -j 1` = 16 / 16 pass across 81 doctest binaries (12 ignored); `cargo +nightly fmt --check` exit 0; `cargo run -q -p rge-tool-architecture-lints -- all` exit 0 (9/9 enforcement PASS + 1 supplementary PASS).
+Last verification: `cargo test -p rge-kernel-job-system --all-targets --no-fail-fast -j 2` = 18 / 18 pass; `cargo test --workspace --all-targets --no-fail-fast -j 2` = 1895 / 1895 pass across 218 binaries (3 ignored); `cargo test --workspace --doc --no-fail-fast` = 16 / 16 pass; `cargo +nightly fmt --check` exit 0; `cargo run -q -p rge-tool-architecture-lints -- all` exit 0 (9/9 enforcement PASS + 1 supplementary PASS, failure-class lint actively pins kernel/job-system `recoverable` declaration; rollout-debt count 35 → 34).
 
 ## Phase 0.2 — DONE (2026-05-05)
 
@@ -145,7 +145,7 @@ Last verification: `cargo test -p rge-script-bench --all-targets --no-fail-fast 
 | kernel-isolation | PLAN.md §1.6.4 (one import path per format; declared via `[package.metadata.rge.formats]`) | **PASS 0 overlaps**; warns on 6 `io-*` crates missing metadata declarations (non-fatal per Option B) |
 | failure-class | PLAN.md §1.13 (every Tier-1+Tier-2 crate's lib.rs declares `//! Failure class: <kind>`) | **PASS** — 35 rollout-debt exemptions remain, all verified empty stubs; declarations land per crate as each gets first real implementation |
 
-**Test status:** `cargo test -p rge-tool-architecture-lints` = **69 / 69 pass** (11 unit + 58 integration across 9 fixture-test binaries) in <1s. Workspace-wide: **1877 / 1877 pass** across 218 binaries (3 ignored).
+**Test status:** `cargo test -p rge-tool-architecture-lints` = **69 / 69 pass** (11 unit + 58 integration across 9 fixture-test binaries) in <1s. Workspace-wide: **1895 / 1895 pass** across 218 binaries (3 ignored).
 
 ## Phase 1 (1.2–1.5) — DONE (2026-05-05)
 
