@@ -22,7 +22,7 @@ via explicit "defer to" cross-refs):
 
 `RFC` (experimental proposals) is reserved for post-v1.0 use; unused at v0.8.
 
-## Doctrine docs (4 of 4 landed)
+## Doctrine docs (5 of 5 landed)
 
 - **[`REACTIVE_INVALIDATION.md`](./REACTIVE_INVALIDATION.md)** (254L) — 4-layer
   invalidation hierarchy (graph mutations → topology evolution → tessellation
@@ -57,6 +57,27 @@ via explicit "defer to" cross-refs):
   (warning-tier as legitimate steady state / exemption philosophy / rollout
   debt as transitional equilibrium). Companion to ARCHITECTURE_LINTS.md +
   ADR-115 phase-2.5 amendment + ADR-116.
+- **[`ARCHITECTURAL_TEST_TAXONOMY.md`](./ARCHITECTURAL_TEST_TAXONOMY.md)**
+  (284L) — Phase 1 Executable Governance Architecture second deliverable;
+  subdivides sub-1's tests-tier into shape-aware classification.
+  6-term vocabulary distinguishing architectural / semantic / fixture /
+  regression / smoke / canary tests (importance ≠ test coverage);
+  7-class test-class taxonomy + 5-shape test-shape taxonomy ordered by
+  ossification cost; ALL-of-four graduation criteria with walk-every-cost
+  veto inheriting sub-1's discipline; 7-cost catalog (substrate
+  ossification / maintenance debt / false authority / implementation
+  coupling / refactor friction / discoverability rot / test-substrate
+  gravity); 7 system-level failure modes of over-testing (substrate-
+  becomes-architecture / false confidence / flaky-triage / gravity-at-
+  scale / test-as-spec / gating overuse / inability to evolve substrate);
+  6 prose-only doctrine categories; 7 anti-patterns (universal harness /
+  meta-tests / registries / TDD / DSLs / coverage thresholds / separate
+  architectural-test directory); 8 workspace probes anchoring class ×
+  shape choices already made (architecture-lint fixtures / 50-iter PIE
+  soak / 5 plugin canaries / PluginError × PluginPhase 4-cell / ADR-116
+  retroactive harness / host_tests sub-module split / failure-class
+  declaration walker / non_exhaustive SemVer hardening). Companion to
+  INVARIANT_ENFORCEMENT_STRATEGY.md + ARCHITECTURE_LINTS.md + ADR-116.
 
 ## How to navigate
 
