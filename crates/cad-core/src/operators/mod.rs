@@ -15,9 +15,11 @@
 //! Phase 7.1 D-prime shipped [`CuboidOp`] and [`TransformOp`]; Phase 7
 //! D-Extrude added [`ExtrudeOp`] (with [`Polygon2D`] profile); Phase 7
 //! D-Revolve added [`RevolveOp`] (sweep around Y-axis); Phase 7 D-Boolean
-//! adds [`BooleanOp`] (union/intersection/difference of two upstream
+//! added [`BooleanOp`] (union/intersection/difference of two upstream
 //! tessellations via the csgrs CSG library — first cad-core operator with
-//! a Tier-3 dependency, see ADR-112).
+//! a Tier-3 dependency, see ADR-112); Phase 7 D-Loft adds [`LoftOp`]
+//! (bridge two convex 2D profiles at different `+Z` heights via
+//! identity-pairing v0 vertex correspondence).
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -27,12 +29,14 @@ use crate::tessellation::Tessellation;
 pub mod boolean;
 pub mod cuboid;
 pub mod extrude;
+pub mod loft;
 pub mod revolve;
 pub mod transform;
 
 pub use boolean::{BooleanMode, BooleanOp};
 pub use cuboid::CuboidOp;
 pub use extrude::{ExtrudeOp, Polygon2D, Polygon2DError};
+pub use loft::LoftOp;
 pub use revolve::RevolveOp;
 pub use transform::TransformOp;
 
@@ -78,6 +82,8 @@ pub enum OpKind {
     Cuboid,
     /// `ExtrudeOp` — sweep a 2D convex polygon profile along `+Z`.
     Extrude,
+    /// `LoftOp` — bridge two convex 2D profiles at different `+Z` heights.
+    Loft,
     /// `RevolveOp` — rotate a 2D profile around the Y-axis through 2π.
     Revolve,
     /// `TransformOp` — affine TRS applied to one upstream tessellation.
@@ -179,6 +185,8 @@ pub enum OperatorNode {
     Cuboid(CuboidOp),
     /// Extrude — see [`ExtrudeOp`].
     Extrude(ExtrudeOp),
+    /// Loft — see [`LoftOp`].
+    Loft(LoftOp),
     /// Revolve — see [`RevolveOp`].
     Revolve(RevolveOp),
     /// Transform — see [`TransformOp`].
@@ -193,6 +201,7 @@ impl OperatorNode {
             OperatorNode::Boolean(op) => op,
             OperatorNode::Cuboid(op) => op,
             OperatorNode::Extrude(op) => op,
+            OperatorNode::Loft(op) => op,
             OperatorNode::Revolve(op) => op,
             OperatorNode::Transform(op) => op,
         }
@@ -275,6 +284,22 @@ mod tests {
     }
 
     #[test]
+    fn operator_node_dispatches_loft() {
+        let profile_a = Polygon2D::new(vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]])
+            .expect("loft profile_a square");
+        let profile_b = Polygon2D::new(vec![[0.0, 0.0], [2.0, 0.0], [2.0, 2.0], [0.0, 2.0]])
+            .expect("loft profile_b square");
+        let node = OperatorNode::Loft(LoftOp::new(profile_a, profile_b, 1.5).expect("loft op"));
+        assert_eq!(node.op_kind(), OpKind::Loft);
+        assert_eq!(node.arity(), 0);
+        let mesh = node.evaluate(&[]).expect("evaluate");
+        // n=4 ⇒ 8 vertices, 12 triangles, 36 indices.
+        assert_eq!(mesh.vertex_count(), 8);
+        assert_eq!(mesh.triangle_count(), 12);
+        assert_eq!(mesh.indices.len(), 36);
+    }
+
+    #[test]
     fn operator_node_dispatches_boolean() {
         let node = OperatorNode::Boolean(BooleanOp::union());
         assert_eq!(node.op_kind(), OpKind::Boolean);
@@ -318,8 +343,8 @@ mod tests {
     /// SemVer hardening fixture: [`OpKind`] is `#[non_exhaustive]`, so
     /// cross-crate consumers MUST include a wildcard arm when pattern-matching.
     /// This test simulates that consumer pattern: when future variants
-    /// (Loft / Sweep / Fillet per PLAN §1.5.4 + ADR-098) are added, the
-    /// wildcard arm absorbs them and this test still compiles — proving the
+    /// (Sweep / Fillet per PLAN §1.5.4 + ADR-098) are added, the wildcard arm
+    /// absorbs them and this test still compiles — proving the
     /// `#[non_exhaustive]` annotation is correctly applied.
     #[test]
     #[allow(
@@ -336,6 +361,7 @@ mod tests {
             OpKind::Boolean => "boolean",
             OpKind::Cuboid => "cuboid",
             OpKind::Extrude => "extrude",
+            OpKind::Loft => "loft",
             OpKind::Revolve => "revolve",
             OpKind::Transform => "transform",
             _ => "future-variant", // required by #[non_exhaustive]

@@ -39,8 +39,8 @@ pub mod topology;
 pub use checkpoints::{CadGraph, Checkpoint, CheckpointError, CheckpointHistory, CheckpointId};
 pub use graph::{EvalError, GraphBuildError, OperatorGraph};
 pub use operators::{
-    BooleanMode, BooleanOp, CuboidOp, EdgeKind, ExtrudeOp, OpError, OpKind, Operator, OperatorNode,
-    Polygon2D, Polygon2DError, RevolveOp, TransformOp,
+    BooleanMode, BooleanOp, CuboidOp, EdgeKind, ExtrudeOp, LoftOp, OpError, OpKind, Operator,
+    OperatorNode, Polygon2D, Polygon2DError, RevolveOp, TransformOp,
 };
 pub use tessellation::{
     CacheKey, Tessellation, TessellationCache, TessellationError, Tolerance, ToleranceError,
