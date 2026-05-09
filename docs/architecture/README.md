@@ -22,7 +22,7 @@ via explicit "defer to" cross-refs):
 
 `RFC` (experimental proposals) is reserved for post-v1.0 use; unused at v0.8.
 
-## Doctrine docs (5 of 5 landed)
+## Doctrine docs (6 of 6 landed)
 
 - **[`REACTIVE_INVALIDATION.md`](./REACTIVE_INVALIDATION.md)** (254L) — 4-layer
   invalidation hierarchy (graph mutations → topology evolution → tessellation
@@ -78,6 +78,18 @@ via explicit "defer to" cross-refs):
   retroactive harness / host_tests sub-module split / failure-class
   declaration walker / non_exhaustive SemVer hardening). Companion to
   INVARIANT_ENFORCEMENT_STRATEGY.md + ARCHITECTURE_LINTS.md + ADR-116.
+- **[`SEMANTIC_ARCHITECTURE_LAWS.md`](./SEMANTIC_ARCHITECTURE_LAWS.md)**
+  (doctrine-tier v0) — consolidated semantic law set imported from the
+  user-provided semantic architecture fragments: semantic authority,
+  mutation, projection, identity continuity, replay, propagation, drift
+  detection, cascade preview, the semantic constitution, semantic-runtime
+  improvement direction, near-theoretical maturity horizon, and qualitative
+  semantic-runtime gap assessment. The doc
+  operationalizes the law set without creating a new semantic-runtime crate,
+  lint, ADR, or global datastore; cascade preview is explicitly prose-only
+  until a concrete preview substrate lands. Companion to REACTIVE_INVALIDATION,
+  SCENE_EXTRACTION_CONTRACT, PIE_SNAPSHOT, EDITOR_ACTIONS_COMMAND_BUS,
+  CAD_TOPOLOGY_LINEAGE, and CAD_CORE_MODEL.
 
 ## How to navigate
 
