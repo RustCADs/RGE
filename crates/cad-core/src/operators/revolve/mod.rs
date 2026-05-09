@@ -322,6 +322,18 @@ impl Operator for RevolveOp {
             )
         }
     }
+
+    /// Override the default `inputs_labeled.iter().any(...)` because
+    /// [`Self::evaluate`] ALWAYS emits a labeled `Tessellation` —
+    /// irrespective of input labeling (`RevolveOp` has arity 0, so the
+    /// input slice is always empty anyway). The contract is "this
+    /// prediction must match the actual `evaluate` output's
+    /// [`Tessellation::is_labeled`]" — D-projection-γδ (2026-05-09) made
+    /// evaluate emit labels in both Full and Partial modes, so this
+    /// override matches.
+    fn output_is_labeled(&self, _inputs_labeled: &[bool]) -> bool {
+        true
+    }
 }
 
 // ---------------------------------------------------------------------------

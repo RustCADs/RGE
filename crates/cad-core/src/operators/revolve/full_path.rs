@@ -12,7 +12,7 @@
 use std::f32::consts::PI;
 
 use crate::operators::OpError;
-use crate::tessellation::Tessellation;
+use crate::tessellation::{Tessellation, TopologyFaceId};
 
 /// Full-revolution algorithm (`angle == 2π`). Emits `n * segments`
 /// vertices and `2 * n * segments` triangles via index wrap (no caps).
@@ -52,6 +52,20 @@ pub(super) fn evaluate_full(
     // emit a quad split into two CCW-from-outside triangles.
     let triangle_count = 2 * n_points * segments_usize;
     let mut indices: Vec<u32> = Vec::with_capacity(3 * triangle_count);
+    // Per-triangle face labels in canonical [`impl BRepProvider for
+    // RevolveOp`] emission order. Full mode has no caps: `n` Side faces
+    // each carry 2 triangles per ring (`2 * segments` total).
+    //
+    // The side-wall loop below is **ring-major** (`for ring in 0..segments
+    // { for edge_idx in 0..n_u32 }`), so labels for the same `Side(i)`
+    // face are interleaved across rings — NOT contiguous. The
+    // BRepProvider impl indexes Side(i) by `TopologyFaceId(i)`; each
+    // (ring, edge_idx) pair emits 2 triangles tagged
+    // `TopologyFaceId(edge_idx)`.
+    //
+    // Total per Side(i): `2 * segments` triangles. Tests verify
+    // count-per-label, not contiguity (matching the ring-major emission).
+    let mut face_labels: Vec<TopologyFaceId> = Vec::with_capacity(triangle_count);
     for ring in 0..segments {
         let ring_next = (ring + 1) % segments;
         for edge_idx in 0..n_u32 {
@@ -69,10 +83,22 @@ pub(super) fn evaluate_full(
             indices.push(bottom_left);
             indices.push(top_right);
             indices.push(top_left);
+
+            // Both triangles in the (ring, edge_idx) cell belong to
+            // Side(edge_idx) — label them identically.
+            let label = TopologyFaceId(u64::from(edge_idx));
+            face_labels.push(label);
+            face_labels.push(label);
         }
     }
 
-    Tessellation::new(positions, indices).map_err(|e| {
+    debug_assert_eq!(
+        face_labels.len(),
+        indices.len() / 3,
+        "face_labels length must equal triangle count"
+    );
+
+    Tessellation::with_labels(positions, indices, face_labels).map_err(|e| {
         OpError::InvalidParameter(format!("RevolveOp produced invalid tessellation: {e}"))
     })
 }

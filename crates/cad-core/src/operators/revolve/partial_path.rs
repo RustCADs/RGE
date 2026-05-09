@@ -11,7 +11,7 @@
 //! fan-triangulation of caps would produce inverted triangles otherwise.
 
 use crate::operators::OpError;
-use crate::tessellation::Tessellation;
+use crate::tessellation::{Tessellation, TopologyFaceId};
 
 /// Partial-revolution algorithm (`angle < 2π`). Emits
 /// `n * (segments + 1)` vertices, `2 * n * segments` side-wall triangles,
@@ -56,6 +56,22 @@ pub(super) fn evaluate_partial(
     let total_tris = side_tris + cap_tris;
     let mut indices: Vec<u32> = Vec::with_capacity(3 * total_tris);
 
+    // Per-triangle face labels in canonical [`impl BRepProvider for
+    // RevolveOp`] emission order. Partial mode emits `n` Side faces +
+    // start cap + end cap, in this order:
+    //
+    //   * Side walls FIRST: `2 * n * segments` triangles in ring-major
+    //     order (`for ring in 0..segments { for edge_idx in 0..n_u32 }`).
+    //     Each (ring, edge_idx) cell emits 2 triangles tagged
+    //     `TopologyFaceId(edge_idx)`. Side(i) labels are interleaved across
+    //     rings, NOT contiguous; total per Side(i) is `2 * segments`.
+    //   * Start cap: `n - 2` fan triangles, all
+    //     `TopologyFaceId(n)` per BRepProvider's canonical mapping.
+    //   * End cap: `n - 2` fan triangles, all `TopologyFaceId(n + 1)`.
+    //
+    // Total triangles = `2 * n * segments + 2 * (n - 2)` = `total_tris`.
+    let mut face_labels: Vec<TopologyFaceId> = Vec::with_capacity(total_tris);
+
     // Side-wall triangles. NOTE: loop is `0..segments` (NOT
     // `0..=segments`) — ring `s` and ring `s+1` form `n` quads each, so
     // `segments` quad strips × `n` quads = `n*segments` quads × 2 tris.
@@ -75,6 +91,12 @@ pub(super) fn evaluate_partial(
             indices.push(bottom_left);
             indices.push(top_right);
             indices.push(top_left);
+
+            // Both triangles in the (ring, edge_idx) cell belong to
+            // Side(edge_idx) — label them identically.
+            let label = TopologyFaceId(u64::from(edge_idx));
+            face_labels.push(label);
+            face_labels.push(label);
         }
     }
 
@@ -84,10 +106,12 @@ pub(super) fn evaluate_partial(
     // vertex 0 of the ordered (CCW from +Z) profile, listed in 3D as
     // `(0, i+1, i)` to flip handedness from +Z-CCW to -Z-CCW (matches
     // ExtrudeOp's bottom-cap winding convention).
+    let start_cap_label = TopologyFaceId(u64::from(n_u32));
     for i in 1..(n_u32 - 1) {
         indices.push(0);
         indices.push(i + 1);
         indices.push(i);
+        face_labels.push(start_cap_label);
     }
 
     // End cap (ring `segments`, θ=angle): profile lies in the plane
@@ -99,13 +123,21 @@ pub(super) fn evaluate_partial(
         OpError::InvalidParameter(format!("revolve segments too large: {segments_usize}"))
     })?;
     let end_base = segments_u32 * n_u32;
+    let end_cap_label = TopologyFaceId(u64::from(n_u32) + 1);
     for i in 1..(n_u32 - 1) {
         indices.push(end_base);
         indices.push(end_base + i);
         indices.push(end_base + i + 1);
+        face_labels.push(end_cap_label);
     }
 
-    Tessellation::new(positions, indices).map_err(|e| {
+    debug_assert_eq!(
+        face_labels.len(),
+        indices.len() / 3,
+        "face_labels length must equal triangle count"
+    );
+
+    Tessellation::with_labels(positions, indices, face_labels).map_err(|e| {
         OpError::InvalidParameter(format!("RevolveOp produced invalid tessellation: {e}"))
     })
 }

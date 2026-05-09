@@ -541,10 +541,14 @@ fn revolve_partial_start_cap_normal_points_minus_z() {
     assert!(n[2] < 0.0, "start-cap normal should be -Z, got {n:?}");
 }
 
-/// Arity 0 + unlabeled output ⇒ default returns `false` on empty inputs.
+/// Post-D-projection-γδ (2026-05-09): `RevolveOp::evaluate` now ALWAYS
+/// emits a labeled `Tessellation::with_labels(...)` in BOTH Full and
+/// Partial modes. The override of [`Operator::output_is_labeled`]
+/// returns `true` unconditionally so the cache-key contract
+/// (`output_is_labeled` MUST match `evaluate(...).is_labeled()`) holds.
 #[test]
-fn revolve_output_is_labeled_returns_false() {
-    assert!(!RevolveOp::new(ccw_square_on_plus_x(), 6)
+fn revolve_output_is_labeled_returns_true() {
+    assert!(RevolveOp::new(ccw_square_on_plus_x(), 6)
         .expect("op")
         .output_is_labeled(&[]));
 }
@@ -752,4 +756,79 @@ fn brep_edge_ids_align_with_canonical_adjacency_table() {
         BRepEdgeId::for_face_pair(face_ids[5], face_ids[0], 0),
         "edge 8 must be EndCap ∩ Side(0)"
     );
+}
+
+// ---------------------------------------------------------------------------
+// face_labels emission (sub-γδ — D-projection face-ID integration)
+// ---------------------------------------------------------------------------
+
+/// `RevolveOp::evaluate_full` emits a labeled `Tessellation` whose
+/// `face_labels` is `2 * n * segments` entries, each `Side(i)` appearing
+/// `2 * segments` times in ring-major order. For an `n=4` profile +
+/// `segments=8` Full revolution: `2 * 4 * 8 = 64` triangles, each Side(i)
+/// (i in 0..4) appears `2 * 8 = 16` times.
+///
+/// This is the load-bearing substrate contract `cad-projection`'s
+/// `brep_face_id_for_triangle` consumes (D-projection-γ).
+#[test]
+fn evaluate_full_emits_face_labels_with_correct_per_side_count() {
+    let op = RevolveOp::new(ccw_square_on_plus_x(), 8).expect("op");
+    let mesh = op.evaluate(&[]).expect("evaluate");
+    assert!(mesh.is_labeled(), "labeled output post-D-projection-γδ");
+    let labels = mesh.face_labels.as_ref().expect("labeled");
+    assert_eq!(labels.len(), 64, "n=4, segments=8 → 2*n*segments = 64 tris");
+
+    // Each Side(i) should appear exactly 2*segments = 16 times.
+    for i in 0u64..4 {
+        let count = labels.iter().filter(|&&l| l == TopologyFaceId(i)).count();
+        assert_eq!(count, 16, "Side({i}) should appear 16 times");
+    }
+}
+
+/// `RevolveOp::evaluate_partial` emits a labeled `Tessellation` whose
+/// `face_labels` is `2 * n * segments + 2 * (n - 2)` entries: `n` Side
+/// faces with `2 * segments` triangles each + StartCap with `n - 2`
+/// triangles + EndCap with `n - 2` triangles. For `n=4` + `segments=8`
+/// + `angle=π`: `2 * 4 * 8 + 2 * 2 = 68` triangles total, Side(0..3) at
+/// 16 each, StartCap (`TopologyFaceId(4)`) at 2, EndCap
+/// (`TopologyFaceId(5)`) at 2.
+#[test]
+fn evaluate_partial_emits_face_labels_with_side_and_cap_labels() {
+    let op = RevolveOp::partial(ccw_square_on_plus_x(), 8, PI).expect("op");
+    let mesh = op.evaluate(&[]).expect("evaluate");
+    assert!(mesh.is_labeled(), "labeled output post-D-projection-γδ");
+    let labels = mesh.face_labels.as_ref().expect("labeled");
+    assert_eq!(
+        labels.len(),
+        68,
+        "n=4, segments=8 → 2*n*segments + 2*(n-2) = 64 + 4 = 68 tris"
+    );
+
+    // Each Side(i) appears exactly 2*segments = 16 times.
+    for i in 0u64..4 {
+        let count = labels.iter().filter(|&&l| l == TopologyFaceId(i)).count();
+        assert_eq!(count, 16, "Side({i}) should appear 16 times");
+    }
+    // StartCap (TopologyFaceId(n) = 4) appears n-2 = 2 times.
+    assert_eq!(
+        labels.iter().filter(|&&l| l == TopologyFaceId(4)).count(),
+        2,
+        "StartCap should appear n-2=2 times"
+    );
+    // EndCap (TopologyFaceId(n + 1) = 5) appears n-2 = 2 times.
+    assert_eq!(
+        labels.iter().filter(|&&l| l == TopologyFaceId(5)).count(),
+        2,
+        "EndCap should appear n-2=2 times"
+    );
+
+    // Verify caps come AFTER side walls in the canonical emission order.
+    // First 64 labels are sides (Side(0..3) each appearing 16 times in
+    // ring-major); last 4 are StartCap then EndCap.
+    for tri in 64..66 {
+        assert_eq!(labels[tri], TopologyFaceId(4), "tri {tri} is StartCap");
+    }
+    for tri in 66..68 {
+        assert_eq!(labels[tri], TopologyFaceId(5), "tri {tri} is EndCap");
+    }
 }
