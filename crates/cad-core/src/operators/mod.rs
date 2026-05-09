@@ -29,6 +29,7 @@ use crate::tessellation::Tessellation;
 pub mod boolean;
 pub mod cuboid;
 pub mod extrude;
+pub mod fillet;
 pub mod loft;
 pub mod revolve;
 pub mod sweep;
@@ -37,6 +38,7 @@ pub mod transform;
 pub use boolean::{BooleanMode, BooleanOp};
 pub use cuboid::CuboidOp;
 pub use extrude::{ExtrudeOp, Polygon2D, Polygon2DError};
+pub use fillet::{FilletError, FilletOp};
 pub use loft::LoftOp;
 pub use revolve::RevolveOp;
 pub use sweep::{Polyline3D, Polyline3DError, SweepOp};
@@ -84,6 +86,9 @@ pub enum OpKind {
     Cuboid,
     /// `ExtrudeOp` — sweep a 2D convex polygon profile along `+Z`.
     Extrude,
+    /// `FilletOp` — Cuboid-only chamfer-approximation fillet operator
+    /// (D-Fillet sub-α, first BRepEdgeId consumer).
+    Fillet,
     /// `LoftOp` — bridge two convex 2D profiles at different `+Z` heights.
     Loft,
     /// `RevolveOp` — rotate a 2D profile around the Y-axis through 2π.
@@ -189,6 +194,8 @@ pub enum OperatorNode {
     Cuboid(CuboidOp),
     /// Extrude — see [`ExtrudeOp`].
     Extrude(ExtrudeOp),
+    /// Fillet — see [`FilletOp`].
+    Fillet(FilletOp),
     /// Loft — see [`LoftOp`].
     Loft(LoftOp),
     /// Revolve — see [`RevolveOp`].
@@ -207,6 +214,7 @@ impl OperatorNode {
             OperatorNode::Boolean(op) => op,
             OperatorNode::Cuboid(op) => op,
             OperatorNode::Extrude(op) => op,
+            OperatorNode::Fillet(op) => op,
             OperatorNode::Loft(op) => op,
             OperatorNode::Revolve(op) => op,
             OperatorNode::Sweep(op) => op,
@@ -384,11 +392,36 @@ mod tests {
             OpKind::Boolean => "boolean",
             OpKind::Cuboid => "cuboid",
             OpKind::Extrude => "extrude",
+            OpKind::Fillet => "fillet",
             OpKind::Loft => "loft",
             OpKind::Revolve => "revolve",
             OpKind::Sweep => "sweep",
             OpKind::Transform => "transform",
             _ => "future-variant", // required by #[non_exhaustive]
         };
+    }
+
+    #[test]
+    fn operator_node_dispatches_fillet() {
+        use crate::topology::{BRepEdgeProvider, BRepOwnerId};
+        // Build a Cuboid, derive a real edge ID, build a FilletOp,
+        // wrap it in OperatorNode, dispatch op_kind / arity. Mirrors
+        // the existing operator_node_dispatches_* tests.
+        let cube = CuboidOp::default();
+        let owner = BRepOwnerId::from_bytes([0x55; 16]);
+        let edge = cube.brep_edge_ids(owner)[0];
+        let fillet = FilletOp::new(&cube, owner, vec![edge], 0.1).expect("fillet");
+        let node = OperatorNode::Fillet(fillet);
+        assert_eq!(node.op_kind(), OpKind::Fillet);
+        assert_eq!(node.arity(), 1);
+        // Wrong arity (no inputs) yields WrongArity.
+        let err = node.evaluate(&[]).unwrap_err();
+        assert!(matches!(
+            err,
+            OpError::WrongArity {
+                expected: 1,
+                got: 0
+            }
+        ));
     }
 }
