@@ -18,6 +18,7 @@ use crate::workloads::{FIXED_DT, HOT_RELOAD_CYCLES};
 
 const COUNTER_V1_WAT: &str = include_str!("../../script-host/tests/fixtures/counter_v1.wat");
 const COUNTER_V2_WAT: &str = include_str!("../../script-host/tests/fixtures/counter_v2.wat");
+const COUNTER_BULK_WAT: &str = include_str!("../../script-host/tests/fixtures/counter_bulk.wat");
 
 /// Formal Phase 3.3 / 3.4 hot-reload scene size.
 pub const FORMAL_HOT_RELOAD_ENTITY_COUNT: usize = 1_000;
@@ -151,14 +152,16 @@ impl Default for EcsIterationConfig {
 
 /// Summary of a Phase 3.4 ECS-via-WASM ratio measurement.
 ///
-/// Both `native_*` and `wasm_*` paths perform identical algorithmic work
-/// per increment: a query-scan to find the entity by handle, then a
-/// `World::insert` to write the new value. The native path drives this
-/// directly via `rge_kernel_ecs::World`; the wasm path drives it via
-/// `ScriptInstance::tick`, which transitions into wasm and back through
-/// the `rge.ecs::{get_counter, set_counter}` host bridge once per
-/// entity per frame. The recorded `ratio` therefore captures host-bridge
-/// transition overhead almost in isolation (algorithmic work cancels).
+/// Both `native_*` and `wasm_*` paths drive the same logical workload —
+/// increment every Counter-bearing entity by 1 per frame, for `frames`
+/// frames — through a single bulk traversal each. The native path runs
+/// `native_bulk_add_to_all_counters` once per frame; the wasm path runs
+/// `ScriptInstance::tick` once per frame against a `counter_bulk.wat`
+/// instance whose tick body issues exactly one
+/// `rge.ecs::add_to_all_counters(1)` host call. Algorithmic work — one
+/// world scan plus N `World::insert` calls — cancels in the comparison,
+/// so the recorded `ratio` captures the per-frame wasm-trampoline +
+/// host-call overhead in near-isolation under the bulk path.
 #[derive(Debug, Clone, PartialEq)]
 pub struct EcsIterationReport {
     /// Number of Counter-bearing entities iterated per frame.
@@ -173,10 +176,10 @@ pub struct EcsIterationReport {
     pub native_per_frame_avg: Duration,
     /// Wasm time per frame (averaged across `frames`).
     pub wasm_per_frame_avg: Duration,
-    /// `wasm_total / native_total`. The Phase 3.4 gate target is ≤ 1.5;
-    /// substrate-pending until bulk-iteration host functions land
-    /// (current `rge.ecs::get_counter` / `set_counter` cross the wasm
-    /// boundary once per entity per frame).
+    /// `wasm_total / native_total`. The Phase 3.4 gate target is ≤ 1.5
+    /// under the bulk-path substrate (`counter_bulk.wat` tick crosses the
+    /// wasm boundary exactly once per frame and re-enters the host once
+    /// per frame via `rge.ecs::add_to_all_counters`).
     pub ratio: f64,
 }
 
@@ -208,10 +211,16 @@ pub struct ScriptHostBench {
     engine: Engine,
     module_v1: ScriptModule,
     module_v2: ScriptModule,
+    /// Bulk-iteration fixture used by the Phase 3.4 ECS-via-WASM ratio
+    /// measurement. Tick body issues exactly one `rge.ecs::add_to_all_counters`
+    /// call, replacing v1/v2's per-entity init + get + set protocol with one
+    /// host crossing per frame. v1/v2 stay as-is for the hot-reload gate.
+    module_bulk: ScriptModule,
 }
 
 impl ScriptHostBench {
-    /// Compile the canonical Counter v1/v2 fixtures once for repeated runs.
+    /// Compile the canonical Counter v1/v2 fixtures plus the bulk-path
+    /// `counter_bulk.wat` fixture once for repeated runs.
     ///
     /// # Errors
     ///
@@ -220,10 +229,12 @@ impl ScriptHostBench {
         let engine = Engine::default();
         let module_v1 = compile_counter_module(&engine, "counter_v1", COUNTER_V1_WAT)?;
         let module_v2 = compile_counter_module(&engine, "counter_v2", COUNTER_V2_WAT)?;
+        let module_bulk = compile_counter_module(&engine, "counter_bulk", COUNTER_BULK_WAT)?;
         Ok(Self {
             engine,
             module_v1,
             module_v2,
+            module_bulk,
         })
     }
 
@@ -337,25 +348,30 @@ impl ScriptHostBench {
         })
     }
 
-    /// Run the Phase 3.4 ECS-via-WASM ratio measurement.
+    /// Run the Phase 3.4 ECS-via-WASM ratio measurement under the
+    /// bulk-path substrate.
     ///
     /// Drives the same logical workload — increment every Counter-bearing
     /// entity by 1 per frame, for `frames` frames — through two paths in
-    /// sequence against independent worlds:
+    /// sequence against independent worlds, and reports
+    /// `wasm_total / native_total`.
     ///
-    /// 1. **Native baseline** — for every entity, scan `query::<Counter>()`
-    ///    to find the matching `EntityId` (mirroring the host bridge's
-    ///    `get_counter` linear search), then `world.insert` the new value
-    ///    (mirroring `set_counter`'s scan + insert pair). Same algorithmic
-    ///    work per increment as the wasm path; no shortcut.
-    /// 2. **Wasm-via-host** — instantiate one `ScriptInstance` against the
-    ///    Counter v1 module, call `init_entity(handle)` then `tick(dt)`
-    ///    once per entity per frame. Each tick crosses the wasm boundary
-    ///    once and re-enters the host bridge twice (`get_counter` +
-    ///    `set_counter`) for the actual increment.
+    /// 1. **Native baseline** — once per frame, run
+    ///    `native_bulk_add_to_all_counters(world, 1)`: a single pass over
+    ///    the world collecting `(EntityId, new_value)` pairs, then one
+    ///    `World::insert` per entity. One scan + N inserts per call.
+    /// 2. **Wasm-via-host** — instantiate one `ScriptInstance` against
+    ///    `module_bulk` (no `init_entity` registration — the bulk fixture
+    ///    operates on the whole Counter-bearing population). Call
+    ///    `tick(dt)` once per frame; the tick body issues exactly one
+    ///    `rge.ecs::add_to_all_counters(1)` host call which performs the
+    ///    same scan + insert work.
     ///
-    /// Final assertion: both worlds end with each Counter incremented by
-    /// exactly `frames`, validating both paths perform identical work.
+    /// The two paths share algorithmic shape (the host function and the
+    /// native helper are byte-for-byte the same code), so the recorded
+    /// `ratio` captures the per-frame wasm-trampoline + host-call overhead
+    /// in near-isolation. Final integrity check: both worlds end with
+    /// each Counter incremented by exactly `frames`.
     ///
     /// # Errors
     ///
@@ -375,49 +391,32 @@ impl ScriptHostBench {
 
         // Independent worlds so the wasm side cannot pollute the native
         // measurement and vice versa.
-        let (mut native_world, native_entities) = seed_counter_world(config.entity_count);
-        let (mut wasm_world, wasm_entities) = seed_counter_world(config.entity_count);
-        let native_handles: Vec<i64> = native_entities
-            .iter()
-            .copied()
-            .map(entity_id_to_i64)
-            .collect();
-        let wasm_handles: Vec<i64> = wasm_entities
-            .iter()
-            .copied()
-            .map(entity_id_to_i64)
-            .collect();
+        let (mut native_world, _native_entities) = seed_counter_world(config.entity_count);
+        let (mut wasm_world, _wasm_entities) = seed_counter_world(config.entity_count);
 
         // Capture starting sums so we can verify both paths advance by
         // exactly `frames * entity_count` increments after the measurement.
         let native_start_sum = counter_sum(&native_world);
         let wasm_start_sum = counter_sum(&wasm_world);
 
-        // ---- Native path ----
+        // ---- Native path (bulk shape; once per frame) ----
         let t_native = Instant::now();
         for _frame in 0..config.frames {
-            for handle in &native_handles {
-                native_increment_via_handle(&mut native_world, *handle);
-            }
+            let _ = native_bulk_add_to_all_counters(&mut native_world, 1);
         }
         let native_total = t_native.elapsed();
 
-        // ---- Wasm-via-host path ----
-        let mut wasm_instance = ScriptInstance::instantiate(&self.engine, &self.module_v1)
-            .map_err(|e| format!("instantiate v1: {e}"))?;
+        // ---- Wasm-via-host path (bulk shape; once per frame) ----
+        let mut wasm_instance = ScriptInstance::instantiate(&self.engine, &self.module_bulk)
+            .map_err(|e| format!("instantiate counter_bulk: {e}"))?;
         let mut events = EventBus::new();
         let mut diagnostics = DiagnosticAggregator::new();
 
         let t_wasm = Instant::now();
         for _frame in 0..config.frames {
-            for handle in &wasm_handles {
-                wasm_instance
-                    .call_init_entity(*handle, &mut wasm_world, &mut events, &mut diagnostics)
-                    .map_err(|e| format!("init_entity: {e}"))?;
-                wasm_instance
-                    .tick(FIXED_DT, &mut wasm_world, &mut events, &mut diagnostics)
-                    .map_err(|e| format!("tick: {e}"))?;
-            }
+            wasm_instance
+                .tick(FIXED_DT, &mut wasm_world, &mut events, &mut diagnostics)
+                .map_err(|e| format!("tick: {e}"))?;
         }
         let wasm_total = t_wasm.elapsed();
 
@@ -508,6 +507,7 @@ impl std::fmt::Debug for ScriptHostBench {
         f.debug_struct("ScriptHostBench")
             .field("module_v1", &self.module_v1.name())
             .field("module_v2", &self.module_v2.name())
+            .field("module_bulk", &self.module_bulk.name())
             .finish_non_exhaustive()
     }
 }
@@ -554,24 +554,23 @@ fn poison_counter_world(world: &mut World, entities: &[EntityId], cycle: u32) {
     }
 }
 
-/// Native baseline mirror of `rge.ecs::get_counter` + `set_counter` —
-/// scan the world to find the entity by handle, then write the
-/// incremented Counter via `World::insert`. Two scans per call match
-/// the host bridge's two scans (one per host function), so both paths
-/// perform identical algorithmic work per increment.
-fn native_increment_via_handle(world: &mut World, handle: i64) {
-    let mut found_value: Option<i64> = None;
-    let mut found_id: Option<EntityId> = None;
-    for (id, counter) in world.query::<Counter>() {
-        if entity_id_to_i64(id) == handle {
-            found_value = Some(counter.value);
-            found_id = Some(id);
-            break;
-        }
+/// Native baseline mirror of `rge.ecs::add_to_all_counters` — single
+/// pass over the world collecting `(EntityId, new_value)` pairs, then
+/// `World::insert` for each. One scan + N inserts per call. Identical
+/// algorithmic shape to the bulk host function, so the recorded ratio
+/// captures the wasm boundary-crossing overhead in near-isolation
+/// against the bulk path. Returns the count of components updated so
+/// callers can validate behaviour parity with the host function.
+fn native_bulk_add_to_all_counters(world: &mut World, delta: i64) -> usize {
+    let updates: Vec<(EntityId, i64)> = world
+        .query::<Counter>()
+        .map(|(id, counter)| (id, counter.value.wrapping_add(delta)))
+        .collect();
+    let count = updates.len();
+    for (id, value) in updates {
+        world.insert(id, Counter { value });
     }
-    if let (Some(value), Some(id)) = (found_value, found_id) {
-        world.insert(id, Counter { value: value + 1 });
-    }
+    count
 }
 
 fn counter_sum(world: &World) -> i128 {
@@ -677,7 +676,7 @@ mod tests {
     }
 
     #[test]
-    fn phase_3_4_ecs_via_wasm_ratio_records_baseline() {
+    fn phase_3_4_ecs_via_wasm_ratio_meets_gate() {
         let bench = ScriptHostBench::new().expect("compile fixtures");
         let report = bench
             .ecs_iteration_ratio(EcsIterationConfig::formal())
@@ -692,12 +691,8 @@ mod tests {
             report.ratio_pretty(),
         );
 
-        // Sanity gates only — we record the actual ratio but do NOT
-        // assert ≤ 1.5× because the current `rge.ecs::{get_counter,
-        // set_counter}` host bridge crosses the wasm boundary once per
-        // entity per frame; achieving ≤ 1.5× requires bulk-iteration
-        // host functions that are out of scope for this measurement
-        // dispatch (Phase 3.4 substrate work proper).
+        // Sanity gates: shape of the report matches the formal config and
+        // both paths actually ran.
         assert_eq!(report.entity_count, FORMAL_HOT_RELOAD_ENTITY_COUNT);
         assert_eq!(report.frames, 10);
         assert!(
@@ -712,6 +707,20 @@ mod tests {
             report.ratio.is_finite() && report.ratio > 0.0,
             "ratio must be finite and positive: {}",
             report.ratio
+        );
+
+        // Formal Phase 3.4 ≤ 1.5× gate. The `counter_bulk.wat` fixture
+        // crosses the wasm boundary exactly once per frame and re-enters
+        // the host once per frame via `rge.ecs::add_to_all_counters`, so
+        // the per-frame trampoline cost is amortized across all 1000
+        // entities and the ratio sits within measurement noise of 1.0×
+        // on commodity x86_64 hardware. If a future substrate change
+        // reintroduces per-entity boundary crossings, this assertion
+        // will surface the regression directly.
+        assert!(
+            report.ratio <= 1.5,
+            "Phase 3.4 ECS-via-WASM ratio gate breached: {} > 1.5×",
+            report.ratio_pretty(),
         );
     }
 

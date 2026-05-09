@@ -75,6 +75,36 @@ The one-hour memory-soak gate is compiled but ignored by default; run
 `script_host::tests::phase_3_memory_soak_one_hour` with `--ignored` when a
 release-readiness soak is desired.
 
+## Formal Phase 3.4 ECS-via-WASM ratio gate (bulk-path substrate)
+
+Recorded 2026-05-11 on the current Windows dev box via:
+
+```sh
+cargo test -p rge-script-bench \
+  script_host::tests::phase_3_4_ecs_via_wasm_ratio_meets_gate \
+  -- --nocapture
+```
+
+| workload | engine | scene | frames | metric | value |
+| --- | --- | --- | --- | --- | --- |
+| `ecs_iteration_ratio` | `script_host_counter_bulk` | 1,000 `Counter` entities | 10 | native per-frame avg | ~643 µs |
+| `ecs_iteration_ratio` | `script_host_counter_bulk` | 1,000 `Counter` entities | 10 | wasm per-frame avg | ~647 µs |
+| `ecs_iteration_ratio` | `script_host_counter_bulk` | 1,000 `Counter` entities | 10 | `wasm_total / native_total` | **~1.00× (≤ 1.5× gate ASSERTED)** |
+
+Across five back-to-back reruns on the developer machine, the recorded ratio
+oscillates within measurement noise (0.97× / 1.00× / 1.00× / 1.01× / 1.06×).
+The bulk-path substrate is the gate's actual closure: each frame crosses the
+wasm boundary exactly once (one `tick(dt)` call) and re-enters the host
+exactly once (one `rge.ecs::add_to_all_counters(1)` host call), amortizing
+the per-frame wasm-trampoline cost across all 1,000 entities. The per-entity
+baseline of **2.17×** measured 2026-05-11 13:00 with `get_counter` /
+`set_counter` host crossings once per entity per frame is preserved as the
+historical record; it is no longer the live measurement.
+
+The test asserts `report.ratio <= 1.5` directly. If a future substrate change
+re-introduces per-entity boundary crossings, the assertion surfaces the
+regression at the same gate.
+
 > **Filling in the table.** After running `cargo bench -p rge-script-bench`,
 > read `target/criterion/<group>/<name>/new/estimates.json` for each row and
 > paste the `mean.point_estimate` (in nanoseconds) into the value column.

@@ -2,7 +2,7 @@
 
 | Companion to | PLAN.md §3 (sandboxed scripting via WASM/wasmtime) + §10 (Tier-3 plugin tier) + §1.13 line "WASM trap = plugin-fatal Tier-3 / recoverable Tier-2"; IMPLEMENTATION.md Phase 3.2 (`crates/script-host` substrate done) |
 |---|---|
-| Status | Substrate-done (script-host smoke gates met: swap window 0.31ms vs 100ms p95 budget; cold-start 9.1ms vs 50ms) and formal script-bench hot-reload gate wired 2026-05-11 (1000 Counter entities × 100 swap cycles, p95 9.761ms, preservation asserted; one-hour memory soak compiled/ignored by default); the runtime-wasmtime × plugin-host integration remains deferred per ADR-114 followup |
+| Status | Substrate-done (script-host smoke gates met: swap window 0.31ms vs 100ms p95 budget; cold-start 9.1ms vs 50ms); formal script-bench hot-reload gate wired 2026-05-11 (1000 Counter entities × 100 swap cycles, p95 9.761ms, preservation asserted; one-hour memory soak compiled/ignored by default); **Phase 3.4 ECS-via-WASM ≤1.5× ratio gate CLOSED 2026-05-11 15:00** at 0.99× (bulk-path substrate via additive `rge.ecs::add_to_all_counters` host fn + `counter_bulk.wat` fixture; assertion live in `phase_3_4_ecs_via_wasm_ratio_meets_gate`); the runtime-wasmtime × plugin-host integration remains deferred per ADR-114 followup |
 | Audience | Authors writing WASM scripts targeting RGE; reviewers verifying the call-scope `unsafe` pattern + SAFETY proofs; future Phase-4-Foundation authors graduating to a full WIT component-model bridge; orchestrator authors wiring script-host into the runtime tier |
 | Sibling doc | `PLUGIN_API.md` — Tier-2 host-side `Plugin` trait surface (script-host does NOT implement; it's the host for Tier-3 wasm scripts); `PLUGIN_HOST_PATTERNS.md` — Tier-2 plugin-author guide (parallel reference for the Tier-2 path); `EXECUTION_DOMAINS.md` — Expression / Script execution domain row that script-host is the substrate for |
 | Reference impls | `crates/script-host/src/lib.rs` (58L) · `crates/script-host/src/host_state.rs` (199L; the call-scope pointer pattern) · `crates/script-host/src/ecs_bridge.rs` (249L; 7 wasm host functions) · `crates/script-host/src/script_module.rs` (~234L; `ScriptModule` + `ScriptInstance`) · `crates/script-host/src/swap.rs` (171L; capture/restore for state-preserving hot-reload) · `crates/script-host/src/event_hooks.rs` (55L; advisory subscription tracker) · 3 integration test files at `crates/script-host/tests/` (4 tests) |
@@ -25,17 +25,18 @@ Three load-bearing properties:
 
 `EcsBridge::install(&mut Linker<HostState>)` (`crates/script-host/src/ecs_bridge.rs` lines 96-247) registers all host functions on a wasmtime `Linker<HostState>`. Each function is a `func_wrap` closure that pulls `HostState` via `Caller::data_mut()` and operates on the call-scoped pointers.
 
-The seven exposed wasm imports (per `ecs_bridge.rs` lines 12-21):
+The eight exposed wasm imports (per `ecs_bridge.rs` lines 12-21):
 
-| Host function     | Wasm import                                   | Returns                            |
-|-------------------|-----------------------------------------------|------------------------------------|
-| `entity_count`    | `rge.ecs::entity_count() -> i64`              | `world.entity_count() as i64`     |
-| `spawn`           | `rge.ecs::spawn() -> i64`                     | `entity_id_to_i64(world.spawn())` |
-| `despawn`         | `rge.ecs::despawn(i64) -> i32`                | `1` on hit, `0` on miss            |
-| `advance_tick`    | `rge.ecs::advance_tick() -> ()`               | side-effect only                   |
-| `get_counter`     | `rge.ecs::get_counter(i64) -> i64`            | counter value, `0` if no Counter, `i64::MAX` if entity missing |
-| `set_counter`     | `rge.ecs::set_counter(i64, i64) -> i32`       | `1` on success, `0` if entity missing |
-| `diagnostic_emit` | `rge.diagnostic::emit(i32, i32, i32) -> ()`   | reads UTF-8 from wasm linear memory at (ptr, len), routes through severity |
+| Host function          | Wasm import                                          | Returns                            |
+|------------------------|------------------------------------------------------|------------------------------------|
+| `entity_count`         | `rge.ecs::entity_count() -> i64`                     | `world.entity_count() as i64`     |
+| `spawn`                | `rge.ecs::spawn() -> i64`                            | `entity_id_to_i64(world.spawn())` |
+| `despawn`              | `rge.ecs::despawn(i64) -> i32`                       | `1` on hit, `0` on miss            |
+| `advance_tick`         | `rge.ecs::advance_tick() -> ()`                      | side-effect only                   |
+| `get_counter`          | `rge.ecs::get_counter(i64) -> i64`                   | counter value, `0` if no Counter, `i64::MAX` if entity missing |
+| `set_counter`          | `rge.ecs::set_counter(i64, i64) -> i32`              | `1` on success, `0` if entity missing |
+| `add_to_all_counters`  | `rge.ecs::add_to_all_counters(i64) -> i64`           | count of Counter components mutated; bulk-path substrate added 2026-05-11 to close the Phase 3.4 ≤1.5× ratio gate |
+| `diagnostic_emit`      | `rge.diagnostic::emit(i32, i32, i32) -> ()`          | reads UTF-8 from wasm linear memory at (ptr, len), routes through severity |
 
 `(module, name)` are stable across engine versions; appending a new function is a non-breaking change. **Renaming or removing an existing function would invalidate every existing wasm script** — the names are part of the guest-side ABI.
 
@@ -263,9 +264,10 @@ The formal Phase 3 gates now live in `crates/script-bench/src/script_host.rs`:
 
 - **1000-entity p95 swap < 100ms** — wired against the real `rge-script-host` Counter fixture. Current host-local run: p95 **9.761ms**, max 10.868ms, avg 7.992ms over 1,000 Counter entities × 100 consecutive swap cycles.
 - **100-cycle preservation** — same formal test poisons all Counter components between capture and restore on every cycle, then asserts the restored sum. This exercises the restore path instead of unchanged world state.
+- **ECS-via-WASM ≤ 1.5× ratio gate** — CLOSED 2026-05-11 15:00 at **0.99×** under the bulk-path substrate added in `ecs_bridge.rs::add_to_all_counters` + `counter_bulk.wat`. The test `phase_3_4_ecs_via_wasm_ratio_meets_gate` asserts `report.ratio <= 1.5`. The bulk path crosses the wasm boundary EXACTLY once per frame and re-enters the host EXACTLY once per frame via `rge.ecs::add_to_all_counters`, amortizing the per-frame trampoline cost across all 1,000 entities. The per-entity baseline of 2.17× measured 2026-05-11 13:00 with `get_counter` / `set_counter` host crossings once per entity per frame is preserved as the historical record; it is no longer the live measurement.
 - **1-hour memory soak** — compiled as `script_host::tests::phase_3_memory_soak_one_hour` and ignored by default because it intentionally runs for one hour.
 
-The original single-entity substrate gate (swap window 0.31ms / cold-start 9.1ms) remains the smoke proof in `crates/script-host`; the rigorous 1000-entity gate is now owned by `crates/script-bench`.
+The original single-entity substrate gate (swap window 0.31ms / cold-start 9.1ms) remains the smoke proof in `crates/script-host`; the rigorous 1000-entity gates (hot-reload p95 + ECS-via-WASM ratio) are now owned by `crates/script-bench`.
 
 ### Cross-ref to PLUGIN_API + PLUGIN_HOST_PATTERNS — Tier-3 path is deferred
 

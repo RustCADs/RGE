@@ -9,15 +9,16 @@
 //!
 //! # Wasm import names (stable)
 //!
-//! | Host function     | Wasm import                             |
-//! |-------------------|-----------------------------------------|
-//! | `entity_count`    | `rge.ecs::entity_count() -> i64`        |
-//! | `spawn`           | `rge.ecs::spawn() -> i64`               |
-//! | `despawn`         | `rge.ecs::despawn(i64) -> i32`          |
-//! | `advance_tick`    | `rge.ecs::advance_tick()`               |
-//! | `get_counter`     | `rge.ecs::get_counter(i64) -> i64`      |
-//! | `set_counter`     | `rge.ecs::set_counter(i64, i64) -> i32` |
-//! | `diagnostic_emit` | `rge.diagnostic::emit(i32, i32, i32)`   |
+//! | Host function          | Wasm import                                  |
+//! |------------------------|----------------------------------------------|
+//! | `entity_count`         | `rge.ecs::entity_count() -> i64`             |
+//! | `spawn`                | `rge.ecs::spawn() -> i64`                    |
+//! | `despawn`              | `rge.ecs::despawn(i64) -> i32`               |
+//! | `advance_tick`         | `rge.ecs::advance_tick()`                    |
+//! | `get_counter`          | `rge.ecs::get_counter(i64) -> i64`           |
+//! | `set_counter`          | `rge.ecs::set_counter(i64, i64) -> i32`      |
+//! | `add_to_all_counters`  | `rge.ecs::add_to_all_counters(i64) -> i64`   |
+//! | `diagnostic_emit`      | `rge.diagnostic::emit(i32, i32, i32)`        |
 
 use rge_kernel_diagnostics::Severity;
 use rge_kernel_ecs::{Component, EntityId, World};
@@ -207,6 +208,41 @@ impl EcsBridge {
                 } else {
                     0
                 }
+            },
+        )?;
+
+        // ------------------------------------------------------------------
+        // rge.ecs::add_to_all_counters(delta: i64) -> i64
+        //
+        // Bulk-iteration host function for Phase 3.4 ECS-via-WASM ratio
+        // closure. Increments every Counter-bearing entity by `delta` in a
+        // single host call, returning the count of components updated.
+        //
+        // Uses the same collect-then-mutate pattern as `set_counter` to
+        // avoid the query-then-mutate borrow conflict against `World`.
+        // `wrapping_add` mirrors the per-entity setter's raw-i64 semantics
+        // (no overflow trap; aligns with set_counter's wrap-on-overflow
+        // behaviour above).
+        //
+        // Phase 3 to Phase 4 ABI policy: this is an additive registration
+        // alongside `get_counter` / `set_counter`. The per-entity
+        // functions remain unchanged; this bulk path is the substrate
+        // closure for the ≤ 1.5× ratio gate.
+        // ------------------------------------------------------------------
+        linker.func_wrap(
+            "rge.ecs",
+            "add_to_all_counters",
+            |mut caller: Caller<'_, HostState>, delta: i64| -> i64 {
+                let world = caller.data_mut().world();
+                let updates: Vec<(EntityId, i64)> = world
+                    .query::<Counter>()
+                    .map(|(id, counter)| (id, counter.value.wrapping_add(delta)))
+                    .collect();
+                let count = updates.len();
+                for (id, value) in updates {
+                    world.insert(id, Counter { value });
+                }
+                i64::try_from(count).unwrap_or(i64::MAX)
             },
         )?;
 

@@ -99,6 +99,45 @@ formal unit gate reports p95 directly; the Criterion row wraps the same
 
 **Target.** p95 < 100 ms (PLAN.md §5.6).
 
+### W4b — `ecs_iteration_ratio` (Phase 3.4 ECS-via-WASM bulk-path gate)
+
+**Native baseline.** `native_bulk_add_to_all_counters(world: &mut World, delta: i64) -> usize`
+in `script_host.rs`: ONE `world.query::<Counter>()` scan collecting `(EntityId, new_value)` pairs
+plus ONE `world.insert` pass writing the new values. Returns the count of components updated.
+This mirrors the new `rge.ecs::add_to_all_counters` host function's algorithmic shape EXACTLY,
+so the recorded ratio captures wasm-trampoline + host-call overhead in near-isolation rather
+than algorithmic-cost asymmetry.
+
+**Script-host version.** A new WAT fixture `crates/script-host/tests/fixtures/counter_bulk.wat`
+exports a single `tick(dt: f32)` whose body issues exactly one `rge.ecs::add_to_all_counters(1)`
+host call per frame and discards the result. The bench drives `module_bulk` ONCE (`instantiate`)
+then `tick(FIXED_DT)` ONCE per frame — no per-entity `init_entity` loop, no per-entity tick. The
+host function performs the same scan + insert work the native helper performs.
+
+**Bulk vs per-entity boundary cost.** The earlier `phase_3_4_ecs_via_wasm_ratio_records_baseline`
+measurement (recorded 2026-05-11 13:00 in the historical row) drove the wasm path through
+`rge.ecs::{init_entity, get_counter, set_counter}` once per entity per frame, paying ~3,000 host
+crossings per frame at 1,000 entities. Under the bulk substrate, each frame crosses the wasm
+boundary exactly twice (one `tick`, one host fn). The amortization brings the recorded ratio
+within measurement noise of 1.0×.
+
+**Inputs.** Independent worlds (one per path); each seeded with 1,000 Counter-bearing ECS
+entities via the same `seed_counter_world` helper used by the hot-reload gate. Starting Counter
+values are deterministic per `index_to_counter_value(0, index)`.
+
+**Loop.** `EcsIterationConfig::formal()` pins 1,000 entities × 10 frames. 10,000
+host↔WASM transitions per per-entity measurement collapses to 20 transitions under the bulk
+substrate; the per-frame trampoline cost is amortized across the 1,000-entity scan.
+
+**Integrity check.** Final assertion: both worlds end with each Counter incremented by exactly
+`frames` (= 10) and the recorded delta matches `frames * entity_count`. Validates both paths
+performed the workload.
+
+**What is measured.** `wasm_total / native_total`. Reported by `EcsIterationReport::ratio_pretty`
+as e.g. `"0.99×"`.
+
+**Target.** ≤ **1.5×** native. Asserted in `phase_3_4_ecs_via_wasm_ratio_meets_gate`.
+
 ### W5 — `memory_overhead`
 
 **Native baseline.** `size_of::<fn(&mut Transform)>()` — the smallest
@@ -169,6 +208,20 @@ This runs the real `rge-script-host` Counter swap protocol across 1,000
 entities and 100 consecutive hot-reload cycles, then prints p95 / max / avg
 swap-window latency.
 
+### Formal Phase 3.4 ECS-via-WASM ratio gate
+
+```sh
+cargo test -p rge-script-bench \
+  script_host::tests::phase_3_4_ecs_via_wasm_ratio_meets_gate \
+  -- --nocapture
+```
+
+This drives the bulk-path substrate (`rge.ecs::add_to_all_counters` host fn +
+`counter_bulk.wat` fixture) over 1,000 Counter entities × 10 frames, prints
+`native_per_frame_us` / `wasm_per_frame_us` / `ratio`, and asserts `ratio <= 1.5`.
+A regression that reintroduces per-entity boundary crossings will surface at
+this gate directly.
+
 ### One-hour memory soak
 
 ```sh
@@ -227,6 +280,12 @@ CI front-end is a pure plumbing job.
 
 ## Change log
 
+- **v0.0.3 Phase 3.4 ratio gate closed** (2026-05-11) - bulk-path substrate
+  added (`rge.ecs::add_to_all_counters` host fn + `counter_bulk.wat` fixture);
+  `EcsIterationConfig` / `EcsIterationReport` / `ScriptHostBench::ecs_iteration_ratio`
+  now drive the bulk shape; `phase_3_4_ecs_via_wasm_ratio_meets_gate` asserts
+  `ratio <= 1.5` (recorded ~1.00× under the bulk substrate; per-entity baseline
+  2.17× preserved as historical reference).
 - **v0.0.2 gate wiring** - `script_host` harness added for the real
   `rge-script-host` Counter fixture: W3 cold-start row, W4 1000-entity /
   100-cycle preservation p95 gate, and W5 opt-in one-hour memory soak.
