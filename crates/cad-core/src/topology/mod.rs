@@ -76,7 +76,9 @@
 mod face_id;
 mod face_tag;
 mod provider;
+mod resolve;
 
 pub use face_id::{BRepFaceId, BRepOwnerId};
 pub use face_tag::{CuboidFaceTag, ExtrudeFaceTag, LoftFaceTag, RevolveFaceTag, RevolveMode};
 pub use provider::BRepProvider;
+pub use resolve::{brep_face_ids_for_node, BRepResolveError};
