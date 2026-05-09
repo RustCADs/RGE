@@ -70,7 +70,8 @@ use std::f32::consts::PI;
 use serde::{Deserialize, Serialize};
 
 use crate::operators::{OpError, OpKind, Operator, Polygon2D};
-use crate::tessellation::Tessellation;
+use crate::tessellation::{Tessellation, TopologyFaceId};
+use crate::topology::{BRepFaceId, BRepOwnerId, BRepProvider, RevolveFaceTag, RevolveMode};
 
 // ---------------------------------------------------------------------------
 // RevolveOp
@@ -317,5 +318,97 @@ impl Operator for RevolveOp {
                 segments_usize,
             )
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// BRepProvider — sub-7.2-γ B-Rep face identity for RevolveOp
+// ---------------------------------------------------------------------------
+
+/// Pair the per-tessellation `TopologyFaceId`s with rebuild-stable
+/// `BRepFaceId`s seeded from the caller-supplied [`BRepOwnerId`].
+///
+/// `RevolveOp` exercises a topology axis no prior dispatch has touched: a
+/// **categorical mode change** (`Full` vs `Partial` revolution) that alters
+/// the *face set itself*, not just the face count.
+///
+/// * `Full` revolution (`is_full_revolution()` returns `true`, i.e.
+///   `angle ≈ 2π`): emits `n` Side faces only; no caps.
+///   * `TopologyFaceId(0..n)` → [`RevolveFaceTag::Side`] for `i in 0..n`
+///     with `mode = Full`.
+/// * `Partial` revolution (`angle < 2π`): emits `n` Side faces + start cap
+///   + end cap, `n + 2` faces total, in the canonical emission order from
+///   [`Operator::evaluate`] (Side walls FIRST, then start-cap fan, then
+///   end-cap fan — see `partial_path::evaluate_partial`).
+///   * `TopologyFaceId(0..n)` → [`RevolveFaceTag::Side`] for `i in 0..n`
+///     with `mode = Partial`.
+///   * `TopologyFaceId(n)` → [`RevolveFaceTag::StartCap`].
+///   * `TopologyFaceId(n + 1)` → [`RevolveFaceTag::EndCap`].
+///
+/// The `Side` tag carries `(side_index, profile_count, segment_count, mode)`
+/// — all four are topology in this substrate's identity model. Mode flips
+/// (`Full` ↔ `Partial`), segment-count changes (8 → 16), and profile-count
+/// changes (square → pentagon) all break Side IDs by construction. Cap tags
+/// carry `profile_count` only — segment count and angle do not affect cap
+/// geometry, so they are deliberately NOT hashed in. See [`RevolveFaceTag`]
+/// for the full stability contract.
+///
+/// Mode is derived from [`RevolveOp::is_full_revolution`] at this impl site
+/// — NOT a free parameter, NOT re-derived locally. Different from
+/// [`crate::topology::ExtrudeFaceTag::Side`]'s `profile_count`, which is a
+/// free numeric parameter.
+impl BRepProvider for RevolveOp {
+    fn brep_face_ids(&self, owner: BRepOwnerId) -> Vec<(TopologyFaceId, BRepFaceId)> {
+        // Mirrors the `n_u32` cast pattern in `evaluate` (extrude.rs L274
+        // precedent): saturate to `u32::MAX` for the unreachable >4G-point
+        // case (Tessellation::new would have rejected long before the BRep
+        // substrate ran).
+        let n = u32::try_from(self.profile.len()).unwrap_or(u32::MAX);
+        let segments = self.segments();
+        // is_full_revolution() at L180 of this file — canonical
+        // Full-vs-Partial discriminator with 1e-6 epsilon vs 2π.
+        let mode = if self.is_full_revolution() {
+            RevolveMode::Full
+        } else {
+            RevolveMode::Partial
+        };
+
+        let cap_count: u32 = match mode {
+            RevolveMode::Full => 0,
+            RevolveMode::Partial => 2,
+        };
+        let total = u64::from(n).saturating_add(u64::from(cap_count));
+        let mut ids: Vec<(TopologyFaceId, BRepFaceId)> = Vec::with_capacity(total as usize);
+
+        // Sides: emitted FIRST per partial_path::evaluate_partial canonical
+        // order (sides → start-cap fan → end-cap fan; verified at
+        // tests.rs:520-540). One per profile edge, indexed 0..n.
+        for i in 0..n {
+            ids.push((
+                TopologyFaceId(u64::from(i)),
+                BRepFaceId::for_revolve_face(
+                    owner,
+                    RevolveFaceTag::Side {
+                        side_index: i,
+                        profile_count: n,
+                        segment_count: segments,
+                        mode,
+                    },
+                ),
+            ));
+        }
+
+        // Caps (Partial mode only).
+        if matches!(mode, RevolveMode::Partial) {
+            ids.push((
+                TopologyFaceId(u64::from(n)),
+                BRepFaceId::for_revolve_face(owner, RevolveFaceTag::StartCap { profile_count: n }),
+            ));
+            ids.push((
+                TopologyFaceId(u64::from(n) + 1),
+                BRepFaceId::for_revolve_face(owner, RevolveFaceTag::EndCap { profile_count: n }),
+            ));
+        }
+        ids
     }
 }

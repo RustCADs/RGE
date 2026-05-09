@@ -548,3 +548,78 @@ fn revolve_output_is_labeled_returns_false() {
         .expect("op")
         .output_is_labeled(&[]));
 }
+
+// ---------------------------------------------------------------------------
+// BRepProvider impl tests (sub-7.2-γ)
+// ---------------------------------------------------------------------------
+
+/// Full revolution (n=4 profile, no caps) returns exactly `n` pairs.
+#[test]
+fn brep_provider_full_revolution_returns_n_pairs() {
+    let owner = BRepOwnerId::from_bytes([0x42u8; 16]);
+    let op = RevolveOp::new(ccw_square_on_plus_x(), 8).expect("op");
+    let pairs = op.brep_face_ids(owner);
+    assert_eq!(
+        pairs.len(),
+        4,
+        "Full revolution (n=4) should yield exactly n=4 pairs (no caps)"
+    );
+}
+
+/// Partial revolution (n=4 profile) returns exactly `n + 2` pairs (sides +
+/// start cap + end cap).
+#[test]
+fn brep_provider_partial_revolution_returns_n_plus_2_pairs() {
+    let owner = BRepOwnerId::from_bytes([0x42u8; 16]);
+    let op = RevolveOp::partial(ccw_square_on_plus_x(), 8, PI / 2.0).expect("op");
+    let pairs = op.brep_face_ids(owner);
+    assert_eq!(
+        pairs.len(),
+        6,
+        "Partial revolution (n=4) should yield n+2=6 pairs (sides + 2 caps)"
+    );
+}
+
+/// `TopologyFaceId(0..n-1)` correspond to Side faces, `TopologyFaceId(n)` to
+/// StartCap, `TopologyFaceId(n + 1)` to EndCap (Partial only). Pins the
+/// canonical emission order byte-for-byte.
+#[test]
+fn brep_provider_topology_face_ids_are_canonical_emission_order() {
+    let owner = BRepOwnerId::from_bytes([0x42u8; 16]);
+    let segments: u32 = 8;
+    let op = RevolveOp::partial(ccw_square_on_plus_x(), segments, PI / 2.0).expect("op");
+    let pairs = op.brep_face_ids(owner);
+
+    // Sides at indices 0..4 with TopologyFaceId(0..4) and side_index 0..4.
+    for i in 0u32..4 {
+        let idx = i as usize;
+        assert_eq!(pairs[idx].0 .0, u64::from(i));
+        assert_eq!(
+            pairs[idx].1,
+            BRepFaceId::for_revolve_face(
+                owner,
+                RevolveFaceTag::Side {
+                    side_index: i,
+                    profile_count: 4,
+                    segment_count: segments,
+                    mode: RevolveMode::Partial,
+                },
+            ),
+            "side at index {idx} (side_index {i}) does not match canonical mapping"
+        );
+    }
+
+    // Start cap at TopologyFaceId(n=4).
+    assert_eq!(pairs[4].0 .0, 4);
+    assert_eq!(
+        pairs[4].1,
+        BRepFaceId::for_revolve_face(owner, RevolveFaceTag::StartCap { profile_count: 4 })
+    );
+
+    // End cap at TopologyFaceId(n + 1 = 5).
+    assert_eq!(pairs[5].0 .0, 5);
+    assert_eq!(
+        pairs[5].1,
+        BRepFaceId::for_revolve_face(owner, RevolveFaceTag::EndCap { profile_count: 4 })
+    );
+}

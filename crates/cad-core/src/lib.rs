@@ -50,4 +50,7 @@ pub use tessellation::{
 pub use topo_lineage::{
     infer_lineage, label_by_plane, LineageEdge, LineageError, LineageGraph, TopologyEvolution,
 };
-pub use topology::{BRepFaceId, BRepOwnerId, BRepProvider, CuboidFaceTag, ExtrudeFaceTag};
+pub use topology::{
+    BRepFaceId, BRepOwnerId, BRepProvider, CuboidFaceTag, ExtrudeFaceTag, RevolveFaceTag,
+    RevolveMode,
+};
