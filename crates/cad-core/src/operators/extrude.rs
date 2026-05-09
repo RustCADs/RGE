@@ -50,7 +50,8 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::operators::{OpError, OpKind, Operator};
-use crate::tessellation::Tessellation;
+use crate::tessellation::{Tessellation, TopologyFaceId};
+use crate::topology::{BRepFaceId, BRepOwnerId, BRepProvider, ExtrudeFaceTag};
 
 // ---------------------------------------------------------------------------
 // Polygon2DError
@@ -414,6 +415,62 @@ impl Operator for ExtrudeOp {
 }
 
 // ---------------------------------------------------------------------------
+// BRepProvider — sub-7.2-β B-Rep face identity for ExtrudeOp
+// ---------------------------------------------------------------------------
+
+/// Pair the `N + 2` sequential per-tessellation `TopologyFaceId`s with
+/// rebuild-stable `BRepFaceId`s seeded from the caller-supplied
+/// [`BRepOwnerId`].
+///
+/// `ExtrudeOp` has variable topology — a profile of `N` vertices yields
+/// `N + 2` faces in the canonical emission order:
+///
+/// * `TopologyFaceId(0)` → [`ExtrudeFaceTag::Bottom`] (`-Z` cap)
+/// * `TopologyFaceId(1)` → [`ExtrudeFaceTag::Top`] (`+Z` cap)
+/// * `TopologyFaceId(2 + i)` → [`ExtrudeFaceTag::Side`] for `i in 0..N`
+///
+/// matching the `Bottom cap → Top cap → Side(0..N-1)` order in
+/// [`Operator::evaluate`] above. Each `Side` carries `profile_count = N`
+/// so topology changes (e.g. square → pentagon) break face identity by
+/// construction; see [`ExtrudeFaceTag`] for the full stability contract.
+impl BRepProvider for ExtrudeOp {
+    fn brep_face_ids(&self, owner: BRepOwnerId) -> Vec<(TopologyFaceId, BRepFaceId)> {
+        // Mirrors the `n_u32` cast pattern in `evaluate` above to keep
+        // the substrate's emission order in sync with the actual mesh
+        // emission order. `evaluate` uses `u32::try_from(...).map_err(...)`
+        // because `Tessellation::new` would otherwise reject; here the
+        // BRep substrate is purely informational so we follow the
+        // structural_hash pattern that saturates to `u32::MAX` for the
+        // unreachable >4G-point case (it would never round-trip into a
+        // `Tessellation` anyway).
+        let n = u32::try_from(self.profile.len()).unwrap_or(u32::MAX);
+        let total = (u64::from(n)).saturating_add(2);
+        let mut ids: Vec<(TopologyFaceId, BRepFaceId)> = Vec::with_capacity(total as usize);
+        ids.push((
+            TopologyFaceId(0),
+            BRepFaceId::for_extrude_face(owner, ExtrudeFaceTag::Bottom),
+        ));
+        ids.push((
+            TopologyFaceId(1),
+            BRepFaceId::for_extrude_face(owner, ExtrudeFaceTag::Top),
+        ));
+        for i in 0..n {
+            ids.push((
+                TopologyFaceId(2 + u64::from(i)),
+                BRepFaceId::for_extrude_face(
+                    owner,
+                    ExtrudeFaceTag::Side {
+                        edge_index: i,
+                        profile_count: n,
+                    },
+                ),
+            ));
+        }
+        ids
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Unit tests
 // ---------------------------------------------------------------------------
 
@@ -690,5 +747,69 @@ mod tests {
     fn extrude_output_is_labeled_returns_false() {
         let op = ExtrudeOp::new(ccw_square(), 1.0).expect("op");
         assert!(!op.output_is_labeled(&[]));
+    }
+
+    // -- BRepProvider impl (sub-7.2-β) ---------------------------------------
+
+    /// `BRepProvider::brep_face_ids` must return exactly `N + 2` pairs for a
+    /// square (N = 4) profile — 4 sides + Bottom cap + Top cap.
+    #[test]
+    fn brep_provider_returns_n_plus_2_pairs_for_square() {
+        let owner = BRepOwnerId::from_bytes([0x42u8; 16]);
+        let op = ExtrudeOp::new(ccw_square(), 1.0).expect("op");
+        let pairs = op.brep_face_ids(owner);
+        assert_eq!(pairs.len(), 6, "square (N=4) should yield N+2=6 pairs");
+    }
+
+    /// `BRepProvider::brep_face_ids` must return exactly `N + 2` pairs for a
+    /// pentagon (N = 5) profile — 5 sides + Bottom cap + Top cap.
+    #[test]
+    fn brep_provider_returns_n_plus_2_pairs_for_pentagon() {
+        let owner = BRepOwnerId::from_bytes([0x42u8; 16]);
+        let op = ExtrudeOp::new(ccw_pentagon(), 1.0).expect("op");
+        let pairs = op.brep_face_ids(owner);
+        assert_eq!(pairs.len(), 7, "pentagon (N=5) should yield N+2=7 pairs");
+    }
+
+    /// The returned `TopologyFaceId(0)` corresponds to `Bottom`,
+    /// `TopologyFaceId(1)` to `Top`, and `TopologyFaceId(2..N+2)` to
+    /// `Side(0..N-1)` in canonical emission order. This pins the
+    /// `TopologyFaceId` ↔ `ExtrudeFaceTag` mapping byte-for-byte.
+    #[test]
+    fn brep_provider_topology_face_ids_are_canonical_emission_order() {
+        let owner = BRepOwnerId::from_bytes([0x42u8; 16]);
+        let op = ExtrudeOp::new(ccw_square(), 1.0).expect("op");
+        let pairs = op.brep_face_ids(owner);
+
+        // Bottom at index 0 with TopologyFaceId(0).
+        assert_eq!(pairs[0].0 .0, 0);
+        assert_eq!(
+            pairs[0].1,
+            BRepFaceId::for_extrude_face(owner, ExtrudeFaceTag::Bottom)
+        );
+
+        // Top at index 1 with TopologyFaceId(1).
+        assert_eq!(pairs[1].0 .0, 1);
+        assert_eq!(
+            pairs[1].1,
+            BRepFaceId::for_extrude_face(owner, ExtrudeFaceTag::Top)
+        );
+
+        // Sides at indices 2..6 with TopologyFaceId(2..6) and edge_index 0..4.
+        for i in 0u32..4 {
+            let idx = (2 + i) as usize;
+            assert_eq!(pairs[idx].0 .0, 2 + u64::from(i));
+            assert_eq!(
+                pairs[idx].1,
+                BRepFaceId::for_extrude_face(
+                    owner,
+                    ExtrudeFaceTag::Side {
+                        edge_index: i,
+                        profile_count: 4,
+                    },
+                ),
+                "side at index {idx} (edge_index {i}) does not match canonical mapping"
+            );
+        }
     }
 }
