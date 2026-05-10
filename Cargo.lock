@@ -3941,6 +3941,7 @@ dependencies = [
  "kira",
  "postcard",
  "rge-audio",
+ "rge-brep-render",
  "rge-cad-core",
  "rge-editor-state",
  "rge-gfx",

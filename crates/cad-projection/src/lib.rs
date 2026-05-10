@@ -71,6 +71,7 @@ pub mod projection_geometry;
 pub mod projection_runtime;
 pub mod projection_semantic;
 pub mod projection_structural;
+pub mod render_adapter;
 
 pub use picking::{FacePick, Ray};
 pub use plugin_adapter::{CadProjectionPlugin, CAD_PROJECTION_PLUGIN_ID};
