@@ -206,6 +206,74 @@ impl CadProjection {
             .map(|(_, brep_id)| brep_id)
     }
 
+    /// Returns dense triangle vertex indices for triangles whose resolved
+    /// [`BRepFaceId`] matches `face_id`, suitable for building an overlay
+    /// `IndexBuffer` against the entity's existing `LitMesh`.
+    ///
+    /// Each matching triangle contributes three consecutive vertex indices
+    /// `[3i, 3i+1, 3i+2]` where `i` is the source triangle index — this
+    /// matches `RenderMesh`'s dense vertex-tripled flat-shaded layout (see
+    /// `brep-render/src/lib.rs:75-78,180-184`).
+    ///
+    /// Returns an empty [`Vec`] when:
+    ///
+    /// * the entity has no [`BRepHandle`] component, OR
+    /// * no [`ProjectedMesh`] is cached for the entity, OR
+    /// * the cached mesh has `face_labels = None` (e.g. `FilletOp` output
+    ///   today — `brep_face_id_for_triangle` returns `None` for every
+    ///   triangle), OR
+    /// * no triangle resolves to `face_id`.
+    ///
+    /// This helper is the single source of "which triangles belong to this
+    /// face?" — it pairs [`ProjectedMesh::face_labels`] with
+    /// [`Self::brep_face_id_for_triangle`] so callers (the editor render
+    /// path) do not duplicate the enumeration.
+    ///
+    /// # Substrate posture
+    ///
+    /// This is the **second** cad-projection consumer of the per-triangle
+    /// `BRepFaceId` resolver (after [`Self::face_resolves_in_projection`]).
+    /// The two methods mirror each other: `face_resolves_in_projection`
+    /// answers "does this face exist in the current projection?" with a
+    /// bool; `face_triangle_indices` answers "which triangles belong to
+    /// this face?" with a dense index list. Neither caches; each call
+    /// runs the full enumeration.
+    #[must_use]
+    pub fn face_triangle_indices(
+        &self,
+        entity: EntityId,
+        world: &World,
+        graph: &OperatorGraph,
+        face_id: BRepFaceId,
+    ) -> Vec<u32> {
+        let mut indices = Vec::new();
+        let Some(entity_ref) = world.entity(entity) else {
+            return indices;
+        };
+        if entity_ref.get::<BRepHandle>().is_none() {
+            return indices;
+        }
+        let Some(mesh) = self.projected_mesh(entity) else {
+            return indices;
+        };
+        let Some(face_labels) = mesh.face_labels.as_ref() else {
+            return indices;
+        };
+        // Iterate triangles in source order; mirrors
+        // `face_resolves_in_projection`'s enumeration pattern.
+        for tri in 0..face_labels.len() {
+            if let Some(resolved) = self.brep_face_id_for_triangle(entity, tri, world, graph) {
+                if resolved == face_id {
+                    let base = (tri * 3) as u32;
+                    indices.push(base);
+                    indices.push(base + 1);
+                    indices.push(base + 2);
+                }
+            }
+        }
+        indices
+    }
+
     /// Check whether `face_id` (under owner-seed `owner`) is resolvable in
     /// the current projected mesh for `entity`.
     ///
@@ -573,10 +641,18 @@ impl SnapshotParticipate for CadProjection {
 
 #[cfg(test)]
 mod tests {
-    use rge_cad_core::{CuboidOp, OperatorNode};
+    use rge_cad_core::{
+        BRepEdgeProvider, BRepFaceId, BRepOwnerId, BRepProvider, CuboidFaceTag, CuboidOp, FilletOp,
+        OperatorNode,
+    };
     use rge_kernel_ecs::World;
 
     use super::*;
+
+    /// Owner seed shared by every `face_triangle_indices` test. Caller-supplied
+    /// 16-byte opaque token; explicitly NOT derived from anything content-
+    /// addressed (would defeat rebuild stability).
+    const TEST_OWNER: BRepOwnerId = BRepOwnerId::from_bytes([0x42; 16]);
 
     fn tol() -> Tolerance {
         Tolerance::new(0.001).expect("tol")
@@ -697,5 +773,219 @@ mod tests {
         assert_eq!(projection.node_for(entity), None);
         assert_eq!(projection.entity_for(node), None);
         assert!(projection.projected_mesh(entity).is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // face_triangle_indices — sub-ε overlay-builder tests
+    // -----------------------------------------------------------------------
+
+    /// Helper: build a `(graph, projection, world, entity)` tuple with a
+    /// single Cuboid committed + projected + `brep_owner` set to
+    /// [`TEST_OWNER`]. Mirrors `face_picking_smoke.rs::build_cuboid` and
+    /// `render_adapter::tests::build_cuboid` — the same pattern reused
+    /// across cad-projection tests.
+    fn build_cuboid_entity(
+        width: f32,
+        height: f32,
+        depth: f32,
+    ) -> (CadGraph, CadProjection, World, EntityId) {
+        let mut graph = CadGraph::new();
+        graph.begin_operation().expect("begin");
+        let cuboid_node = graph
+            .graph_mut()
+            .expect("mut")
+            .add_operator(OperatorNode::Cuboid(CuboidOp {
+                width,
+                height,
+                depth,
+            }))
+            .expect("add cuboid");
+        graph
+            .graph_mut()
+            .expect("mut2")
+            .set_root(cuboid_node)
+            .expect("set root");
+        graph.commit("cuboid").expect("commit");
+
+        let mut projection = CadProjection::new();
+        let mut world = World::new();
+        world.register_snapshot_component::<BRepHandle>();
+        let entity = projection
+            .spawn_brep_entity(&mut world, cuboid_node)
+            .expect("spawn");
+        if let Some(mut em) = world.entity_mut(entity) {
+            if let Some(mut handle) = em.get_mut::<BRepHandle>() {
+                handle.brep_owner = Some(TEST_OWNER);
+            }
+        }
+        projection.tick(&mut world, &graph, tol()).expect("tick");
+        (graph, projection, world, entity)
+    }
+
+    /// For every one of the cuboid's 6 face IDs minted by `BRepProvider`,
+    /// `face_triangle_indices` returns exactly 6 vertex indices (2 triangles
+    /// × 3 indices), and those indices have the dense `[3i, 3i+1, 3i+2]`
+    /// vertex-tripled shape against the cuboid's 36-vertex mesh.
+    #[test]
+    fn face_triangle_indices_cuboid_returns_six_indices_per_face() {
+        let (graph, projection, world, entity) = build_cuboid_entity(1.0, 1.0, 1.0);
+        let cuboid = CuboidOp {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        };
+        let face_id_pairs = cuboid.brep_face_ids(TEST_OWNER);
+        assert_eq!(face_id_pairs.len(), 6, "Cuboid emits 6 BRepFaceIds");
+
+        let mut total_indices = 0usize;
+        for (_, face_id) in face_id_pairs {
+            let indices = projection.face_triangle_indices(entity, &world, graph.graph(), face_id);
+            assert_eq!(
+                indices.len(),
+                6,
+                "each cuboid face yields 2 triangles × 3 indices = 6 vertices"
+            );
+            // Indices must be in [0, 36) for a 12-triangle (= 36-vertex,
+            // flat-shaded vertex-tripled) cuboid mesh.
+            for idx in &indices {
+                assert!(
+                    (*idx as usize) < 36,
+                    "vertex index {idx} out of range [0, 36) for cuboid mesh"
+                );
+            }
+            // Indices come as consecutive [3i, 3i+1, 3i+2] triples — verify
+            // the two contributed triangles match the dense flat-shaded shape.
+            for chunk in indices.chunks_exact(3) {
+                assert_eq!(
+                    chunk[1],
+                    chunk[0] + 1,
+                    "vertex-tripled shape: second index follows first"
+                );
+                assert_eq!(
+                    chunk[2],
+                    chunk[0] + 2,
+                    "vertex-tripled shape: third index follows first"
+                );
+                assert_eq!(
+                    chunk[0] % 3,
+                    0,
+                    "vertex-tripled shape: triangle base is multiple of 3"
+                );
+            }
+            total_indices += indices.len();
+        }
+        // 6 faces × 6 indices = 36 — every triangle of the cuboid mesh is
+        // contributed exactly once across the 6 face_ids.
+        assert_eq!(
+            total_indices, 36,
+            "union of all face indices must cover all 12 triangles (36 vertices)"
+        );
+    }
+
+    /// Cuboid → Fillet output: the cached `ProjectedMesh.face_labels` is
+    /// `None` (FilletOp emits unlabeled tessellation per
+    /// `FILLET_OUTPUT_IDENTITY.md`), so `face_triangle_indices` returns an
+    /// empty `Vec` for any face_id queried. Mirrors
+    /// `render_adapter::tests::render_mesh_face_labels_none_for_unlabeled_filleted_output`.
+    #[test]
+    fn face_triangle_indices_unlabeled_mesh_returns_empty() {
+        let mut graph = CadGraph::new();
+        graph.begin_operation().expect("begin");
+        let cuboid = CuboidOp {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        };
+        let cuboid_node = graph
+            .graph_mut()
+            .expect("mut")
+            .add_operator(OperatorNode::Cuboid(cuboid.clone()))
+            .expect("cuboid");
+        let edge_id = cuboid.brep_edge_ids(TEST_OWNER)[0];
+        let fillet =
+            FilletOp::new(&cuboid, TEST_OWNER, vec![edge_id], 0.1).expect("fillet construction");
+        let fillet_node = graph
+            .graph_mut()
+            .expect("mut")
+            .add_operator(OperatorNode::Fillet(fillet))
+            .expect("fillet node");
+        graph
+            .graph_mut()
+            .expect("mut")
+            .connect(cuboid_node, fillet_node, 0)
+            .expect("connect");
+        graph
+            .graph_mut()
+            .expect("mut")
+            .set_root(fillet_node)
+            .expect("set root");
+        graph.commit("cuboid -> fillet").expect("commit");
+
+        let mut projection = CadProjection::new();
+        let mut world = World::new();
+        world.register_snapshot_component::<BRepHandle>();
+        let entity = projection
+            .spawn_brep_entity(&mut world, fillet_node)
+            .expect("spawn");
+        if let Some(mut em) = world.entity_mut(entity) {
+            if let Some(mut handle) = em.get_mut::<BRepHandle>() {
+                handle.brep_owner = Some(TEST_OWNER);
+            }
+        }
+        projection.tick(&mut world, &graph, tol()).expect("tick");
+
+        // Sanity: ProjectedMesh has face_labels = None for the filleted output.
+        let mesh = projection.projected_mesh(entity).expect("mesh");
+        assert!(
+            mesh.face_labels.is_none(),
+            "precondition: FilletOp output has face_labels = None"
+        );
+
+        // Query with any of the upstream cuboid's face IDs — all yield empty.
+        for (_, face_id) in cuboid.brep_face_ids(TEST_OWNER) {
+            let indices = projection.face_triangle_indices(entity, &world, graph.graph(), face_id);
+            assert!(
+                indices.is_empty(),
+                "filleted output is identity-opaque; all face_triangle_indices queries return empty Vec; got {} indices",
+                indices.len()
+            );
+        }
+    }
+
+    /// Labeled cuboid + a `BRepFaceId` minted under a DIFFERENT owner — the
+    /// resolver compares face_ids by value (including owner-derived bytes)
+    /// so no triangle resolves to a foreign-owner face_id. Returns empty.
+    #[test]
+    fn face_triangle_indices_no_match_returns_empty() {
+        let (graph, projection, world, entity) = build_cuboid_entity(1.0, 1.0, 1.0);
+        // Mint a face_id under a DIFFERENT owner — same operator-kind + tag
+        // but a foreign owner-seed yields a face_id that no cuboid triangle
+        // resolves to (the resolver scopes by the entity's `brep_owner`).
+        let foreign_owner = BRepOwnerId::from_bytes([0xab; 16]);
+        let foreign_face_id = BRepFaceId::for_cuboid_face(foreign_owner, CuboidFaceTag::PosZ);
+
+        let indices =
+            projection.face_triangle_indices(entity, &world, graph.graph(), foreign_face_id);
+        assert!(
+            indices.is_empty(),
+            "foreign-owner face_id must not match any triangle; got {} indices",
+            indices.len()
+        );
+    }
+
+    /// `entity` is a fresh `EntityId` not registered in the projection — no
+    /// `BRepHandle`, no projected mesh. Returns empty.
+    #[test]
+    fn face_triangle_indices_entity_not_in_projection_returns_empty() {
+        let (graph, projection, world, _real_entity) = build_cuboid_entity(1.0, 1.0, 1.0);
+        let phantom = EntityId::new();
+        let face_id = BRepFaceId::for_cuboid_face(TEST_OWNER, CuboidFaceTag::PosZ);
+
+        let indices = projection.face_triangle_indices(phantom, &world, graph.graph(), face_id);
+        assert!(
+            indices.is_empty(),
+            "unknown entity must return empty Vec; got {} indices",
+            indices.len()
+        );
     }
 }

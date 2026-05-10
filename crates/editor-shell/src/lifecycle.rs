@@ -59,8 +59,8 @@ use std::time::Instant;
 use rge_cad_core::CadGraph;
 use rge_cad_projection::{BRepHandle, CadProjection};
 use rge_gfx::{
-    Camera as GfxCamera, DirectionalLight, GfxContext, LitMesh, LitMeshPipeline, Material,
-    SurfaceContext,
+    Camera as GfxCamera, DirectionalLight, GfxContext, IndexBuffer, LitMesh, LitMeshPipeline,
+    Material, SurfaceContext,
 };
 use rge_kernel_ecs::{EntityId as KernelEntityId, World as KernelWorld};
 use winit::application::ApplicationHandler;
@@ -108,6 +108,21 @@ fn default_light_direction() -> glam::Vec3 {
 /// so the shading variation comes entirely from the light/normal
 /// dot product (no texturing in sub-δ.1.B).
 const WHITE_1X1_RGBA: [u8; 4] = [255, 255, 255, 255];
+
+/// Selection-highlight tint for sub-ε visual feedback. Orange. Applied to
+/// the second `Material` via [`Material::update_color`] so the overlay
+/// `draw_indexed` over the main cuboid uses this color through the existing
+/// `LitMeshPipeline`'s Lambert+Phong shader (no shader, no pipeline, and
+/// no `Material` struct changes).
+///
+/// Hard-coded for the first visual-feedback pass; theme / config integration
+/// is out of scope for sub-ε.
+pub(crate) const HIGHLIGHT_COLOR: glam::Vec4 = glam::Vec4::new(1.0, 0.6, 0.0, 1.0);
+
+/// Phong factors for the highlight material — same shape as `Material::new`'s
+/// default `(ambient, diffuse, specular, shininess)` so the shading
+/// continuity with the main cuboid is preserved.
+const HIGHLIGHT_PHONG: glam::Vec4 = glam::Vec4::new(0.1, 1.0, 0.5, 32.0);
 
 /// The editor host. Owns:
 ///
@@ -218,6 +233,30 @@ pub struct EditorShell {
     /// first `CursorMoved` event arrives. Read by
     /// [`Self::handle_left_click`] to compute the click ray.
     cursor_pos: Option<[f32; 2]>,
+
+    // ---- sub-ε selection highlight overlay -------------------------------
+    //
+    // The picked face's triangles are drawn as a second `draw_indexed`
+    // after the main cuboid, reusing the existing `LitMeshPipeline` +
+    // camera/light bind groups but binding a separate tinted `Material`
+    // and a freshly-built `IndexBuffer` containing only the matching
+    // triangles' dense indices.
+    //
+    // Both fields are `Option<…>`: `highlight_material` is built once on
+    // `resumed` alongside the main material; `highlight_index_buffer` is
+    // rebuilt by [`Self::handle_left_click`] on every click that resolves
+    // a face (cleared to `None` on no-hit).
+    /// Tinted [`Material`] for the highlight overlay. Same bind-group
+    /// layout as the main material — only the `base_color` UBO differs
+    /// (see [`HIGHLIGHT_COLOR`]). `None` until `resumed`.
+    highlight_material: Option<Material>,
+
+    /// Dense triangle-vertex index buffer for the currently-highlighted
+    /// face. `None` when no face is selected (or when the picker resolved
+    /// to a face on an unlabeled mesh / `face_labels = None` source). Built
+    /// in [`Self::handle_left_click`] from
+    /// [`CadProjection::face_triangle_indices`].
+    highlight_index_buffer: Option<IndexBuffer>,
 }
 
 impl EditorShell {
@@ -257,6 +296,8 @@ impl EditorShell {
             light: None,
             cuboid_mesh: None,
             cursor_pos: None,
+            highlight_material: None,
+            highlight_index_buffer: None,
         }
     }
 
@@ -322,6 +363,8 @@ impl EditorShell {
             light: None,
             cuboid_mesh: None,
             cursor_pos: None,
+            highlight_material: None,
+            highlight_index_buffer: None,
         }
     }
 
@@ -599,6 +642,13 @@ impl EditorShell {
         );
         let material = Material::new(&gfx_ctx, &WHITE_1X1_RGBA, 1, 1)
             .map_err(|e| format!("material: {e:?}"))?;
+        // sub-ε: a second `Material` for the highlight overlay. Same
+        // bind-group layout as the main material (so the existing
+        // `LitMeshPipeline` accepts it at @group(2)); the UBO is then
+        // refreshed with `HIGHLIGHT_COLOR` via `update_color`.
+        let highlight_material = Material::new(&gfx_ctx, &WHITE_1X1_RGBA, 1, 1)
+            .map_err(|e| format!("highlight material: {e:?}"))?;
+        highlight_material.update_color(&gfx_ctx, HIGHLIGHT_COLOR, HIGHLIGHT_PHONG);
         let light = DirectionalLight::new(&gfx_ctx).map_err(|e| format!("light: {e:?}"))?;
         light.update(&gfx_ctx, default_light_direction(), glam::Vec3::ONE);
 
@@ -629,6 +679,7 @@ impl EditorShell {
         self.pipeline = Some(pipeline);
         self.gfx_camera = Some(gfx_camera);
         self.material = Some(material);
+        self.highlight_material = Some(highlight_material);
         self.light = Some(light);
         self.cuboid_mesh = Some(cuboid_mesh);
 
@@ -734,6 +785,27 @@ impl EditorShell {
             } else {
                 pass.draw(0..mesh.vertex_buffer().vertex_count(), 0..1);
             }
+
+            // Sub-ε — selection highlight overlay. Reuses the same
+            // `LitMeshPipeline` + camera/light bind groups + vertex
+            // buffer; only swaps the @group(2) material bind group and
+            // the index buffer. Purely additive: when either field is
+            // `None`, the if-let skips the overlay and the main cuboid
+            // renders unchanged.
+            //
+            // NOTE for future depth-buffer landing: this overlay shares
+            // the cuboid's vertex positions (Z-fight at the source-mesh
+            // level). When a depth attachment is added, this pipeline
+            // will need its `DepthStencilState` set to `LessEqual` with
+            // `depth_write_enabled = false` — out of sub-ε scope.
+            if let (Some(highlight_mat), Some(highlight_ib)) = (
+                self.highlight_material.as_ref(),
+                self.highlight_index_buffer.as_ref(),
+            ) {
+                pass.set_bind_group(2, highlight_mat.bind_group(), &[]);
+                pass.set_index_buffer(highlight_ib.buffer().slice(..), highlight_ib.index_format());
+                pass.draw_indexed(0..highlight_ib.index_count(), 0, 0..1);
+            }
         }
 
         gfx_ctx.queue().submit(std::iter::once(encoder.finish()));
@@ -742,10 +814,12 @@ impl EditorShell {
         true
     }
 
-    /// Handle a left-click event (sub-δ.2). Composes the most recent
-    /// cursor position + current viewport size + the editor camera into
-    /// a click ray, picks a face, and routes the resulting
-    /// [`crate::coord::FaceSelection`] into [`crate::coord::EditorCoord`].
+    /// Handle a left-click event (sub-δ.2 + sub-ε). Composes the most
+    /// recent cursor position + current viewport size + the editor camera
+    /// into a click ray, picks a face, routes the resulting
+    /// [`crate::coord::FaceSelection`] into [`crate::coord::EditorCoord`],
+    /// and rebuilds the sub-ε highlight overlay `IndexBuffer` for the
+    /// picked face (cleared to `None` on no-hit).
     ///
     /// **v0 single-select clear-on-miss semantics**: a click clears the
     /// existing face_selection set unconditionally and adds the new
@@ -753,8 +827,16 @@ impl EditorShell {
     /// standard CAD convention (Fusion 360, Onshape, FreeCAD) where a
     /// bare click selects exactly one face and a click in empty space
     /// clears the selection. Multi-select via shift / ctrl is a future
-    /// dispatch (chapter sub-ε is visual feedback; sub-ζ is integration
-    /// smoke; multi-select lands later).
+    /// dispatch.
+    ///
+    /// **Sub-ε highlight rebuild**: after the selection lands, the click
+    /// handler invokes [`CadProjection::face_triangle_indices`] for the
+    /// first selection (deterministic — `FaceSelectionSet` is backed by a
+    /// `BTreeSet`) and rebuilds `self.highlight_index_buffer` from the
+    /// returned dense `[3i, 3i+1, 3i+2]` indices. Empty index set (e.g.
+    /// `face_labels = None` on FilletOp output) clears the buffer to
+    /// `None`. Multi-select rendering is parked — only the first
+    /// `FaceSelection` is rendered.
     ///
     /// No-op when:
     ///
@@ -801,7 +883,7 @@ impl EditorShell {
             cad_graph.graph(),
         );
 
-        // v0 single-select clear-on-miss.
+        // v0 single-select clear-on-miss for the picked-face state.
         self.coord.face_selection.clear();
         match selection {
             Some(sel) => {
@@ -822,6 +904,94 @@ impl EditorShell {
                     cursor[0],
                     cursor[1],
                 );
+            }
+        }
+
+        // Sub-ε — rebuild the highlight `IndexBuffer` against the picked
+        // face. Deterministic first-selection wins; multi-select rendering
+        // is parked.
+        self.rebuild_highlight_overlay();
+    }
+
+    /// Rebuild the sub-ε highlight overlay [`IndexBuffer`] from the first
+    /// entry in `self.coord.face_selection` (deterministic — backed by a
+    /// `BTreeSet`). Sets `self.highlight_index_buffer = None` when:
+    ///
+    /// * the selection set is empty (no-hit click), OR
+    /// * `face_triangle_indices` returns an empty `Vec` (face_labels None
+    ///   / no triangle matched).
+    ///
+    /// `N >= 2` selections fall through to "first wins" — rendering N
+    /// overlays at once is parked. A `tracing::debug!` notes the
+    /// deferred case.
+    fn rebuild_highlight_overlay(&mut self) {
+        // Empty-selection → clear the overlay; no-op otherwise.
+        let Some(first) = self.coord.face_selection.iter().next().copied() else {
+            self.highlight_index_buffer = None;
+            return;
+        };
+        let n = self.coord.face_selection.len();
+        if n >= 2 {
+            tracing::debug!(
+                target: "rge::editor-shell::pick",
+                "highlight: {n} selections held; rendering only the first \
+                 (multi-select rendering parked)",
+            );
+        }
+
+        // Resolve the required render-path state. Missing any piece is a
+        // silent no-op — the render path simply skips the overlay.
+        let Some(projection) = self.projection.as_ref() else {
+            self.highlight_index_buffer = None;
+            return;
+        };
+        let Some(cad_world) = self.cad_world.as_ref() else {
+            self.highlight_index_buffer = None;
+            return;
+        };
+        let Some(cad_graph) = self.cad_graph.as_ref() else {
+            self.highlight_index_buffer = None;
+            return;
+        };
+        let Some(gfx_ctx) = self.gfx_ctx.as_ref() else {
+            self.highlight_index_buffer = None;
+            return;
+        };
+
+        let indices = projection.face_triangle_indices(
+            first.entity,
+            cad_world,
+            cad_graph.graph(),
+            first.face_id,
+        );
+        if indices.is_empty() {
+            tracing::info!(
+                target: "rge::editor-shell::pick",
+                "highlight: no overlay (face_labels None or no triangles match face_id={:?})",
+                first.face_id,
+            );
+            self.highlight_index_buffer = None;
+            return;
+        }
+
+        match IndexBuffer::new(gfx_ctx, &indices) {
+            Ok(ib) => {
+                tracing::info!(
+                    target: "rge::editor-shell::pick",
+                    "highlight: {n_tri} triangles ({m} indices) for entity={:?} face_id={:?}",
+                    first.entity,
+                    first.face_id,
+                    n_tri = indices.len() / 3,
+                    m = indices.len(),
+                );
+                self.highlight_index_buffer = Some(ib);
+            }
+            Err(e) => {
+                tracing::warn!(
+                    target: "rge::editor-shell::pick",
+                    "highlight: IndexBuffer build failed: {e:?}; clearing overlay",
+                );
+                self.highlight_index_buffer = None;
             }
         }
     }
