@@ -52,6 +52,17 @@ kira                        = { workspace = true }
 # state and projected-mesh bytes for byte-identity comparison. Same pattern
 # as physics/Cargo.toml dev-dependencies (BLAKE3 is already a workspace dep).
 blake3                      = { workspace = true }
+# glam — used by `tests/face_selection_smoke.rs` for the inline
+# `screen_to_world_ray` helper that mirrors
+# `editor-shell::camera::CameraView::screen_to_world_ray`. We cannot
+# depend on editor-shell here because editor-shell already depends on
+# cad-projection in production — a dev-dep cycle is rejected by cargo.
+# The canonical screen→world math is unit-tested in editor-shell's own
+# test suite; this dev-dep enables the mirror without crossing the
+# editor-shell boundary. glam is utility/runtime (not in any
+# is_game_domain / is_renderer_crate prefix in forbidden-dep), so this
+# dev-edge does not trip the lint.
+glam                        = "0.30"
 
 [lints]
 workspace = true

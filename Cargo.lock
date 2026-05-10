@@ -3947,6 +3947,7 @@ name = "rge-cad-projection"
 version = "0.0.1"
 dependencies = [
  "blake3",
+ "glam 0.30.10",
  "kira",
  "postcard",
  "rge-audio",
