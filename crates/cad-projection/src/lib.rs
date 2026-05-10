@@ -63,6 +63,7 @@ use rge_kernel_ecs::{EntityId, ParticipantId, ParticipateError, SnapshotParticip
 use rge_kernel_graph_foundation::NodeId;
 use serde::{Deserialize, Serialize};
 
+pub mod picking;
 pub mod plugin_adapter;
 pub mod projection_cache;
 pub mod projection_editor;
@@ -71,6 +72,7 @@ pub mod projection_runtime;
 pub mod projection_semantic;
 pub mod projection_structural;
 
+pub use picking::{FacePick, Ray};
 pub use plugin_adapter::{CadProjectionPlugin, CAD_PROJECTION_PLUGIN_ID};
 pub use projection_cache::{CacheStats, ProjectionCache};
 pub use projection_geometry::{
