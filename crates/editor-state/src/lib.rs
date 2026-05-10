@@ -20,10 +20,12 @@
 
 pub mod active_tool;
 pub mod drag_drop;
+pub mod face_selection;
 pub mod hover;
 pub mod modal_state;
 pub mod selection;
 
 pub use active_tool::ActiveTool;
+pub use face_selection::{FaceSelection, FaceSelectionSet};
 pub use hover::{Hover, PanelId};
 pub use selection::Selection;

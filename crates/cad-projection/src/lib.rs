@@ -56,8 +56,8 @@
 use std::sync::Arc;
 
 use rge_cad_core::{
-    brep_face_ids_for_node, BRepFaceId, CadGraph, CheckpointId, OperatorGraph, TessellationCache,
-    Tolerance,
+    brep_face_ids_for_node, BRepFaceId, BRepOwnerId, CadGraph, CheckpointId, OperatorGraph,
+    TessellationCache, Tolerance,
 };
 use rge_kernel_ecs::{EntityId, ParticipantId, ParticipateError, SnapshotParticipate, World};
 use rge_kernel_graph_foundation::NodeId;
@@ -201,6 +201,80 @@ impl CadProjection {
             .into_iter()
             .find(|(t, _)| *t == topology_face_id)
             .map(|(_, brep_id)| brep_id)
+    }
+
+    /// Check whether `face_id` (under owner-seed `owner`) is resolvable in
+    /// the current projected mesh for `entity`.
+    ///
+    /// Iterates the entity's projected mesh triangles, calling
+    /// [`Self::brep_face_id_for_triangle`] for each, and returns `true` as
+    /// soon as a triangle's resolved [`BRepFaceId`] matches `face_id`.
+    /// Returns `false` if any of the following hold:
+    ///
+    /// * `entity` has no [`BRepHandle`] component, OR
+    /// * the entity's `BRepHandle.brep_owner` doesn't match the supplied
+    ///   `owner` (the caller is querying a different identity space than
+    ///   the entity is currently bound to — including the legacy `None`
+    ///   owner case), OR
+    /// * the entity has no projected mesh in the cache, OR
+    /// * the projected mesh has no `face_labels` (e.g. filleted output —
+    ///   the substrate-honest "invalidated" path documented in
+    ///   `docs/architecture/FILLET_OUTPUT_IDENTITY.md`), OR
+    /// * no triangle in the mesh resolves to `face_id`.
+    ///
+    /// Owner mismatch is treated as `false` (not resolvable) rather than an
+    /// error: the caller might be querying with a stale owner from before a
+    /// `BRepHandle` mutation, and silently returning `false` lets a
+    /// caller-driven partition class it as invalidated naturally.
+    ///
+    /// Resolution is **lazy** and per-call; nothing is cached. For typical
+    /// projections (Cuboid: 12 triangles, Extrude N=4: 12 triangles, Revolve
+    /// full N=4 segments=8: 64 triangles) the cost is bounded by triangle
+    /// count.
+    ///
+    /// # Substrate posture
+    ///
+    /// This is the cad-projection-side query that the editor selection
+    /// persistence sub-α substrate (`editor-state::FaceSelectionSet`) wires
+    /// through its caller-driven [`partition`] mechanism to filter
+    /// surviving selections from invalidated ones across rebuilds.
+    /// `cad-projection` does NOT depend on `editor-state`; the caller
+    /// composes them.
+    ///
+    /// [`partition`]: ../../editor-state/struct.FaceSelectionSet.html#method.partition
+    #[must_use]
+    pub fn face_resolves_in_projection(
+        &self,
+        entity: EntityId,
+        owner: BRepOwnerId,
+        face_id: BRepFaceId,
+        world: &World,
+        graph: &OperatorGraph,
+    ) -> bool {
+        // Owner-mismatch short-circuit: lookup the entity's handle and bail
+        // (false) if the brep_owner is missing or mismatched.
+        let Some(entity_ref) = world.entity(entity) else {
+            return false;
+        };
+        let Some(handle) = entity_ref.get::<BRepHandle>() else {
+            return false;
+        };
+        if handle.brep_owner != Some(owner) {
+            return false;
+        }
+        // Iterate the projected mesh triangles, resolving each lazily.
+        let Some(mesh) = self.projected_mesh(entity) else {
+            return false;
+        };
+        let triangle_count = mesh.triangle_count();
+        for tri in 0..triangle_count {
+            if let Some(resolved) = self.brep_face_id_for_triangle(entity, tri, world, graph) {
+                if resolved == face_id {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     /// Verify every [`EntityCadMap`] entry's [`NodeId`] is present in the

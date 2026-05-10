@@ -10,6 +10,7 @@ authors.workspace      = true
 publish                = false
 
 [dependencies]
+rge-cad-core   = { path = "../cad-core" }
 rge-kernel-ecs = { workspace = true }
 serde          = { workspace = true }
 # ulid is re-imported here only to enable its optional `serde` feature for

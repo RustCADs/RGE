@@ -39,6 +39,11 @@ ulid                        = { version = "1", features = ["serde"] }
 rge-gfx                     = { path = "../gfx" }
 rge-physics                 = { path = "../physics" }
 rge-audio                   = { path = "../audio" }
+# Editor selection persistence sub-α end-to-end smoke test wires
+# `editor-state::FaceSelectionSet::partition` through
+# `cad-projection::CadProjection::face_resolves_in_projection`. dev-only;
+# production cad-projection still only depends on cad-core + kernel.
+rge-editor-state            = { path = "../editor-state" }
 # kira's MockBackend is required to construct an AudioManager headlessly,
 # matching the audio canary's plugin smoke-test pattern.
 kira                        = { workspace = true }
