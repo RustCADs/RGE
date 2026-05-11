@@ -1,4 +1,7 @@
 //! Gate C prerequisite dispatch 1 — `RenderInput<'a>` boundary test.
+//! Gate C prerequisite dispatch 2 — boundary-discipline regression.
+//! Gate C prerequisite dispatch 4 — `RenderInputOwned` + `RenderHandoff`
+//! handoff primitive.
 //!
 //! Pins the structural shape of the snapshot-handoff boundary
 //! between sim/editor state and the render path. Does NOT exercise
@@ -7,9 +10,14 @@
 //! See `crates/editor-shell/src/render_input.rs` for the boundary
 //! rationale; PLAN.md §13.6 (Gate C measurability) and §1.5.2
 //! (`(ECS_tick_N, CadCheckpointId_N)` immutability) for the upstream
-//! contract this boundary will eventually enforce.
+//! contract this boundary will eventually enforce; `docs/adr/ADR-117-
+//! render-handoff-mechanism.md` for the binding handoff semantics.
 
-use rge_editor_shell::{EditorShell, RenderInput};
+use std::sync::Arc;
+
+use rge_editor_shell::{
+    EditorCameraState, EditorShell, RenderHandoff, RenderInput, RenderInputOwned,
+};
 
 /// Structural — confirms `RenderInput::from_editor_shell`
 /// constructs cleanly from a default-built [`EditorShell`] and that
@@ -114,4 +122,174 @@ fn function_body<'a>(source: &'a str, signature_prefix: &str) -> &'a str {
         }
     }
     panic!("function body for `{signature_prefix}` not closed")
+}
+
+// Gate C prerequisite dispatch 4 — `RenderInputOwned` + `RenderHandoff`
+// =====================================================================
+// The tests below pin the load-bearing invariants of the latest-only
+// immutable render-input handoff per ADR-117. All assertions are
+// dependency-free (std-only) and exercise the public re-exports
+// from `rge_editor_shell`.
+//
+// Coverage:
+//   1. compile-time Send + 'static (RenderInputOwned)
+//   2. compile-time Send + Sync (RenderHandoff)
+//   3. publish → acquire round-trip (happy path)
+//   4. latest-only / drop-old (Arc strong-count check)
+//   5. generation counter monotonicity (0 → 1 → 2)
+//   6. empty-slot None return
+//   7. as_render_input borrow round-trip
+
+/// Build a small `RenderInputOwned` snapshot anchored at the given
+/// `(ecs_tick, checkpoint_id)`. Camera state is the documented
+/// editor-runtime default (eye `(3, 3, 3)`, looking at origin).
+fn owned_snapshot(ecs_tick: u64, checkpoint_id: u64) -> RenderInputOwned {
+    RenderInputOwned {
+        ecs_tick,
+        checkpoint_id,
+        editor_camera: EditorCameraState::default(),
+    }
+}
+
+/// **RIO-1** — compile-time assertion that `RenderInputOwned: Send +
+/// 'static`. Per ADR-117 sub-decision 2 the bound is pinned now so
+/// the cross-thread substrate is ready when the future render-thread
+/// dispatch lands. The function does no runtime work; the failure
+/// mode is a compile error inside the test's helper bound.
+#[test]
+fn render_input_owned_is_send_and_static() {
+    fn assert_send_static<T: Send + 'static>() {}
+    assert_send_static::<RenderInputOwned>();
+}
+
+/// **RH-1** — compile-time assertion that `RenderHandoff: Send +
+/// Sync`. The `Mutex<Option<Arc<_>>>` + `AtomicU64` combo gives this
+/// automatically; the assertion documents the bound and catches any
+/// future field addition that would silently regress it.
+#[test]
+fn render_handoff_is_send_and_sync() {
+    fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<RenderHandoff>();
+}
+
+/// **RH-2** — publish → acquire happy path. After one publish, the
+/// acquired snapshot carries the same anchor values that were
+/// published.
+#[test]
+fn render_handoff_publish_then_acquire_returns_same_snapshot() {
+    let handoff = RenderHandoff::new();
+    let snap = Arc::new(owned_snapshot(42, 7));
+    handoff.publish(Arc::clone(&snap));
+    let got = handoff
+        .acquire()
+        .expect("post-publish acquire must yield a snapshot");
+    assert_eq!(got.ecs_tick, 42);
+    assert_eq!(got.checkpoint_id, 7);
+    // The acquired Arc is the *same* allocation we published (latest-only
+    // semantics keep the snapshot in the slot until the next publish).
+    assert!(
+        Arc::ptr_eq(&snap, &got),
+        "acquire must return the same Arc allocation that was published"
+    );
+}
+
+/// **RH-3** — latest-only / drop-old. Publish A, publish B without
+/// acquiring A; acquire returns B; A's strong-count is 1 (only the
+/// test holder; the handoff dropped its reference). Per ADR-117
+/// sub-decision 4 — the first K-1 of K snapshots between two render
+/// frames must drop.
+#[test]
+fn render_handoff_latest_only_drops_older() {
+    let handoff = RenderHandoff::new();
+    let a = Arc::new(owned_snapshot(1, 100));
+    let b = Arc::new(owned_snapshot(2, 200));
+
+    handoff.publish(Arc::clone(&a));
+    // Sanity — sim's local + handoff's slot = 2 strong refs.
+    assert_eq!(Arc::strong_count(&a), 2);
+
+    handoff.publish(Arc::clone(&b));
+
+    // The handoff has replaced its A reference with B; the only
+    // remaining A is the test holder.
+    assert_eq!(
+        Arc::strong_count(&a),
+        1,
+        "older snapshot must drop to strong-count 1 (test holder only) after newer publish"
+    );
+
+    // Acquire returns B's anchor values.
+    let got = handoff.acquire().expect("post-publish acquire must yield");
+    assert_eq!(got.ecs_tick, 2);
+    assert_eq!(got.checkpoint_id, 200);
+    assert!(Arc::ptr_eq(&b, &got));
+}
+
+/// **RH-4** — generation counter advances monotonically on each
+/// publish (0 → 1 → 2). Per ADR-117 sub-decision 3 the counter is
+/// the O(1) "did sim publish?" signal for the render-side poll.
+#[test]
+fn render_handoff_generation_advances_monotonically() {
+    let handoff = RenderHandoff::new();
+    assert_eq!(
+        handoff.generation(),
+        0,
+        "fresh handoff starts at generation 0"
+    );
+
+    handoff.publish(Arc::new(owned_snapshot(1, 10)));
+    assert_eq!(
+        handoff.generation(),
+        1,
+        "first publish bumps generation to 1"
+    );
+
+    handoff.publish(Arc::new(owned_snapshot(2, 20)));
+    assert_eq!(
+        handoff.generation(),
+        2,
+        "second publish bumps generation to 2"
+    );
+
+    handoff.publish(Arc::new(owned_snapshot(3, 30)));
+    assert_eq!(
+        handoff.generation(),
+        3,
+        "third publish bumps generation to 3"
+    );
+}
+
+/// **RH-5** — acquire before any publish returns `None`. Per ADR-117
+/// sub-decision 1, render's "if no snapshot has ever been published,
+/// render either skips the frame or uses a sentinel" is the caller's
+/// choice; this test pins the substrate-honest `Option<_>` contract.
+#[test]
+fn render_handoff_acquire_before_publish_returns_none() {
+    let handoff = RenderHandoff::new();
+    assert!(
+        handoff.acquire().is_none(),
+        "empty handoff acquire must return None"
+    );
+    assert_eq!(handoff.generation(), 0, "no publish, no generation advance");
+}
+
+/// **RIO-2** — `as_render_input()` borrows the owned snapshot's
+/// payload back into the dispatch-1 [`RenderInput<'_>`] shape. The
+/// returned view's `editor_camera.eye` matches the owned value
+/// element-wise.
+#[test]
+fn render_input_owned_as_render_input_borrows_correctly() {
+    let owned = owned_snapshot(99, 999);
+    let borrowed: RenderInput<'_> = owned.as_render_input();
+    // The default camera places the eye at (3, 3, 3) (see
+    // EditorCameraState::default()).
+    assert!((borrowed.editor_camera.eye.x - 3.0).abs() < f32::EPSILON);
+    assert!((borrowed.editor_camera.eye.y - 3.0).abs() < f32::EPSILON);
+    assert!((borrowed.editor_camera.eye.z - 3.0).abs() < f32::EPSILON);
+    // And the borrowed view points at the same address as the owned
+    // field — proves the call is borrow-only (no clone).
+    assert!(std::ptr::eq(
+        borrowed.editor_camera as *const _,
+        &owned.editor_camera as *const _
+    ));
 }

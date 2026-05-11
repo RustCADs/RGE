@@ -59,7 +59,7 @@ pub use camera::{pick_face_at, CameraView, EditorCameraState};
 pub use lifecycle::EditorShell;
 pub use play_state::{PlayState, PlayStateError, PlayStateTransition};
 pub use play_toolbar::{PlayToolbar, ToolbarButton, ToolbarButtonId};
-pub use render_input::RenderInput;
+pub use render_input::{RenderHandoff, RenderInput, RenderInputOwned};
 pub use snapshot::{SnapshotMetrics, WorldSnapshot};
 pub use time_scale::{TimeScale, TimeScaleClass};
 pub use viewport::Viewport;
