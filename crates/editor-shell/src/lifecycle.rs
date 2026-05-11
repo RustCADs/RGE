@@ -618,7 +618,16 @@ impl ApplicationHandler<()> for EditorShell {
             }
             WindowEvent::Resized(new_size) => {
                 self.viewport.resize(new_size.width, new_size.height);
-                self.resize_render_path(new_size.width, new_size.height);
+                // Construct the sim-side RenderInput view from a local
+                // Copy of `editor_camera` so the borrow checker accepts
+                // the simultaneous `&mut self` + `&RenderInput<'_>`
+                // call (the view borrows from the local, not `self`).
+                // See `render_input.rs` for the boundary rationale.
+                let camera_copy = self.editor_camera;
+                let render_input = crate::RenderInput {
+                    editor_camera: &camera_copy,
+                };
+                self.resize_render_path(&render_input, new_size.width, new_size.height);
             }
             WindowEvent::RedrawRequested => {
                 self.tick_redraw();

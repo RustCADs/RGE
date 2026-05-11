@@ -29,6 +29,7 @@ use winit::event_loop::ActiveEventLoop;
 use winit::window::WindowAttributes;
 
 use crate::lifecycle::EditorShell;
+use crate::render_input::RenderInput;
 
 /// Default render-path background color (R, G, B, A) used as the
 /// `LoadOp::Clear` value on the surface texture's color attachment.
@@ -302,7 +303,19 @@ impl EditorShell {
     /// (sub-δ.1.B). Updates the camera UBO with a new view*proj matrix
     /// for the new aspect ratio. No-op when render path is not
     /// initialised.
-    pub(crate) fn resize_render_path(&mut self, new_w: u32, new_h: u32) {
+    ///
+    /// `render_input` carries the sim/editor-side inputs the render
+    /// path consumes on resize — today exactly [`EditorCameraState`].
+    /// GPU-backed state (surface, gfx_ctx, gfx_camera UBO) is read /
+    /// mutated via `&mut self` as before. See
+    /// [`crate::render_input::RenderInput`] for the snapshot-handoff
+    /// boundary rationale.
+    pub(crate) fn resize_render_path(
+        &mut self,
+        render_input: &RenderInput<'_>,
+        new_w: u32,
+        new_h: u32,
+    ) {
         if new_w == 0 || new_h == 0 {
             return;
         }
@@ -313,7 +326,7 @@ impl EditorShell {
             surface_ctx.resize(gfx_ctx, new_w, new_h);
         }
         let aspect = (new_w as f32) / (new_h as f32);
-        let view_proj = self.editor_camera.view_proj(aspect);
+        let view_proj = render_input.editor_camera.view_proj(aspect);
         if let Some(camera) = self.gfx_camera.as_ref() {
             camera.update(gfx_ctx, view_proj, glam::Mat4::IDENTITY);
         }
