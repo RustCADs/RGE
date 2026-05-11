@@ -504,7 +504,7 @@ Validate:
 
 Smoke test: build 100 operator chains; rebuild each 10 times with random small parameter changes; verify face/edge IDs preserved per `TopologyEvolution` enum.
 
-#### 7.3 `cad-projection` minimal
+#### 7.3 `cad-projection` minimal **[CLOSED 2026-05-11 via gate-closure test `crates/cad-projection/tests/phase_7_3_gate_closure.rs::phase_7_3_gate_closure_10_entities_100_edits_seed_0x7e5a_deae_3d49_c0e1`: seeded `xorshift64` PRNG (seed `0x7E5A_DEAE_3D49_C0E1`); 10 `BRepHandle`-backed entities; 100 random parametric edits; per-edit assertions of (1) `cad.head()` strict advance per commit, (2) `projection.tick()` `head_advanced_to == cad.head()` (invalidation-on-commit within one tick), (3) all known entities re-projected this tick, (4) `ProjectedMesh.{positions,indices,face_labels}` byte-equal to `cad_core::OperatorGraph::evaluate()` output for the same node (triangle-fallback-always-available + `ProjectedMesh` ↔ cad-core consistency), (5) `EntityCadMap.{node_for,entity_for}` coherence post-remap. Substrate shipped via D-7.3 2026-05-06; this dispatch adds the consolidated umbrella gate mirroring the §7.2 idiom.]**
 
 - `BRepHandle(CadRef)` component
 - Tessellation projection (cad-core tessellation → ECS-side mesh handle)
