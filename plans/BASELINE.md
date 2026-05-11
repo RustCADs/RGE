@@ -181,3 +181,36 @@ p95 gate can be measured. Tracked as Phase 3.3+3.4 follow-up dispatch.
   override at the script-host crate root (3 sites with `// SAFETY:` proofs)
   for the wasmtime call-scope pointer pattern; mirror of the pak-format
   precedent for `mmap`.
+
+---
+
+## §13.2 Editor frame idle (Phase 6 §6.3 Gate B)
+
+| Date | Hardware | Methodology | Scope | P50 | P95 | Variance | Gate (≤ 8 ms) |
+|---|---|---|---|---|---|---|---|
+| 2026-05-11 | dev box (Windows / cargo 1.94 / wasmtime 44) | batch N=1000 × K=10 | **empty-shell CPU-idle baseline** | 0.000044 ms | 0.000047 ms | 9.7% | PASS |
+
+**Methodology**: batch timing around `EditorShell::tick_redraw()` calls
+to clear Windows `Instant` resolution floor (~100 ns per call). K=10
+batches × N=1000 frames each. P50/P95 computed across the 10
+per-frame batch means. Variance gate applies across batch means.
+
+**Scope limitation (LOAD-BEARING)**: This is the CURRENT empty-shell
+CPU-idle baseline — `EditorShell::new()` with no `cad_world`, no
+projection, no scene, no GPU, no winit event loop. It is NOT a
+loaded-editor idle measurement. **Future re-measure required** once
+non-trivial editor systems / idle scene are wired (driven by future
+Phase 6 dispatches), at which point the same harness shape can be
+re-run against the loaded shell.
+
+**Gate B status**: CLOSED for current CPU-idle interpretation
+(P95 = 0.000047 ms, ~170 000× under 8 ms gate). Re-measure required
+for loaded-editor interpretation.
+
+**Harness**: `crates/editor-shell/tests/editor_frame_idle.rs` (annotated
+`#[ignore]` — release-only timing test; debug build trips variance gate).
+Invoke via:
+
+```
+cargo test -p rge-editor-shell --release --test editor_frame_idle -- --ignored --nocapture
+```

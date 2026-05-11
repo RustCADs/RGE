@@ -466,7 +466,7 @@ Minimal:
 #### Exit criteria
 
 - 60fps on `simple-scene` golden project (1k cubes, 1 directional light)
-- Editor frame time idle ≤ 8ms (matches §13.2 gate)
+- Editor frame time idle ≤ 8ms (matches §13.2 gate) **[CLOSED 2026-05-11 for CPU-idle interpretation: empty-shell P95 = 0.000047 ms; loaded re-measure deferred; see BASELINE.md §13.2]**
 - Render-thread sees stable snapshot; sim-thread mutations don't race
 - 100 material instances share one PSO (variant cache hit)
 
