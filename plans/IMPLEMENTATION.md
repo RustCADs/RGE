@@ -446,9 +446,9 @@ If PIE snapshot/restore exceeds 500ms on a 10k-entity scene: ECS storage layout 
 
 Validate sim-thread / render-thread separation early (per §1.5.2).
 
-- Render thread reads frozen `WorldSnapshot{N}`
-- Sim thread mutates state for `N+1`
-- Atomic snapshot swap on tick boundary
+- Render thread reads frozen `WorldSnapshot{N}` **[CLOSED 2026-05-11 as runtime-integrated single-threaded proxy: `RenderHandoff` published per `tick_redraw`, acquired in `Resized` + `RedrawRequested`; camera-only payload; dedicated renderer thread and full `WorldSnapshot` wire format deferred; see `crates/editor-shell/src/lifecycle.rs` + ADR-117]**
+- Sim thread mutates state for `N+1` **[CLOSED 2026-05-11 as runtime-integrated single-threaded proxy: sim path publishes `Arc<RenderInputOwned>` via `RenderHandoff::publish()` once per `tick_redraw`; later mutations to `EditorShell::editor_camera` produce fresh snapshots on subsequent ticks while previously-acquired snapshots remain stable per Gate C invariant; see `crates/editor-shell/src/lifecycle.rs::tick_redraw` + ADR-117]**
+- Atomic snapshot swap on tick boundary **[CLOSED 2026-05-11 as runtime-integrated single-threaded proxy: `RenderHandoff` slot replaces atomically under `Mutex<Option<Arc<RenderInputOwned>>>` + `AtomicU64` generation increment per ADR-117 sub-decision 5; latest-only / drop-old; render NEVER blocks sim and sim NEVER blocks render beyond the trivial mutex-protected `Arc` swap; see `crates/editor-shell/src/render_input.rs::RenderHandoff` + ADR-117]**
 
 Without this validated, B-Rep + cluster systems detonate later.
 

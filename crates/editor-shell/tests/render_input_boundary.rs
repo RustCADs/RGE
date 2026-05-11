@@ -373,3 +373,77 @@ fn gate_c_held_snapshot_stable_across_subsequent_publishes() {
     // Generation advanced monotonically across all 3 publishes.
     assert_eq!(handoff.generation(), 3, "3 publishes → generation = 3");
 }
+
+// Phase 6.2 runtime integration — runtime publish/acquire round-trip
+// ==================================================================
+// The test below proves the runtime publish/acquire path is live:
+// after a single `tick_redraw` call on `EditorShell`, the handoff
+// slot has received at least one publish and `acquire()` returns
+// a snapshot whose `editor_camera` matches `EditorShell::editor_camera`.
+//
+// Closes the IMPLEMENTATION.md §6.2 line 449-451 integration gap
+// (sim-thread publishes / render-thread reads frozen snapshot) at the
+// single-threaded proxy level. The dedicated renderer thread that
+// would consume the snapshot off the main thread remains a future
+// dispatch; this test certifies the in-process wiring only.
+
+/// **§6.2-1** — runtime publish/acquire round-trip. After a single
+/// `tick_redraw` call, the runtime's `RenderHandoff` has published
+/// at least one snapshot, and `acquire()` returns a stable snapshot
+/// matching the current `EditorShell::editor_camera`. Closes the
+/// IMPLEMENTATION.md §6.2 line 449-451 integration gap.
+#[test]
+fn phase_6_2_runtime_publishes_snapshot_on_tick_redraw() {
+    let mut shell = EditorShell::default();
+    let baseline_gen = shell.render_handoff().generation();
+    assert_eq!(
+        baseline_gen, 0,
+        "fresh EditorShell starts at handoff generation 0"
+    );
+
+    shell.tick_redraw();
+
+    let new_gen = shell.render_handoff().generation();
+    assert!(
+        new_gen > baseline_gen,
+        "tick_redraw must publish to RenderHandoff (baseline={baseline_gen}, observed={new_gen})"
+    );
+    assert_eq!(
+        new_gen, 1,
+        "first tick_redraw must increment generation 0 -> 1"
+    );
+
+    let snapshot = shell
+        .render_handoff()
+        .acquire()
+        .expect("snapshot must be present after tick_redraw published");
+
+    // Default `EditorCameraState::default()` places the eye at (3, 3, 3).
+    // The published snapshot's payload mirrors `EditorShell::editor_camera`.
+    assert!(
+        (snapshot.editor_camera.eye.x - 3.0).abs() < f32::EPSILON,
+        "published snapshot's editor_camera.eye.x must match EditorShell"
+    );
+    assert!(
+        (snapshot.editor_camera.eye.y - 3.0).abs() < f32::EPSILON,
+        "published snapshot's editor_camera.eye.y must match EditorShell"
+    );
+    assert!(
+        (snapshot.editor_camera.eye.z - 3.0).abs() < f32::EPSILON,
+        "published snapshot's editor_camera.eye.z must match EditorShell"
+    );
+
+    // `tick_count` anchor: editor-shell starts at 0 and `tick_redraw`
+    // in `Editing` state does NOT advance `tick_count` (game systems
+    // are gated). So the snapshot's `ecs_tick` should equal 0 here,
+    // not 1.
+    assert_eq!(
+        snapshot.ecs_tick, 0,
+        "Editing-state tick_redraw must publish ecs_tick = current tick_count (0)"
+    );
+    // `checkpoint_id` v0 source is `0` per dispatch spec.
+    assert_eq!(
+        snapshot.checkpoint_id, 0,
+        "v0 checkpoint_id must be 0 (no cad-projection counter on EditorShell yet)"
+    );
+}

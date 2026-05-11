@@ -79,6 +79,7 @@ use crate::camera::EditorCameraState;
 use crate::coord::EditorCoord;
 use crate::play_state::{PlayState, PlayStateError, PlayStateTransition};
 use crate::play_toolbar::{PlayToolbar, ToolbarButtonId};
+use crate::render_input::{RenderHandoff, RenderInputOwned};
 use crate::snapshot::{capture_and_audit, restore_and_audit, WorldSnapshot};
 use crate::time_scale::{TimeScale, TimeScaleClass};
 use crate::viewport::Viewport;
@@ -142,6 +143,16 @@ pub struct EditorShell {
     /// at construction). The view*projection matrix is recomputed each
     /// frame from the current surface aspect ratio.
     pub(crate) editor_camera: EditorCameraState,
+
+    /// Per-ADR-117 latest-only render-input handoff slot. Sim/editor
+    /// path publishes a fresh `Arc<RenderInputOwned>` snapshot every
+    /// `tick_redraw`; resize/redraw paths `acquire()` the most-recent
+    /// snapshot instead of constructing `RenderInput` ad-hoc from
+    /// `self.editor_camera`. Always present (`RenderHandoff::new()`
+    /// at construction). Single-threaded today; the substrate is
+    /// `Send + Sync` and ready for a future dedicated render thread
+    /// without API changes. See `crate::render_input` for semantics.
+    render_handoff: RenderHandoff,
 
     /// Optional CAD-domain ECS world holding the renderable entity. The
     /// `world` field above is the editor-shell wrapper used by the W03
@@ -247,6 +258,7 @@ impl EditorShell {
             last_frame_instant: None,
             initialized: false,
             editor_camera: EditorCameraState::default(),
+            render_handoff: RenderHandoff::new(),
             cad_world: None,
             projection: None,
             cad_graph: None,
@@ -314,6 +326,7 @@ impl EditorShell {
             last_frame_instant: None,
             initialized: false,
             editor_camera: EditorCameraState::default(),
+            render_handoff: RenderHandoff::new(),
             cad_world: Some(cad_world),
             projection: Some(projection),
             cad_graph: Some(cad_graph),
@@ -398,6 +411,26 @@ impl EditorShell {
     #[must_use]
     pub fn has_snapshot(&self) -> bool {
         self.snapshot.is_some()
+    }
+
+    /// Borrow the per-ADR-117 latest-only render-input handoff slot.
+    ///
+    /// Sim-side `tick_redraw` calls `publish()` on this slot once
+    /// per frame; resize/redraw event-loop arms call `acquire()` to
+    /// read the most-recently-published `RenderInputOwned` snapshot.
+    /// Exposed for the Phase 6.2 runtime integration end-to-end test
+    /// (`tests/render_input_boundary.rs`) and for any future
+    /// out-of-crate caller that needs to observe the handoff
+    /// generation counter without taking the slot mutex.
+    ///
+    /// The accessor returns a shared reference; mutation is internal
+    /// to the handoff via its own `&self` `publish` / `acquire`
+    /// methods (the substrate is interior-mutable by design — see
+    /// `crate::render_input` for the `Mutex<Option<Arc<_>>>` +
+    /// `AtomicU64` composition).
+    #[must_use]
+    pub fn render_handoff(&self) -> &RenderHandoff {
+        &self.render_handoff
     }
 
     // ---- toolbar entry points ----------------------------------------------
@@ -517,7 +550,33 @@ impl EditorShell {
         //    only "editor side-effect" is updating the viewport overlay.
         self.viewport.update_overlay(self.state, self.time_scale);
 
-        // 4) Diagnostic progress line at the rustforge interval.
+        // 4) Phase 6.2 runtime integration — publish a fresh
+        //    `RenderInputOwned` snapshot to the per-ADR-117 handoff
+        //    slot. The render-side `Resized` / `RedrawRequested`
+        //    arms call `acquire()` on the same slot below instead
+        //    of constructing `RenderInput` ad-hoc from
+        //    `self.editor_camera`. Camera-only payload preserved
+        //    (matches the borrowed `RenderInput` field set).
+        //
+        //    Anchor fields (per PLAN §1.5.2 / ADR-117 sub-decision 3):
+        //    - `ecs_tick` = `self.tick_count` (the editor-shell's
+        //      authoritative game-system tick counter; advances only
+        //      when `PlayState::game_systems_run()` fires, which is
+        //      the closest analogue to "kernel-ecs tick" available
+        //      pre-kernel-ecs integration).
+        //    - `checkpoint_id` = `0` (no `cad-projection` checkpoint
+        //      counter exists on `EditorShell` today; per dispatch
+        //      spec, `0` is acceptable for v0 — the values matter
+        //      for the empirical-invariant test, not for runtime
+        //      correctness today).
+        let snapshot = std::sync::Arc::new(RenderInputOwned {
+            ecs_tick: self.tick_count,
+            checkpoint_id: 0,
+            editor_camera: self.editor_camera,
+        });
+        self.render_handoff.publish(snapshot);
+
+        // 5) Diagnostic progress line at the rustforge interval.
         if self.tick_count > 0 && self.tick_count % PROGRESS_FRAME_INTERVAL == 0 {
             tracing::trace!(
                 target: "rge::editor-shell::lifecycle",
@@ -618,20 +677,59 @@ impl ApplicationHandler<()> for EditorShell {
             }
             WindowEvent::Resized(new_size) => {
                 self.viewport.resize(new_size.width, new_size.height);
-                // Construct the sim-side RenderInput view from a local
-                // Copy of `editor_camera` so the borrow checker accepts
-                // the simultaneous `&mut self` + `&RenderInput<'_>`
-                // call (the view borrows from the local, not `self`).
-                // See `render_input.rs` for the boundary rationale.
-                let camera_copy = self.editor_camera;
-                let render_input = crate::RenderInput {
-                    editor_camera: &camera_copy,
-                };
+                // Phase 6.2 runtime integration — acquire the most
+                // recently published snapshot from the per-ADR-117
+                // `RenderHandoff` slot instead of constructing a
+                // `RenderInput` view ad-hoc from `self.editor_camera`.
+                //
+                // Resize can fire before any `tick_redraw` (e.g. the
+                // first `WindowEvent::Resized` from winit's initial
+                // size negotiation may arrive before the first
+                // `RedrawRequested`). In that case the slot is empty
+                // — publish a fresh snapshot inline so the resize
+                // proceeds with the current camera. This keeps the
+                // resize path coupled to the SAME handoff substrate
+                // the render path consumes, instead of bypassing it
+                // with an ad-hoc local view.
+                if self.render_handoff.acquire().is_none() {
+                    let snapshot = std::sync::Arc::new(RenderInputOwned {
+                        ecs_tick: self.tick_count,
+                        checkpoint_id: 0,
+                        editor_camera: self.editor_camera,
+                    });
+                    self.render_handoff.publish(snapshot);
+                }
+                let owned = self
+                    .render_handoff
+                    .acquire()
+                    .expect("inline publish above guarantees a snapshot");
+                let render_input = owned.as_render_input();
                 self.resize_render_path(&render_input, new_size.width, new_size.height);
+                // `owned` (Arc) drops here; the handoff slot retains
+                // its own reference for the next acquire.
             }
             WindowEvent::RedrawRequested => {
                 self.tick_redraw();
+                // Phase 6.2 runtime integration — acquire the most
+                // recently published snapshot from the per-ADR-117
+                // `RenderHandoff` slot. `render_frame` currently
+                // reads zero sim-side state per frame (all per-frame
+                // sim reads belong on the snapshot side of the
+                // boundary — see `render_input.rs::RenderInput` and
+                // the `render_frame_body_does_not_read_self_editor_camera`
+                // discipline test); the acquire here anchors the
+                // §6.2 contract "render reads frozen
+                // WorldSnapshot{N}" by routing the render path
+                // through the same handoff substrate even when the
+                // current `render_frame` consumer is a no-op for
+                // per-frame sim state. When `render_frame` grows
+                // per-frame sim reads in a later dispatch, they pull
+                // off the held snapshot — the wiring is already in
+                // place.
+                let _snapshot = self.render_handoff.acquire();
                 let _rendered = self.render_frame();
+                // `_snapshot` Arc drops at end of scope; sim is free
+                // to publish a newer snapshot for the next frame.
             }
             WindowEvent::CursorMoved { position, .. } => {
                 // Track the latest cursor position for the next left-click
