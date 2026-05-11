@@ -108,9 +108,12 @@ without pretending to have answered it.
   fillets, or Boolean lineage). Until then `FilletOp` resolver
   behavior stays as `TopologyChangingOperator`.
 - **[`RGE_Multi_Agent_Orchestration.md`](./RGE_Multi_Agent_Orchestration.md)** —
-  discussion note on the Decision AI / Orchestrator / Execution AI split,
-  `NEXT_ACTION` labels, and bounded execution contracts. Parked as a
-  workflow-protocol note; it does not implement orchestration code.
+  codified workflow protocol for multi-agent orchestration: the
+  Decision / Orchestrator / Execution role split, `NEXT_ACTION` labels,
+  the bounded execution contract template (TASK / COMMAND BUDGET /
+  FORBIDDEN / STOP IF / OUTPUT), the auto-execute rule for read-only
+  bounded tasks, and the execution-continuation rule. Manual markdown
+  protocol — no orchestration code or runtime enforcement.
 
 ## How to navigate
 

@@ -411,3 +411,133 @@ This is likely a foundational future concern for:
 - geometry execution graphs
 - deterministic AI workflows
 - distributed semantic authority systems
+
+---
+
+# Protocol
+
+The sections above are the discussion that led to this protocol. This
+section is the codified version: a settled reference, not a proposal.
+When the discussion and the protocol disagree, the protocol wins.
+
+## Roles
+
+Three roles, sharply separated:
+
+1. **Decision AI (Governance)** — owns doctrine, bounded planning,
+   architecture safety, semantic authority, state evaluation. Does NOT
+   directly execute. Does NOT own transition authority.
+2. **Orchestrator** — owns transition authority, workflow advancement,
+   execution triggering, blocked-state handling, contract dispatching.
+   Does NOT design or implement. May be the user, an AI in the role,
+   or a manual operator.
+3. **Execution AI** — performs bounded work, obeys the contract,
+   returns deterministic output. Does NOT redesign doctrine, self-
+   expand mission, or stall indefinitely.
+
+## Transition Authority
+
+The Orchestrator alone advances workflow state. Decision AI emits
+recommendations; Execution AI emits results. Neither role advances
+state on its own.
+
+## NEXT_ACTION Labels
+
+Decision AI output ends with exactly one of:
+
+| Label                          | Meaning                                                              |
+|--------------------------------|----------------------------------------------------------------------|
+| `NEXT_ACTION: EXECUTE`         | Recommend immediate execution; Orchestrator dispatches               |
+| `NEXT_ACTION: WAIT_FOR_USER`   | Recommend execution but require explicit user authorization          |
+| `NEXT_ACTION: ASK_CLARIFICATION` | Cannot recommend without resolving a question                      |
+| `NEXT_ACTION: STOP`            | Reached a coherent stopping point; no further action recommended     |
+| `NEXT_ACTION: BLOCKED`         | Cannot proceed; state the blocker                                    |
+
+## Auto-Execute Rule
+
+Read-only bounded tasks auto-execute. The Orchestrator does NOT
+require explicit user authorization for tasks that:
+
+- Read files, run queries, summarize evidence
+- Cannot mutate code, repo state, doctrine, or recorded benchmark numbers
+- Cannot trigger destructive or expensive operations
+
+## Explicit Authorization Required For
+
+Tasks that:
+
+- Mutate code, configs, or schemas
+- Change repo state (commits, pushes, merges)
+- Alter doctrine (ADRs, PLAN, IMPLEMENTATION, governance docs)
+- Run destructive operations (force-push, rebase, history rewrite,
+  file deletion outside tooling)
+- Perform expensive runtime operations (full bench runs, soak tests,
+  long-running validations)
+- Modify benchmark records or recorded gate numbers
+
+## Bounded Execution Contract
+
+The Orchestrator dispatches Execution AI with a contract of this shape:
+
+```text
+NEXT_ACTION: EXECUTE
+
+TASK:
+<one-sentence statement of the goal>
+
+COMMAND BUDGET:
+<numbered list of allowed commands / files / actions>
+
+ALLOWED FILES:
+<explicit list — only relevant for mutating tasks>
+
+FORBIDDEN:
+<explicit list — e.g. source changes, Cargo changes,
+untracked items, scope expansion>
+
+STOP IF:
+<conditions that must abort execution before completion>
+
+OUTPUT:
+<the exact shape of the deterministic output the Orchestrator expects>
+```
+
+The contract is the entire mandate. Execution AI executes the contract
+verbatim — no more, no less.
+
+## Execution Continuation Rule
+
+When a contract says EXECUTE, Execution AI proceeds immediately. It
+does NOT wait for additional confirmation. Waiting in the presence of
+explicit bounded authority is a protocol violation — the original
+deadlock that motivated this protocol.
+
+If a STOP IF condition fires mid-execution, Execution AI halts and
+reports the condition. It does NOT silently proceed.
+
+## Agent States
+
+Replace passive "Holding until explicit go" with explicit operational
+states:
+
+| State        | Meaning                                                  |
+|--------------|----------------------------------------------------------|
+| `EXECUTING`  | Actively performing contract work                        |
+| `WAITING`    | Contract returned to Orchestrator; awaiting next contract |
+| `BLOCKED`    | STOP IF triggered or unresolvable condition reached      |
+| `DONE`       | Contract complete; deterministic output returned         |
+
+`BLOCKED` outputs the exact reason. Silent waiting is not an option.
+
+## Scope Discipline
+
+This protocol is markdown-only. It does NOT introduce:
+
+- Code automation, enforcement, or parsing
+- New lints, CI gates, or runtime checks
+- Workflow engines, schedulers, or executors
+
+The protocol is manual. The Orchestrator is a human or an AI in the
+role; contracts are written in conversation; states are observed in
+conversation. Future automation may layer on top, but this document
+fixes only the manual operating contract.
