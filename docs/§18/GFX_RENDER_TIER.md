@@ -231,7 +231,7 @@ The follow-up work tracked by HANDOFF.md / Status.md per the canonical Phase 6 r
 
 ### Frame-graph (minimal)
 
-Transient resource lifetimes computed at frame begin. `TexturePool` / `BufferPool` keyed on frame index so allocator pressure stabilises. Declarative pass DAG with read/write resource declarations — the frame graph derives the per-pass barriers and resource lifetimes from the declarations rather than letting the gfx author hand-write them. Necessary precursor for the §1.5.2 sim/render thread split because the frame graph is what owns the per-frame lifetime decisions.
+Transient resource lifetimes computed at frame begin. `TexturePool` / `BufferPool` keyed on frame index so allocator pressure stabilises. Declarative pass DAG with read/write resource declarations — the frame graph derives the per-pass barriers and resource lifetimes from the declarations rather than letting the gfx author hand-write them. Necessary precursor for the §1.5.2 sim/render thread split because the frame graph is what owns the per-frame lifetime decisions. **Allocator policy pinned by ADR-118** (descriptor-keyed pools, ring-buffered across N frames-in-flight, trust wgpu hazard tracking) — substrate-shipped (analytical) + ADR-118 (policy) + dispatch 119 (descriptors per ADR-118 D7) + dispatch 120 (pools) + dispatch 121 (`FrameRecorder` wiring) is the implementation arc.
 
 ### Render-snapshot separation per §1.5.2
 
