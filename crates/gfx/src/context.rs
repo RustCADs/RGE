@@ -2,8 +2,29 @@
 //!
 //! Initialised synchronously via [`pollster::block_on`]. No window / surface
 //! required; this is headless-only substrate.
+//!
+//! # Pipeline-state-object cache
+//!
+//! `GfxContext` owns a [`PipelineCache<wgpu::RenderPipeline>`] behind a
+//! [`RefCell`] so the existing `*::new(...)` constructors on
+//! [`crate::pipeline::TrianglePipeline`] / [`crate::mesh_pipeline::MeshPipeline`]
+//! / [`crate::lit_mesh_pipeline::LitMeshPipeline`] can route through it
+//! transparently. Identical `(shader, layout, color format, depth state)`
+//! inputs across repeated `*::new(...)` calls now return shared
+//! `Arc<wgpu::RenderPipeline>` allocations without changing the call-site
+//! signature. The cache is `RefCell` (not `Mutex`) — `GfxContext` is
+//! single-threaded by construction; no caller holds it across threads.
+//!
+//! Callers that need an explicit, scoped cache (e.g. to assert miss/hit
+//! counts in a test) can continue to use the additive `*::new_cached(...,
+//! &mut PipelineCache<wgpu::RenderPipeline>)` constructors against a
+//! locally-held cache.
+
+use std::cell::RefCell;
 
 use tracing::debug;
+
+use crate::pso_cache::PipelineCache;
 
 // ---------------------------------------------------------------------------
 // Error type
@@ -35,6 +56,11 @@ pub struct GfxContext {
     adapter: wgpu::Adapter,
     device: wgpu::Device,
     queue: wgpu::Queue,
+    /// Process-local PSO memoization cache. `RefCell` so the existing
+    /// `*::new(&GfxContext, ...)` constructors can mutably index into it
+    /// from behind a shared `&GfxContext` borrow. See the module-level
+    /// doc-comment for the threading-model rationale.
+    pso_cache: RefCell<PipelineCache<wgpu::RenderPipeline>>,
 }
 
 impl GfxContext {
@@ -92,6 +118,7 @@ impl GfxContext {
             adapter,
             device,
             queue,
+            pso_cache: RefCell::new(PipelineCache::new()),
         })
     }
 
@@ -136,5 +163,29 @@ impl GfxContext {
     #[must_use]
     pub fn adapter(&self) -> Option<&wgpu::Adapter> {
         Some(&self.adapter)
+    }
+
+    /// Borrow the context-owned PSO cache as a [`RefCell`].
+    ///
+    /// Returned as `&RefCell<...>` (not `&mut PipelineCache<...>`) so the
+    /// existing `*::new(&GfxContext, ...)` constructors can call
+    /// [`RefCell::borrow_mut`] from behind a shared `&self` — the whole
+    /// point of the interior-mutability wrapper. Callers that hold the
+    /// `GfxContext` by `&mut` can equivalently use [`pso_cache_mut`].
+    #[must_use]
+    pub fn pso_cache(&self) -> &RefCell<PipelineCache<wgpu::RenderPipeline>> {
+        &self.pso_cache
+    }
+
+    /// Borrow the context-owned PSO cache as `&mut PipelineCache<...>`
+    /// when the caller already holds the `GfxContext` mutably.
+    ///
+    /// Bypasses the `RefCell` runtime borrow check (statically proven
+    /// exclusive via `&mut self`). Useful for tests that want to clear
+    /// the cache or inspect hit/miss statistics without going through
+    /// `borrow_mut()`.
+    #[must_use]
+    pub fn pso_cache_mut(&mut self) -> &mut PipelineCache<wgpu::RenderPipeline> {
+        self.pso_cache.get_mut()
     }
 }

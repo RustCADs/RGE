@@ -347,22 +347,24 @@ pub struct LitMeshPipeline {
 }
 
 impl LitMeshPipeline {
-    /// Compile the embedded WGSL and create the render pipeline.
+    /// Compile-or-reuse the render pipeline.
     ///
     /// `camera_layout`, `light_layout`, `material_layout` must be the layouts
     /// produced by [`Camera::bind_group_layout`], [`DirectionalLight::bind_group_layout`],
     /// and [`Material::bind_group_layout`] respectively.  `color_format` must
     /// match the render target the pipeline will draw into.
     ///
-    /// This constructor does NOT use a cache — every call builds a fresh
-    /// pipeline. Use [`new_cached`](Self::new_cached) to share allocations
-    /// across callers with identical `PsoKey` inputs.
+    /// Routes through the context-owned [`PipelineCache`] held inside
+    /// [`GfxContext`] — repeated calls with identical `color_format` and
+    /// compatible bind-group layouts share one underlying
+    /// `wgpu::RenderPipeline` allocation transparently. Callers that need
+    /// an explicit, scoped cache can use [`new_cached`](Self::new_cached)
+    /// against a locally-held cache.
     ///
     /// # Errors
     ///
     /// Returns [`LitMeshPipelineError::Wgsl`] if the embedded WGSL fails to
     /// parse (should not occur with the built-in shader).
-    #[allow(clippy::unnecessary_wraps)]
     pub fn new(
         ctx: &GfxContext,
         camera_layout: &wgpu::BindGroupLayout,
@@ -370,14 +372,15 @@ impl LitMeshPipeline {
         material_layout: &wgpu::BindGroupLayout,
         color_format: wgpu::TextureFormat,
     ) -> Result<Self, LitMeshPipelineError> {
-        let pipeline = Arc::new(build_pipeline(
-            ctx.device(),
+        let mut cache = ctx.pso_cache().borrow_mut();
+        Self::new_cached(
+            ctx,
             camera_layout,
             light_layout,
             material_layout,
             color_format,
-        ));
-        Ok(Self { pipeline })
+            &mut cache,
+        )
     }
 
     /// Compile-or-reuse via the supplied [`PipelineCache`].

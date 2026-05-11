@@ -66,15 +66,16 @@ pub struct TrianglePipeline {
 }
 
 impl TrianglePipeline {
-    /// Compile the embedded WGSL and create a render pipeline targeting
-    /// `format`.
+    /// Compile-or-reuse a render pipeline targeting `format`.
     ///
     /// `format` must match the [`HeadlessTarget`](crate::target::HeadlessTarget)
     /// or surface format the pipeline will be used with.
     ///
-    /// This constructor does NOT use a cache — every call builds a fresh
-    /// pipeline. Use [`new_cached`](Self::new_cached) to share allocations
-    /// across callers with identical `PsoKey` inputs.
+    /// Routes through the context-owned [`PipelineCache`] held inside
+    /// [`GfxContext`] — repeated calls with identical `format` share one
+    /// underlying `wgpu::RenderPipeline` allocation transparently. Callers
+    /// that need an explicit, scoped cache (e.g. for miss/hit assertions)
+    /// can use [`new_cached`](Self::new_cached) against a locally-held cache.
     ///
     /// # Errors
     ///
@@ -83,10 +84,9 @@ impl TrianglePipeline {
     ///
     /// The `Result` wrapper is intentional — the API surface is designed for
     /// callers that may substitute custom WGSL where failures are possible.
-    #[allow(clippy::unnecessary_wraps)]
     pub fn new(ctx: &GfxContext, format: wgpu::TextureFormat) -> Result<Self, PipelineError> {
-        let pipeline = Arc::new(build_pipeline(ctx.device(), format));
-        Ok(Self { pipeline })
+        let mut cache = ctx.pso_cache().borrow_mut();
+        Self::new_cached(ctx, format, &mut cache)
     }
 
     /// Compile-or-reuse via the supplied [`PipelineCache`].
