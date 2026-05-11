@@ -465,9 +465,9 @@ Minimal:
 
 #### Exit criteria
 
-- 60fps on `simple-scene` golden project (1k cubes, 1 directional light)
+- 60fps on `simple-scene` golden project (1k cubes, 1 directional light) **[CLOSED 2026-05-11 on recorder host only: NVIDIA GeForce RTX 4060 Ti / Vulkan / DiscreteGpu / 1280×720 / static camera / shared PSO + 1 material / option-(a) single `draw_indexed`; min-of-3 P95 = 0.112 ms (~150× under 16.67 ms gate); NOT universal, NOT vendor parity, NOT cold-start, NOT thermal, NOT CI; see BASELINE.md §6.3]**
 - Editor frame time idle ≤ 8ms (matches §13.2 gate) **[CLOSED 2026-05-11 for CPU-idle interpretation: empty-shell P95 = 0.000047 ms; loaded re-measure deferred; see BASELINE.md §13.2]**
-- Render-thread sees stable snapshot; sim-thread mutations don't race
+- Render-thread sees stable snapshot; sim-thread mutations don't race **[DEFERRED — blocked on sim/render thread split per PLAN §1.5.2; substrate is single-threaded today so the property is vacuously true]**
 - 100 material instances share one PSO (variant cache hit)
 
 #### Abort condition

@@ -1565,10 +1565,12 @@ Parallel/duplicated representations (labeled vs unlabeled mesh; handle vs map ca
 3. ~~MEDIUM batch (partial closure)~~ DONE 2026-05-09 05:25
 4. ~~physics AuditLedger option-(b) rename~~ DONE 2026-05-09 06:35
 5. **~~PluginError×PluginPhase 4-cell auto-emit tests~~ DONE 2026-05-08** — audit-2 coverage gap closed; 4 regression tests added in `kernel/plugin-host/src/host/host_tests/diagnostics.rs` (ContractViolation × Init/Shutdown → Warning; RuntimeFault × Init/Shutdown → Error). +4 net workspace tests (1794 → 1798); plugin-host lib 47 → 56 / dogfood 2 unchanged.
-6. **csgrs catch_unwind recovery branch test** (needs feature-flag design)
-7. **clippy pedantic in physics+audio libs** (~17 warnings; small mechanical clean-up)
+6. ~~**csgrs catch_unwind recovery branch test** (needs feature-flag design)~~ **DONE 2026-05-11 commit e9470d5** — classification-only marker added at `crates/cad-core/src/operators/boolean/csgrs_bridge.rs:245-251` (defensive-only-no-known-trigger at csgrs 0.20.1); references `tests/boolean_panic_recovery.rs` as the real behavioral coverage (2/2 PASS — panic-free under arbitrary input); explicitly NOT unreachable; honest-engineering close-out, no test seam fabricated.
+7. ~~**clippy pedantic in physics+audio libs** (~17 warnings; small mechanical clean-up)~~ **VERIFIED already-passing 2026-05-11** — read-only inspect confirmed both crates already pass `cargo clippy -p rge-physics -p rge-audio -- -W clippy::pedantic` clean; 8 pre-existing per-site `#[allow(..., reason = "...")]` annotations cover all axes; no follow-up dispatch needed.
 8. **cad-projection broader dep-style sweep** (rge-kernel-ecs + rge-kernel-graph-foundation; small mechanical)
 9. **Remaining kernel stubs** (4 stubs; `io-scheduler` is PARTIAL v0 cavity, not empty)
+
+**Phase 6 §6.3 status (post-2026-05-11)**: PSO sharing CLOSED (commit 54cec89); Gate B CLOSED for CPU-idle interpretation (commits b73aa0f/517aa88; loaded re-measure deferred); **Gate A CLOSED on recorder host only** (commits bb49f64 + this D2 — NVIDIA RTX 4060 Ti / Vulkan / 1280×720 / static camera / min-of-3 P95 = 0.112 ms; NOT universal/vendor/thermal/cold-start/CI); Gate C remains DEFERRED (blocked on sim/render thread split per PLAN §1.5.2). See `BASELINE.md` §6.3 + §13.2 for full scope-limitation footnotes.
 
 ## Reference index
 
