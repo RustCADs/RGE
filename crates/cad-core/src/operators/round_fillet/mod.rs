@@ -67,6 +67,7 @@ use crate::topology::{BRepEdgeId, BRepEdgeProvider, BRepOwnerId};
 
 mod cuboid;
 mod extrude;
+mod revolve;
 
 // ---------------------------------------------------------------------------
 // RoundFilletError
