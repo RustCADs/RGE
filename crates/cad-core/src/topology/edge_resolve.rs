@@ -2,10 +2,11 @@
 //!
 //! Mirror of [`crate::topology::resolve`] for edges. Direct providers
 //! (Cuboid/Extrude/Revolve/Loft) yield their own edge IDs via
-//! [`BRepEdgeProvider`]; Transform recurses to its single upstream
-//! input and returns those edges unchanged; Boolean / Sweep / any
-//! future [`OperatorNode`] variant return
-//! [`BRepResolveError::TopologyChangingOperator`].
+//! [`BRepEdgeProvider`]; identity-preserving operators (Transform,
+//! Fillet) recurse to their single upstream input — Transform returns
+//! upstream edges unchanged, Fillet returns upstream edges minus the
+//! filleted selection; Boolean / Sweep / any future [`OperatorNode`]
+//! variant return [`BRepResolveError::TopologyChangingOperator`].
 //!
 //! Failure class inherited: snapshot-recoverable.
 //!
@@ -35,8 +36,45 @@
 //! [`crate::TopologyEvolution`]) is the next and final dispatch
 //! before the Phase 7.2 IMPLEMENTATION.md exit criterion closes.
 //!
+//! # Architectural posture (D-Fillet sub-ε.β)
+//!
+//! Extends the identity-preserving arm to [`OperatorNode::Fillet`]
+//! with filtered inheritance: the resolver recurses to the upstream,
+//! retrieves the upstream's edges, then filters out the FilletOp's
+//! selected edges (`op.edges()`) before returning. The construction-
+//! time invariants on [`crate::operators::FilletError`]
+//! (`EmptyEdgeSelection`, `EdgeNotInUpstream`,
+//! `UnsupportedEdgeGeometry`) make the filter total: every member of
+//! `op.edges()` was originally a member of
+//! `upstream.brep_edge_ids(op.owner())`.
+//!
+//! Adjacent edges (sharing a corner vertex with a filleted edge)
+//! retain bit-identical 2-endpoint geometry — the chamfer caps add
+//! new vertices/triangles incident at the shared corner but do NOT
+//! modify the adjacent edge's own geometry. Since
+//! [`BRepEdgeId::for_face_pair`] derives identity from face IDs only
+//! and faces inherit unchanged through Fillet (sub-ε.α), adjacent
+//! edges' byte-identity is preserved and they belong to the
+//! "inherited" set.
+//!
+//! **Owner-discipline invariant**: the resolver propagates the
+//! caller's `owner` argument unchanged to the upstream recursion. If
+//! `caller_owner ≠ op.owner()`, the filter trivially passes every
+//! edge (edge bytes don't match across owner spaces). Callers should
+//! resolve with the same owner the FilletOp was constructed against
+//! — the substrate does not enforce this, matching the existing
+//! resolver discipline (`owner` is informational beyond the caller's
+//! identity space).
+//!
+//! **Filter complexity**: `Vec::contains` is O(n·m) for n filleted
+//! and m upstream edges. n is small in practice (1-4) and m is
+//! bounded per upstream operator. Fine for v0; future
+//! `HashSet<BRepEdgeId>` upgrade is a one-line optimization if scale
+//! pressure surfaces.
+//!
 //! [`BRepProvider`]: crate::topology::BRepProvider
 //! [`BRepFaceId`]: crate::topology::BRepFaceId
+//! [`BRepEdgeId::for_face_pair`]: crate::topology::BRepEdgeId::for_face_pair
 
 use std::collections::HashSet;
 
@@ -60,6 +98,11 @@ use crate::topology::{BRepEdgeId, BRepEdgeProvider, BRepOwnerId, BRepResolveErro
 ///   node and return its edges unchanged. The owner is propagated
 ///   verbatim — same discipline as
 ///   [`crate::topology::brep_face_ids_for_node`].
+/// * Filtered-inheriting (Fillet): recurse to the unique input node
+///   and return its edges minus the FilletOp's filleted selection.
+///   Filleted edges are excluded because they lose 2-endpoint
+///   geometry under chamfering (D-Fillet sub-ε.β); non-filleted
+///   upstream edges retain bit-identical byte-identity.
 /// * Topology-changing (Boolean, Sweep, any future variant): return
 ///   [`BRepResolveError::TopologyChangingOperator`].
 ///
@@ -115,8 +158,9 @@ fn resolve_recursive(
 /// Single dispatch step. Looking up `node`, then matching on the
 /// [`OperatorNode`] variant: direct providers call into their
 /// [`BRepEdgeProvider`] impl, [`OperatorNode::Transform`] recurses to
-/// its unique input, every other arm — including the catch-all that
-/// absorbs future variants — returns
+/// its unique input unchanged, [`OperatorNode::Fillet`] recurses then
+/// filters out the filleted selection, every other arm — including
+/// the catch-all that absorbs future variants — returns
 /// [`BRepResolveError::TopologyChangingOperator`].
 fn resolve_step(
     graph: &OperatorGraph,
@@ -140,6 +184,27 @@ fn resolve_step(
             // recurse. Owner propagates unchanged.
             let upstream = single_input_node(graph, node)?;
             resolve_recursive(graph, upstream, owner, in_flight)
+        }
+
+        OperatorNode::Fillet(op) => {
+            // FilletOp is arity 1. Recurse to the unique input to get
+            // the upstream's edge set, then filter out the FilletOp's
+            // filleted selection: filleted edges lose 2-endpoint
+            // geometry under chamfering (the original edge is bit-
+            // identical in the output mesh, but chamfer caps are
+            // attached adjacent to it — strict topology partition
+            // marks them as "modified"). Non-filleted upstream edges
+            // retain bit-identical byte-identity (FilletOp.evaluate
+            // appends; never modifies upstream positions/indices).
+            // Filter complexity is O(n*m); see module-doc.
+            let upstream = single_input_node(graph, node)?;
+            let upstream_edges = resolve_recursive(graph, upstream, owner, in_flight)?;
+            let filleted = op.edges();
+            let filtered: Vec<BRepEdgeId> = upstream_edges
+                .into_iter()
+                .filter(|edge| !filleted.contains(edge))
+                .collect();
+            Ok(filtered)
         }
 
         // Catch-all for topology-changing operators (Boolean, Sweep)
@@ -187,8 +252,8 @@ fn single_input_node(graph: &OperatorGraph, node: NodeId) -> Result<NodeId, BRep
 mod tests {
     use super::*;
     use crate::operators::{
-        BooleanOp, CuboidOp, ExtrudeOp, OpKind, Polygon2D, Polyline3D, RevolveOp, SweepOp,
-        TransformOp,
+        BooleanOp, CuboidOp, ExtrudeOp, FilletOp, OpKind, Polygon2D, Polyline3D, RevolveOp,
+        SweepOp, TransformOp,
     };
     use crate::topology::BRepEdgeProvider;
     use crate::CadGraph;
@@ -400,5 +465,258 @@ mod tests {
         let loft_chain: Vec<BRepEdgeId> =
             brep_edge_ids_for_node(cad3.graph(), loft_node, owner).expect("resolve loft");
         assert_eq!(loft_chain, loft_direct);
+    }
+
+    /// D-Fillet sub-ε.β load-bearing assertion (single-edge case):
+    /// Cuboid → Fillet(edges=[e0]) returns 11 edges = upstream's 12
+    /// minus the filleted one. The surviving edges are byte-equal to
+    /// the upstream's non-selected slice — they retain their full
+    /// `BRepEdgeId` byte identity through Fillet because
+    /// [`crate::topology::BRepEdgeId::for_face_pair`] derives identity
+    /// from face IDs only and face IDs inherit unchanged (sub-ε.α).
+    #[test]
+    fn resolver_cuboid_then_fillet_filters_selected_edges_inherits_rest() {
+        let owner = BRepOwnerId::from_bytes([0x55; 16]);
+        let cube = CuboidOp {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        };
+        let upstream_edges = cube.brep_edge_ids(owner);
+        assert_eq!(upstream_edges.len(), 12, "cuboid has 12 edges");
+
+        let filleted = vec![upstream_edges[0]];
+        let fillet = FilletOp::new(&cube, owner, filleted.clone(), 0.1).expect("fillet");
+
+        let mut cad = CadGraph::new();
+        cad.begin_operation().expect("begin");
+        let cube_node = cad
+            .graph_mut()
+            .expect("mut")
+            .add_operator(OperatorNode::Cuboid(cube))
+            .expect("add cuboid");
+        let fillet_node = cad
+            .graph_mut()
+            .expect("mut")
+            .add_operator(OperatorNode::Fillet(fillet))
+            .expect("add fillet");
+        cad.graph_mut()
+            .expect("mut")
+            .connect(cube_node, fillet_node, 0)
+            .expect("connect cuboid->fillet");
+        cad.commit("cuboid -> fillet").expect("commit");
+
+        let chain_edges: Vec<BRepEdgeId> = brep_edge_ids_for_node(cad.graph(), fillet_node, owner)
+            .expect("resolve cuboid->fillet chain");
+
+        let expected: Vec<BRepEdgeId> = upstream_edges
+            .iter()
+            .filter(|e| !filleted.contains(e))
+            .copied()
+            .collect();
+        assert_eq!(chain_edges.len(), 11);
+        assert_eq!(
+            chain_edges, expected,
+            "Fillet edge resolver must filter selected and inherit rest byte-equal"
+        );
+    }
+
+    /// D-Fillet sub-ε.β multi-edge selection: 3 filleted edges → 9
+    /// inherited. Order-preserving filter: the result preserves
+    /// upstream emission order minus the selected set.
+    #[test]
+    fn resolver_cuboid_then_fillet_multi_edge_selection_filters_all_selected() {
+        let owner = BRepOwnerId::from_bytes([0x66; 16]);
+        let cube = CuboidOp {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        };
+        let upstream_edges = cube.brep_edge_ids(owner);
+        let filleted = vec![upstream_edges[0], upstream_edges[3], upstream_edges[7]];
+        let fillet = FilletOp::new(&cube, owner, filleted.clone(), 0.05).expect("fillet");
+
+        let mut cad = CadGraph::new();
+        cad.begin_operation().expect("begin");
+        let cube_node = cad
+            .graph_mut()
+            .expect("mut")
+            .add_operator(OperatorNode::Cuboid(cube))
+            .expect("add cuboid");
+        let fillet_node = cad
+            .graph_mut()
+            .expect("mut")
+            .add_operator(OperatorNode::Fillet(fillet))
+            .expect("add fillet");
+        cad.graph_mut()
+            .expect("mut")
+            .connect(cube_node, fillet_node, 0)
+            .expect("connect");
+        cad.commit("cuboid -> fillet (3 edges)").expect("commit");
+
+        let chain_edges: Vec<BRepEdgeId> =
+            brep_edge_ids_for_node(cad.graph(), fillet_node, owner).expect("resolve");
+        let expected: Vec<BRepEdgeId> = upstream_edges
+            .iter()
+            .filter(|e| !filleted.contains(e))
+            .copied()
+            .collect();
+        assert_eq!(chain_edges.len(), 9);
+        assert_eq!(chain_edges, expected);
+    }
+
+    /// D-Fillet sub-ε.β boundary case: filleting ALL 12 cuboid edges
+    /// returns an empty Vec. Empty result is a legal substrate
+    /// outcome (distinct from `TopologyChangingOperator` — the
+    /// resolver succeeds with zero surviving edges).
+    #[test]
+    fn resolver_cuboid_then_fillet_all_edges_selected_returns_empty() {
+        let owner = BRepOwnerId::from_bytes([0x77; 16]);
+        let cube = CuboidOp {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        };
+        let all_edges = cube.brep_edge_ids(owner);
+        let fillet = FilletOp::new(&cube, owner, all_edges.clone(), 0.1).expect("fillet");
+
+        let mut cad = CadGraph::new();
+        cad.begin_operation().expect("begin");
+        let cube_node = cad
+            .graph_mut()
+            .expect("mut")
+            .add_operator(OperatorNode::Cuboid(cube))
+            .expect("add cuboid");
+        let fillet_node = cad
+            .graph_mut()
+            .expect("mut")
+            .add_operator(OperatorNode::Fillet(fillet))
+            .expect("add fillet");
+        cad.graph_mut()
+            .expect("mut")
+            .connect(cube_node, fillet_node, 0)
+            .expect("connect");
+        cad.commit("cuboid -> fillet (all edges)").expect("commit");
+
+        let chain_edges: Vec<BRepEdgeId> =
+            brep_edge_ids_for_node(cad.graph(), fillet_node, owner).expect("resolve");
+        assert!(
+            chain_edges.is_empty(),
+            "filleting all upstream edges must yield empty edge set"
+        );
+    }
+
+    /// D-Fillet sub-ε.β rebuild-stability: three different radii
+    /// against the same edge selection produce byte-identical
+    /// surviving edges. Radius enters chamfer geometry only, never
+    /// edge-identity filtering.
+    #[test]
+    fn resolver_fillet_edge_set_stable_under_radius_parameter_change() {
+        let owner = BRepOwnerId::from_bytes([0x88; 16]);
+        let cube_template = CuboidOp {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        };
+        let upstream_edges = cube_template.brep_edge_ids(owner);
+        let filleted = vec![upstream_edges[2]];
+
+        let build = |radius: f32| -> Vec<BRepEdgeId> {
+            let cube = cube_template.clone();
+            let fillet = FilletOp::new(&cube, owner, filleted.clone(), radius).expect("fillet");
+            let mut cad = CadGraph::new();
+            cad.begin_operation().expect("begin");
+            let cube_node = cad
+                .graph_mut()
+                .expect("mut")
+                .add_operator(OperatorNode::Cuboid(cube))
+                .expect("add cuboid");
+            let fillet_node = cad
+                .graph_mut()
+                .expect("mut")
+                .add_operator(OperatorNode::Fillet(fillet))
+                .expect("add fillet");
+            cad.graph_mut()
+                .expect("mut")
+                .connect(cube_node, fillet_node, 0)
+                .expect("connect");
+            cad.commit("cuboid -> fillet").expect("commit");
+            brep_edge_ids_for_node(cad.graph(), fillet_node, owner).expect("resolve")
+        };
+
+        let edges_at_01 = build(0.1);
+        let edges_at_02 = build(0.2);
+        let edges_at_05 = build(0.5);
+
+        assert_eq!(
+            edges_at_01, edges_at_02,
+            "fillet radius 0.1 -> 0.2 must not change surviving edge set"
+        );
+        assert_eq!(
+            edges_at_02, edges_at_05,
+            "fillet radius 0.2 -> 0.5 must not change surviving edge set"
+        );
+        assert_eq!(edges_at_01.len(), 11);
+    }
+
+    /// D-Fillet sub-ε.β composition with Transform arm
+    /// (sub-7.2-ζ.ε): Cuboid → Transform → Fillet inherits Cuboid
+    /// edges through Transform, then filters at Fillet. Result is
+    /// byte-equal to direct Cuboid edges minus the filleted set.
+    #[test]
+    fn resolver_cuboid_transform_fillet_chains_edges_through_both() {
+        let owner = BRepOwnerId::from_bytes([0x99; 16]);
+        let cube = CuboidOp {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        };
+        let upstream_edges = cube.brep_edge_ids(owner);
+        let filleted = vec![upstream_edges[5]];
+        let fillet = FilletOp::new(&cube, owner, filleted.clone(), 0.1).expect("fillet");
+
+        let mut cad = CadGraph::new();
+        cad.begin_operation().expect("begin");
+        let cube_node = cad
+            .graph_mut()
+            .expect("mut")
+            .add_operator(OperatorNode::Cuboid(cube))
+            .expect("add cuboid");
+        let xform_node = cad
+            .graph_mut()
+            .expect("mut")
+            .add_operator(OperatorNode::Transform(TransformOp {
+                translation: [2.0, 0.0, 0.0],
+                rotation_quat_xyzw: [0.0, 0.0, 0.0, 1.0],
+                scale: [1.0, 1.0, 1.0],
+            }))
+            .expect("add transform");
+        let fillet_node = cad
+            .graph_mut()
+            .expect("mut")
+            .add_operator(OperatorNode::Fillet(fillet))
+            .expect("add fillet");
+        cad.graph_mut()
+            .expect("mut")
+            .connect(cube_node, xform_node, 0)
+            .expect("connect cuboid->xform");
+        cad.graph_mut()
+            .expect("mut")
+            .connect(xform_node, fillet_node, 0)
+            .expect("connect xform->fillet");
+        cad.commit("cuboid -> transform -> fillet").expect("commit");
+
+        let chain_edges: Vec<BRepEdgeId> = brep_edge_ids_for_node(cad.graph(), fillet_node, owner)
+            .expect("resolve through both arms");
+        let expected: Vec<BRepEdgeId> = upstream_edges
+            .iter()
+            .filter(|e| !filleted.contains(e))
+            .copied()
+            .collect();
+        assert_eq!(chain_edges.len(), 11);
+        assert_eq!(
+            chain_edges, expected,
+            "Cuboid -> Transform -> Fillet must inherit Cuboid edges minus filleted"
+        );
     }
 }

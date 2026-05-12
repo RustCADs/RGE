@@ -19,8 +19,8 @@
 
 use rge_cad_core::{
     brep_edge_ids_for_node, brep_face_ids_for_node, BRepEdgeId, BRepEdgeProvider, BRepFaceId,
-    BRepOwnerId, BRepProvider, BRepResolveError, CadGraph, CuboidOp, FilletError, FilletOp, OpKind,
-    Operator, OperatorNode, TessellationCache, Tolerance,
+    BRepOwnerId, BRepProvider, CadGraph, CuboidOp, FilletError, FilletOp, Operator, OperatorNode,
+    TessellationCache, Tolerance,
 };
 
 fn unit_cube() -> CuboidOp {
@@ -193,16 +193,19 @@ fn fillet_zero_radius_rejected() {
     assert!(matches!(result, Err(FilletError::InvalidRadius { .. })));
 }
 
-/// Post-D-Fillet-sub-ε.α split: the face resolver inherits upstream
-/// face identity for a Fillet node (FilletOp.evaluate clones upstream
-/// positions/indices verbatim and appends chamfer-cap geometry, so
-/// every upstream face exists bit-identical in the output mesh), while
-/// the edge resolver still returns
-/// `BRepResolveError::TopologyChangingOperator { kind: OpKind::Fillet }`
-/// because filleted edges lose 2-endpoint geometry under chamfering
-/// (edge inheritance is sub-ε.β scope).
+/// Post-D-Fillet-sub-ε.α + sub-ε.β: both resolvers inherit for a
+/// Fillet node, with different inheritance shapes:
+///
+/// * Face resolver (sub-ε.α): identity-preserving — every upstream
+///   face exists bit-identical in the output mesh because
+///   FilletOp.evaluate clones upstream positions/indices verbatim
+///   and only appends chamfer-cap geometry.
+/// * Edge resolver (sub-ε.β): filtered-inheriting — upstream edges
+///   pass through except those in the FilletOp's selection
+///   (`op.edges()`), which are excluded because they lose 2-endpoint
+///   geometry under chamfering.
 #[test]
-fn fillet_node_face_inherits_edge_returns_topology_changing() {
+fn fillet_node_face_and_edge_both_inherit_with_edge_filtering() {
     let owner = BRepOwnerId::from_bytes([0x77; 16]);
     let cube = unit_cube();
     let direct_face_ids: Vec<BRepFaceId> = cube
@@ -210,8 +213,9 @@ fn fillet_node_face_inherits_edge_returns_topology_changing() {
         .into_iter()
         .map(|(_, id)| id)
         .collect();
-    let edge = cube.brep_edge_ids(owner)[0];
-    let fillet = FilletOp::new(&cube, owner, vec![edge], 0.1).expect("ok");
+    let upstream_edges: Vec<BRepEdgeId> = cube.brep_edge_ids(owner);
+    let filleted = vec![upstream_edges[0]];
+    let fillet = FilletOp::new(&cube, owner, filleted.clone(), 0.1).expect("ok");
 
     let mut cad = CadGraph::new();
     cad.begin_operation().expect("begin");
@@ -231,7 +235,7 @@ fn fillet_node_face_inherits_edge_returns_topology_changing() {
         .expect("connect");
     cad.commit("cuboid -> fillet").expect("commit");
 
-    // Face resolver: sub-ε.α inherits upstream Cuboid face IDs.
+    // Face resolver: sub-ε.α inherits upstream Cuboid face IDs unchanged.
     let face_ids: Vec<BRepFaceId> = brep_face_ids_for_node(cad.graph(), fillet_node, owner)
         .expect("face resolver inherits via sub-ε.α")
         .into_iter()
@@ -242,14 +246,19 @@ fn fillet_node_face_inherits_edge_returns_topology_changing() {
         "Fillet face resolver must inherit Cuboid face IDs unchanged"
     );
 
-    // Edge resolver: catch-all still returns TopologyChangingOperator
-    // (sub-ε.β scope).
-    let edge_err = brep_edge_ids_for_node(cad.graph(), fillet_node, owner)
-        .expect_err("Fillet must produce TopologyChangingOperator on edge resolver");
+    // Edge resolver: sub-ε.β inherits upstream Cuboid edges minus the
+    // filleted selection. Surviving edges are byte-equal to the
+    // upstream emission order with the filleted set removed.
+    let edge_ids: Vec<BRepEdgeId> = brep_edge_ids_for_node(cad.graph(), fillet_node, owner)
+        .expect("edge resolver inherits via sub-ε.β");
+    let expected_edges: Vec<BRepEdgeId> = upstream_edges
+        .iter()
+        .filter(|e| !filleted.contains(e))
+        .copied()
+        .collect();
     assert_eq!(
-        edge_err,
-        BRepResolveError::TopologyChangingOperator {
-            kind: OpKind::Fillet
-        }
+        edge_ids, expected_edges,
+        "Fillet edge resolver must inherit Cuboid edges minus the filleted set"
     );
+    assert_eq!(edge_ids.len(), 11);
 }

@@ -38,15 +38,15 @@
 //!   identity-preserving arm (D-Fillet sub-ε.α). Chamfer-cap
 //!   triangles remain unnamed; a future direct `BRepProvider` impl
 //!   with cap-face IDs is sub-ε.γ scope.
-//! * No `impl BRepEdgeProvider for FilletOp` (output-side edge
-//!   identity). Filleted edges lose 2-endpoint geometry under
-//!   chamfering, so pass-through inheritance would silently
-//!   misrepresent topology — the edge resolver
-//!   ([`crate::topology::edge_resolve::brep_edge_ids_for_node`])
-//!   keeps Fillet in its catch-all and returns
-//!   [`crate::topology::BRepResolveError::TopologyChangingOperator`].
-//!   Sub-ε.β is the bounded next slice (edge inheritance with
-//!   filleted-edge filtering).
+//! * No `impl BRepEdgeProvider for FilletOp`. Edge identity flows via
+//!   the graph-level resolver with filtered inheritance —
+//!   [`crate::topology::edge_resolve::brep_edge_ids_for_node`] recurses
+//!   to the upstream, then filters out the FilletOp's selected edges
+//!   (`op.edges()`) so callers receive only the non-filleted upstream
+//!   edges, byte-equal to the upstream emission order minus the
+//!   selection (D-Fillet sub-ε.β). Filleted edges lose 2-endpoint
+//!   geometry under chamfering — they are excluded rather than
+//!   misrepresented.
 //! * No general fillet kernel.
 //! * No Boolean / Sweep input.
 //! * No multi-edge corner-sharing geometry. The chamfer is per-edge
@@ -79,15 +79,25 @@
 //! delegates to a shared [`FilletOp::from_upstream`] helper. Evaluation
 //! is upstream-agnostic.
 //!
-//! Post-sub-ε.α, FilletOp has an explicit identity-preserving arm in
-//! [`crate::topology::resolve::brep_face_ids_for_node`] (mirror of the
-//! Transform arm — face identity inherits from the unique input),
-//! but still falls into the catch-all in
-//! [`crate::topology::edge_resolve::brep_edge_ids_for_node`] and
-//! returns
-//! [`crate::topology::BRepResolveError::TopologyChangingOperator`]
-//! for edge queries — correct, since filleted edges lose their
-//! 2-endpoint geometry under chamfering.
+//! Post-sub-ε.α + sub-ε.β, FilletOp has explicit arms in BOTH
+//! resolvers:
+//!
+//! * [`crate::topology::resolve::brep_face_ids_for_node`] —
+//!   identity-preserving (mirror of the Transform arm; face identity
+//!   inherits from the unique input unchanged, since
+//!   [`FilletOp::evaluate`] clones upstream positions/indices verbatim
+//!   and only appends chamfer-cap geometry).
+//! * [`crate::topology::edge_resolve::brep_edge_ids_for_node`] —
+//!   filtered-inheriting (recurses to the upstream, then filters out
+//!   `op.edges()` so callers receive only the non-filleted upstream
+//!   edges; filleted edges are excluded because they lose 2-endpoint
+//!   geometry under chamfering).
+//!
+//! Chamfer-cap triangles remain unnamed at both layers in v0 (no face
+//! ID, no edge ID minted for the cap geometry). Direct
+//! [`crate::topology::BRepProvider`] /
+//! [`crate::topology::BRepEdgeProvider`] impls on FilletOp itself are
+//! sub-ε.γ scope.
 
 use serde::{Deserialize, Serialize};
 
