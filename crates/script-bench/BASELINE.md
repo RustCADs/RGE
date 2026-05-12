@@ -137,6 +137,67 @@ cargo test -p rge-script-bench --release --lib \
 
 **Phase 3.4 exit criterion #3 status**: **CLOSED 2026-05-12 on recorder host only** — `cargo test ... -- --ignored --nocapture` exits 0; test result `ok. 1 passed; 0 failed; 0 ignored; 0 measured; 18 filtered out; finished in 3600.00s`. The cargo wall-clock matches `FORMAL_MEMORY_SOAK_DURATION = Duration::from_secs(60 * 60)` exactly, confirming the soak loop ran for its full minimum duration. Estimated cycle count (not directly captured by the test's stdout — the test holds the `MemorySoakReport` in a local but does NOT print its fields): at the re-validated 2026-05-12 Phase 3.3 p95 of 0.818 ms/cycle, 1 hour ≈ **~4.4M cycles**; preservation invariant `restored_components == cycles * entity_count` held across all of them.
 
+## Formal W04 raw WasmtimeCranelift gates — RUN 2026-05-12
+
+Recorded 2026-05-12 (release-profile test run) via:
+
+```sh
+cargo test -p rge-script-bench --release --lib \
+  wasmtime_cranelift::tests \
+  --manifest-path A:\RCAD\RGE\Cargo.toml \
+  -- --nocapture
+```
+
+Fixture at `crates/script-bench/src/wasmtime_cranelift.rs` — **direct wasmtime API**, no `runtime-wasmtime-engine` / `runtime-wasmtime` orchestration, no `rge-script-host` capability checks or ECS marshaling. `wasmtime::Engine` configured with `cranelift_opt_level(OptLevel::Speed)` mirroring `runtime-wasmtime-engine::Engine::new` exactly. Three inline WAT fixtures (`SCRIPT_TICK_1M_WAT` / `PER_FRAME_TICK_10K_WAT` / `COLD_START_EMPTY_WAT`).
+
+**The four W04 cells flipped from `_pending W04_` to measured numbers**:
+
+| workload | engine | metric | unit | value | native row | ratio (wasm / native) |
+| --- | --- | --- | --- | --- | --- | --- |
+| `script_tick_1m_iters` | `wasmtime_cranelift` (raw) | wall_time | ns total / 1M op | **713 200** | 674 666 | **1.057×** |
+| `script_tick_1m_iters` | `wasmtime_cranelift` (raw) | per_op | ns/op | **0.713** | 0.675 | **1.057×** |
+| `per_frame_tick_10k_entities` | `wasmtime_cranelift` (raw) | wall_time | ns total / 10k | **76 200** | 7 594 | **10.034×** |
+| `per_frame_tick_10k_entities` | `wasmtime_cranelift` (raw) | per_entity | ns/entity | **7.620** | 0.76 | **10.026×** |
+| `cold_start` | `wasmtime_cranelift` (raw) | wall_time | ns | **405 100** | 48.74 | N/A (different physics) |
+| `cold_start` | `wasmtime_cranelift` (raw) | wall_time | ms | **0.405** | — | — |
+| `memory_overhead` | `wasmtime_cranelift` (raw) | bytes_per_module | bytes | **13 680** | 8 | N/A (different physics) |
+
+**`script_tick_1m_iters` verdict (PASS gate)**: 1.057× — well under the PLAN §5.6 1.5× target. The tight-loop f32-arithmetic workload sits comfortably within wasmtime cranelift's hot-path optimization — register-allocated `pos` accumulator, no memory access, no bounds checks. **Matches the "fastest script engine" pillar's design assumption** for compute-bound workloads.
+
+**`per_frame_tick_10k_entities` verdict (FAILS the 1.5× target as a raw per-entity measurement)**: 10.034× — well over the PLAN §5.6 1.5× target. The workload is memory-bound (10,000 entities × 6 f32 memory operations per entity = 60,000 bounded loads/stores per frame). Wasmtime cranelift's linear-memory bounds checks aren't fully optimized away on this access pattern; native Rust's slice iteration is bounds-check-elision-friendly + vectorization-friendly. **This is NOT a regression — it's a structural characteristic of raw per-entity WASM execution against memory-bound workloads.** The previously-recorded **`script_host_counter_bulk` measurement of 1.34× (2026-05-12 re-validation; 1.21× on 2026-05-11) achieves the 1.5× target** by amortizing per-entity wasm overhead across a single host crossing per frame (one `tick(dt)` + one `rge.ecs::add_to_all_counters(1)` host call per frame; the host iterates the 1,000 entities natively rather than each entity crossing the wasm boundary). The two measurements describe different workload shapes:
+
+- **`per_frame_tick_10k_entities` raw** measures wasmtime cranelift's per-entity ECS-iteration overhead when entities are visited from within wasm (10× over native — DOES NOT meet the 1.5× target);
+- **`script_host_counter_bulk`** measures wasmtime cranelift's bulk-host-crossing overhead when the wasm boundary is amortized (1.34× over native — MEETS the 1.5× target).
+
+The PLAN §5.6 1.5× target is achievable for the script-host workload pattern (bulk-path host crossings) but is structurally violated by the raw per-entity-wasm-loop pattern. **No engine reshape, no PLAN §5.6 retarget, and no native-baseline rewrite is proposed in this W04 sub-α dispatch** — the gap is recorded for transparency; downstream architectural decisions (e.g., enforce bulk-path discipline for production wasm code; or document that some workloads must go through bulk-path) are out of scope.
+
+**`cold_start` verdict (different physics)**: 405 µs raw wasmtime cranelift cold-start (parse + Cranelift JIT compile + instantiate + first call) vs the native baseline's 48.74 ns (timer floor for an empty closure call). The two measurements describe different physics — native has no module-load step; the wasm 405 µs IS the module-load step. **Well under the PLAN §5.6 target of < 50 ms by ~125×** (0.405 ms / 50 ms ≈ 0.8% of budget) — comfortable headroom for a release build with JIT compile.
+
+**`memory_overhead` verdict (different physics)**: 13,680 bytes / module raw wasmtime cranelift (`Module::serialize().len()` on the empty `(module (func (export "noop")))` — proxy for "bytes per loaded module" at the AOT-artifact level; captures compiled-code size + module metadata) vs the native baseline's 8 bytes (function-pointer cost). **Well under the PLAN §5.6 target of < 1 MB per module by ~75×** (13.68 KiB / 1024 KiB ≈ 1.3% of budget). Note: this is the SERIALIZED bytes count, NOT the runtime RSS — a true RSS measurement requires platform-specific instrumentation (`/proc/self/status` / `GetProcessMemoryInfo`) and is OUT OF SCOPE for this sub-α dispatch.
+
+**Scope limitation (LOAD-BEARING)**: These W04 raw WasmtimeCranelift gates are **CONSTRAINED-CERTIFIED on the recorder host only** (Windows 11 / x86_64, cargo 1.94.1, wasmtime 44.0.1, single-run point estimates from the targeted `cargo test --release --lib wasmtime_cranelift::tests --nocapture` invocation). They certify:
+
+- The four W04 cells (`script_tick_1m_iters` / `per_frame_tick_10k_entities` / `cold_start` / `memory_overhead`) for the `wasmtime_cranelift` column are NO LONGER `_pending W04_` — they hold measured numbers.
+- The `wasmtime_cranelift` column measures **raw** wasmtime cranelift, **NOT** the `script_host_counter` orchestrated path (different fixtures, different overheads — both are real measurements of wasmtime cranelift JIT, but the raw path strips script-host's capability checks + ECS marshaling + hot-reload state machine).
+
+They do NOT certify:
+
+- Universal performance across hardware classes / vendor parity (single Windows 11 / x86_64 NVIDIA-host run).
+- Cold-start frame cost (the 405 µs is single-run; criterion-style multi-sample distribution not captured here).
+- Sustained-thermal behavior (single-shot test; not a long-run measurement).
+- CI regression coverage (no ratchet baseline established; future re-runs against this 2026-05-12 measurement would be the natural ratchet target).
+- Memory or VRAM beyond the AOT-artifact byte proxy.
+- W04 cross-engine columns beyond `wasmtime_cranelift` — `wasmtime_singlepass` (Winch) is sub-β scope; `mlua` / `wasmer_singlepass` / `bevy_extism` are `_post-Phase-3_` per BASELINE.md's roster table.
+
+**Harness**: `crates/script-bench/src/wasmtime_cranelift.rs::tests` (four `#[test]` fns, non-`#[ignore]`'d, run in default `cargo test` per the phase_3_3 / phase_3_4 convention). Invoke via:
+
+```sh
+cargo test -p rge-script-bench --release --lib \
+  wasmtime_cranelift::tests \
+  --manifest-path A:\RCAD\RGE\Cargo.toml \
+  -- --nocapture
+```
+
 **Scope limitation (LOAD-BEARING)**: This soak closure is **CONSTRAINED-CERTIFIED on the recorder host only** (Windows 11 / x86_64, cargo 1.94.1, wasmtime 44.0.1, single-run). It certifies:
 
 - 1 hour of continuous hot-reload swap cycles completes without panic / OOM / hang
@@ -210,19 +271,24 @@ regression at the same gate.
 > This is intentionally manual at v0.0.1; the W04 follow-up wires automatic
 > JSON aggregation through `src/output.rs`.
 
-## Remaining engine rows (placeholder)
+## Remaining engine rows
 
-The table below is still the target comparison shape for future
-Lua/mlua/Wasmer-singlepass/Bevy-extism comparisons. The `script_host_counter`
-hot-reload gate above is the current real engine-backed row.
+The table below is the cross-engine comparison shape. As of 2026-05-12, the
+**`wasmtime_cranelift` column is filled** with raw cranelift measurements
+(W04 sub-α dispatch — see "Formal W04 raw WasmtimeCranelift gates" section
+above). The `script_host_counter` orchestrated path (capability checks + ECS
+marshaling + hot-reload state machine on top of wasmtime cranelift) measures
+DIFFERENT numbers — kept distinct from the raw column. Lua/mlua /
+Wasmer-singlepass / Bevy-extism remain `_post-Phase-3_`; `wasmtime_singlepass`
+(Winch) is `_pending W04 sub-β_`.
 
-| workload                       | native_rust | wasmtime_cranelift | wasmtime_singlepass | mlua | wasmer_singlepass | bevy_extism |
-| ------------------------------ | ----------- | ------------------ | ------------------- | ---- | ----------------- | ----------- |
-| `script_tick_1m_iters`         | _baseline_  | _pending W04_      | _pending W04_       | _post-Phase-3_ | _post-Phase-3_ | _post-Phase-3_ |
-| `per_frame_tick_10k_entities`  | _baseline_  | _pending W04_      | _pending W04_       | _post-Phase-3_ | _post-Phase-3_ | _post-Phase-3_ |
-| `cold_start`                   | 0 ns *      | _pending W04_      | _pending W04_       | _post-Phase-3_ | _post-Phase-3_ | _post-Phase-3_ |
-| `hot_reload_swap`              | _baseline_  | _script-host gate wired_ | _pending_       | _post-Phase-3_ | _post-Phase-3_ | _post-Phase-3_ |
-| `memory_overhead`              | 8 B *       | _pending W04_      | _pending W04_       | _post-Phase-3_ | _post-Phase-3_ | _post-Phase-3_ |
+| workload                       | native_rust | wasmtime_cranelift (raw) | wasmtime_singlepass | mlua | wasmer_singlepass | bevy_extism |
+| ------------------------------ | ----------- | ------------------------ | ------------------- | ---- | ----------------- | ----------- |
+| `script_tick_1m_iters`         | _baseline_  | **713 200 ns / 0.713 ns/op (1.057× native; PASS 1.5×)** | _pending W04 sub-β_ | _post-Phase-3_ | _post-Phase-3_ | _post-Phase-3_ |
+| `per_frame_tick_10k_entities`  | _baseline_  | **76 200 ns / 7.620 ns/entity (10.034× native; FAILS 1.5× as raw per-entity; meet target via bulk-path)** | _pending W04 sub-β_ | _post-Phase-3_ | _post-Phase-3_ | _post-Phase-3_ |
+| `cold_start`                   | 0 ns *      | **405 100 ns / 0.405 ms (PASS < 50 ms)** | _pending W04 sub-β_ | _post-Phase-3_ | _post-Phase-3_ | _post-Phase-3_ |
+| `hot_reload_swap`              | _baseline_  | **`script_host_counter` orchestrated path: p95=0.818 ms (PASS < 100 ms); raw cranelift hot-reload not measured separately** | _pending_ | _post-Phase-3_ | _post-Phase-3_ | _post-Phase-3_ |
+| `memory_overhead`              | 8 B *       | **13 680 B / module (`Module::serialize().len()` AOT-artifact proxy; PASS < 1 MB; runtime RSS not measured)** | _pending W04 sub-β_ | _post-Phase-3_ | _post-Phase-3_ | _post-Phase-3_ |
 
 \* Native code has no module-load step and no per-module heap allocation;
 the values shown are the formal lower bounds. See METHODOLOGY for why
