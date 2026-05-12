@@ -232,6 +232,26 @@ pub struct EditorShell {
     /// in [`Self::handle_left_click`] from
     /// [`CadProjection::face_triangle_indices`].
     pub(crate) highlight_index_buffer: Option<IndexBuffer>,
+
+    /// Phase 6 sub-β — frame-graph substrate transient-texture pool.
+    /// `None` until [`Self::init_render_state`]; rotated via
+    /// `begin_frame()` once per [`Self::render_frame`] per ADR-118 D4.
+    pub(crate) texture_pool: Option<rge_gfx::TexturePool>,
+
+    /// Phase 6 sub-β — frame-graph substrate transient-buffer pool.
+    /// Required by [`rge_gfx::build_resource_map`]'s signature even
+    /// though sub-β consumes only a transient texture (depth); a future
+    /// transient-buffer consumer would populate `map.buffer_map` from
+    /// the same builder pass without further plumbing churn.
+    pub(crate) buffer_pool: Option<rge_gfx::BufferPool>,
+
+    /// Phase 6 sub-β — compiled per-frame resource flow for the
+    /// single-pass `"lit_mesh"` graph (one transient depth-texture
+    /// write, no reads). Rebuilt on surface resize in
+    /// [`Self::resize_render_path`] because [`rge_gfx::TextureDescriptor`]
+    /// is keyed on `width`/`height` and the descriptor flows verbatim
+    /// into pool free-list identity.
+    pub(crate) compiled_frame_graph: Option<rge_gfx::CompiledFrameGraph>,
 }
 
 impl EditorShell {
@@ -274,6 +294,9 @@ impl EditorShell {
             cursor_pos: None,
             highlight_material: None,
             highlight_index_buffer: None,
+            texture_pool: None,
+            buffer_pool: None,
+            compiled_frame_graph: None,
         }
     }
 
@@ -342,6 +365,9 @@ impl EditorShell {
             cursor_pos: None,
             highlight_material: None,
             highlight_index_buffer: None,
+            texture_pool: None,
+            buffer_pool: None,
+            compiled_frame_graph: None,
         }
     }
 

@@ -21,8 +21,9 @@
 use std::sync::Arc;
 
 use rge_gfx::{
-    Camera as GfxCamera, DirectionalLight, GfxContext, LitMesh, LitMeshPipeline, Material,
-    SurfaceContext,
+    build_resource_map, BufferPool, Camera as GfxCamera, CompiledFrameGraph, DepthStateKey,
+    DirectionalLight, FrameGraph, GfxContext, LitMesh, LitMeshPipeline, Material,
+    ResourceClassDescriptor, ResourceId, SurfaceContext, TextureDescriptor, TexturePool,
 };
 use winit::dpi::LogicalSize;
 use winit::event_loop::ActiveEventLoop;
@@ -71,6 +72,84 @@ pub(crate) const HIGHLIGHT_COLOR: glam::Vec4 = glam::Vec4::new(1.0, 0.6, 0.0, 1.
 /// default `(ambient, diffuse, specular, shininess)` so the shading
 /// continuity with the main cuboid is preserved.
 const HIGHLIGHT_PHONG: glam::Vec4 = glam::Vec4::new(0.1, 1.0, 0.5, 32.0);
+
+// ---------------------------------------------------------------------------
+// Phase 6 sub-β — transient depth wire constants + helper
+// ---------------------------------------------------------------------------
+
+/// Phase 6 sub-β depth attachment format. `Depth24Plus` is the wgpu
+/// portable depth format (24-bit unsigned normalised) — sufficient for
+/// the single-pass `lit_mesh` flow's depth-test purposes. The format is
+/// pinned by this constant so the [`TextureDescriptor`] in the
+/// `FrameGraph` and the [`DepthStateKey`] on the [`LitMeshPipeline`]
+/// stay in lockstep.
+const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24Plus;
+
+/// Phase 6 sub-β stable identifier for the per-frame transient depth
+/// texture. `const` so `init_render_state` and `render_frame` reference
+/// the exact same bytes without re-deriving. The ASCII prefix
+/// `rge.edsh.depth.` is informational only — opaque-ness is preserved
+/// per `ResourceId`'s contract.
+const DEPTH_RESOURCE_ID: ResourceId = ResourceId::from_bytes([
+    b'r', b'g', b'e', b'.', b'e', b'd', b's', b'h', b'.', b'd', b'e', b'p', b't', b'h', 0, 1,
+]);
+
+/// Compile a single-pass `FrameGraph` for the `lit_mesh` flow against
+/// the current surface dimensions. Helper called from
+/// [`EditorShell::init_render_state`] and
+/// [`EditorShell::resize_render_path`] (the latter on every surface
+/// resize because [`TextureDescriptor`] is keyed on `width`/`height`
+/// and the descriptor flows verbatim into pool free-list identity).
+///
+/// One pass `"lit_mesh"` declares one write of [`DEPTH_RESOURCE_ID`]
+/// at [`DEPTH_FORMAT`] with `RENDER_ATTACHMENT` usage. `compile()`
+/// always succeeds for a single-pass graph (no cycles possible, every
+/// declared resource is written by definition).
+fn build_lit_mesh_compiled_frame_graph(
+    surface_width: u32,
+    surface_height: u32,
+) -> CompiledFrameGraph {
+    let depth_descriptor = TextureDescriptor {
+        width: surface_width.max(1),
+        height: surface_height.max(1),
+        depth_or_array_layers: 1,
+        mip_level_count: 1,
+        sample_count: 1,
+        format: DEPTH_FORMAT,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        dimension: wgpu::TextureDimension::D2,
+        view_dimension: wgpu::TextureViewDimension::D2,
+    };
+    let mut fg = FrameGraph::new();
+    fg.add_pass(
+        "lit_mesh",
+        vec![],
+        vec![(
+            DEPTH_RESOURCE_ID,
+            ResourceClassDescriptor::Texture(depth_descriptor),
+        )],
+    )
+    .expect("single-pass FrameGraph add_pass: only failure mode is descriptor mismatch, impossible here");
+    fg.compile().expect(
+        "single-pass FrameGraph compile: no cycles, every read matched by a write (no reads)",
+    )
+}
+
+/// Phase 6 sub-β [`DepthStateKey`] for the shared [`LitMeshPipeline`].
+/// `LessEqual` + `depth_write_enabled: false` per the future-note at
+/// the render_frame highlight-overlay site below — both the main
+/// cuboid draw and the highlight-overlay draw share this single
+/// pipeline, and `depth_write_enabled: false` on the shared pipeline
+/// inhibits the Z-fight that identical-position cuboid + overlay
+/// geometry would otherwise produce against a populated depth buffer.
+/// The depth buffer stays at `Clear(1.0)` for the entire frame; every
+/// fragment passes `LessEqual` against 1.0; render order determines
+/// visibility (overlay drawn second wins where it draws). This
+/// preserves the pre-sub-β no-depth visual behavior exactly while
+/// consuming the transient depth substrate end-to-end.
+fn lit_mesh_depth_state() -> DepthStateKey {
+    DepthStateKey::new(DEPTH_FORMAT, false, wgpu::CompareFunction::LessEqual)
+}
 
 impl EditorShell {
     /// Build the GPU-side render state on first `resumed`.
@@ -137,15 +216,33 @@ impl EditorShell {
         let light = DirectionalLight::new(&gfx_ctx).map_err(|e| format!("light: {e:?}"))?;
         light.update(&gfx_ctx, default_light_direction(), glam::Vec3::ONE);
 
-        // Step 5 — pipeline against the surface's color format.
-        let pipeline = LitMeshPipeline::new(
+        // Step 5 — pipeline against the surface's color format, now
+        // depth-ready per Phase 6 sub-α + sub-β. The
+        // `lit_mesh_depth_state()` choice (`LessEqual` +
+        // `depth_write_enabled: false`) is documented at the helper's
+        // site above; sub-α landed the additive `new_with_depth`
+        // constructor that delegates to the cache via PsoKey-with-depth.
+        let pipeline = LitMeshPipeline::new_with_depth(
             &gfx_ctx,
             gfx_camera.bind_group_layout(),
             light.bind_group_layout(),
             material.bind_group_layout(),
             format,
+            Some(lit_mesh_depth_state()),
         )
         .map_err(|e| format!("pipeline: {e:?}"))?;
+
+        // Step 5b — frame-graph substrate plumbing (sub-β). Construct
+        // the per-frame transient-texture pool, the (unused-but-
+        // required-by-API) transient-buffer pool, and the compiled
+        // single-pass `lit_mesh` graph. Per ADR-118 / dispatch 122 the
+        // substrate-discipline rule "pass-record sites must NOT call
+        // pool.acquire directly" is preserved: production goes through
+        // `build_resource_map` at frame start (see `render_frame`),
+        // never bypassing the builder for the one-resource scenario.
+        let texture_pool = TexturePool::new();
+        let buffer_pool = BufferPool::new();
+        let compiled_frame_graph = build_lit_mesh_compiled_frame_graph(width, height);
 
         // Step 6 — RenderMesh → LitMesh for the cuboid entity.
         let entity = self.cad_entity.expect("checked above");
@@ -167,6 +264,9 @@ impl EditorShell {
         self.highlight_material = Some(highlight_material);
         self.light = Some(light);
         self.cuboid_mesh = Some(cuboid_mesh);
+        self.texture_pool = Some(texture_pool);
+        self.buffer_pool = Some(buffer_pool);
+        self.compiled_frame_graph = Some(compiled_frame_graph);
 
         // Kick off the first redraw so the cuboid appears.
         if let Some(w) = self.window.as_ref() {
@@ -187,6 +287,49 @@ impl EditorShell {
     /// `cad_world == None`); caller should fall through to existing
     /// W03 behaviour.
     pub(crate) fn render_frame(&mut self) -> bool {
+        // Phase 6 sub-β — frame-graph substrate plumbing FIRST so the
+        // `&mut self.{texture_pool,buffer_pool}` borrows release before
+        // the existing immutable borrows on neighbouring fields. Per
+        // ADR-118 / dispatch 122 substrate-discipline rule, pass-record
+        // sites must NOT call `pool.acquire` directly — all transient
+        // acquisition flows through `build_resource_map` which the
+        // builder layer drives, even for the one-resource scenario.
+        let depth_view = {
+            let Some(gfx_ctx) = self.gfx_ctx.as_ref() else {
+                return false;
+            };
+            let Some(compiled) = self.compiled_frame_graph.as_ref() else {
+                return false;
+            };
+            let Some(tex_pool) = self.texture_pool.as_mut() else {
+                return false;
+            };
+            let Some(buf_pool) = self.buffer_pool.as_mut() else {
+                return false;
+            };
+            tex_pool.begin_frame();
+            buf_pool.begin_frame();
+            let map = match build_resource_map(compiled, gfx_ctx.device(), tex_pool, buf_pool) {
+                Ok(m) => m,
+                Err(e) => {
+                    tracing::warn!(
+                        target: "rge::editor-shell::lifecycle",
+                        "skip frame: build_resource_map: {e:?}"
+                    );
+                    if let Some(w) = self.window.as_ref() {
+                        w.request_redraw();
+                    }
+                    return true;
+                }
+            };
+            let depth_arc = Arc::clone(
+                map.texture_map
+                    .get(&DEPTH_RESOURCE_ID)
+                    .expect("well-formed single-pass FrameGraph guarantees DEPTH_RESOURCE_ID present in texture_map"),
+            );
+            depth_arc.create_view(&wgpu::TextureViewDescriptor::default())
+        };
+
         let Some(gfx_ctx) = self.gfx_ctx.as_ref() else {
             return false;
         };
@@ -252,7 +395,28 @@ impl EditorShell {
                         store: wgpu::StoreOp::Store,
                     },
                 })],
-                depth_stencil_attachment: None,
+                // Phase 6 sub-β — transient depth attachment from
+                // [`build_resource_map`] above. Matches the pipeline's
+                // [`lit_mesh_depth_state`] (`LessEqual` +
+                // `depth_write_enabled: false`); the depth buffer stays
+                // at the `Clear(1.0)` value for the entire frame and
+                // every fragment passes `LessEqual` against 1.0 — depth
+                // is functionally a no-op for the cuboid + overlay,
+                // matching the pre-sub-β no-depth visual behavior
+                // exactly while consuming the transient substrate
+                // end-to-end. Lifts the cuboid+overlay Z-fight that
+                // a non-`false`-write depth state would introduce
+                // (regression prevention); does NOT prove a
+                // user-visible Z-fight fix — that claim requires
+                // sub-γ measurement or a visual harness.
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
                 timestamp_writes: None,
                 occlusion_query_set: None,
                 multiview_mask: None,
@@ -278,11 +442,16 @@ impl EditorShell {
             // `None`, the if-let skips the overlay and the main cuboid
             // renders unchanged.
             //
-            // NOTE for future depth-buffer landing: this overlay shares
-            // the cuboid's vertex positions (Z-fight at the source-mesh
-            // level). When a depth attachment is added, this pipeline
-            // will need its `DepthStencilState` set to `LessEqual` with
-            // `depth_write_enabled = false` — out of sub-ε scope.
+            // Post sub-β: the depth attachment is now populated (see
+            // the `depth_stencil_attachment` block above) and the
+            // shared `LitMeshPipeline` carries
+            // `DepthStateKey { LessEqual, depth_write_enabled: false }`
+            // — the overlay's same-position-as-cuboid geometry passes
+            // depth-test against the Clear(1.0) buffer (every fragment
+            // <= 1.0) without writing, so render order (overlay second)
+            // determines visibility on shared pixels. The Z-fight that
+            // a `depth_write_enabled: true` pipeline would produce here
+            // is structurally prevented.
             if let (Some(highlight_mat), Some(highlight_ib)) = (
                 self.highlight_material.as_ref(),
                 self.highlight_index_buffer.as_ref(),
@@ -329,6 +498,18 @@ impl EditorShell {
         let view_proj = render_input.editor_camera.view_proj(aspect);
         if let Some(camera) = self.gfx_camera.as_ref() {
             camera.update(gfx_ctx, view_proj, glam::Mat4::IDENTITY);
+        }
+        // Phase 6 sub-β — rebuild the compiled `lit_mesh` frame-graph
+        // against the new surface dimensions. [`TextureDescriptor`] is
+        // keyed on `width`/`height`, and the descriptor flows verbatim
+        // into [`TexturePool`]'s free-list identity; new descriptor =>
+        // new pool slot. Old slots for the previous descriptor drain
+        // through the ring rotation and accumulate in `free_lists` as
+        // stale entries (bounded by `FRAMES_IN_FLIGHT=2` allocations per
+        // resize). Acceptable bounded leak for v0; pool-level
+        // free-list pruning is out of scope.
+        if self.compiled_frame_graph.is_some() {
+            self.compiled_frame_graph = Some(build_lit_mesh_compiled_frame_graph(new_w, new_h));
         }
     }
 }
