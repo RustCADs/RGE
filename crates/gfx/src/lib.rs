@@ -81,9 +81,9 @@ pub use camera::{Camera, CameraError};
 pub use context::{GfxContext, GfxContextError};
 pub use frame::{FrameError, FrameRecorder, ReadbackBuffer};
 pub use frame_graph::{
-    AliasingGroup, AliasingGroupId, BufferDescriptor, BufferPool, CompileError, CompiledFrameGraph,
-    FrameGraph, FrameGraphError, PassNode, ResourceClassDescriptor, ResourceId, ResourceLifetime,
-    ResourceUsage, TextureDescriptor, TexturePool,
+    build_resource_map, AliasingGroup, AliasingGroupId, BufferDescriptor, BufferPool, CompileError,
+    CompiledFrameGraph, FrameGraph, FrameGraphError, PassNode, ResourceClassDescriptor, ResourceId,
+    ResourceLifetime, ResourceMap, ResourceMapError, ResourceUsage, TextureDescriptor, TexturePool,
 };
 pub use intent_adapter::{
     build_pipeline_from_intent, color_target_id_to_format, depth_intent_to_key, intent_to_pso_key,

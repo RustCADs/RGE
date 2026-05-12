@@ -87,6 +87,29 @@ impl ResourceLifetime {
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct AliasingGroup(pub Vec<ResourceId>);
 
+impl AliasingGroup {
+    /// Returns the largest descriptor in this group by
+    /// [`ResourceClassDescriptor::byte_size_estimate`], suitable for pool
+    /// acquisition per ADR-118 D5 ("the descriptor with the largest size in
+    /// a group governs the physical slot").
+    ///
+    /// Returns `None` if no member of the group has a descriptor registered
+    /// in `descriptors`. Well-formed `CompiledFrameGraph`s produced by
+    /// [`FrameGraph::add_pass`](super::FrameGraph::add_pass) always have a
+    /// descriptor per `ResourceId`, but the helper is robust to partial
+    /// maps for diagnostic use.
+    #[must_use]
+    pub fn max_descriptor<'a>(
+        &self,
+        descriptors: &'a BTreeMap<ResourceId, ResourceClassDescriptor>,
+    ) -> Option<&'a ResourceClassDescriptor> {
+        self.0
+            .iter()
+            .filter_map(|rid| descriptors.get(rid))
+            .max_by_key(|d| d.byte_size_estimate())
+    }
+}
+
 /// Compiled (analysed) frame-graph.
 ///
 /// Produced by [`crate::frame_graph::FrameGraph::compile`]. The substrate's
@@ -628,5 +651,79 @@ mod tests {
         let c3 = compile_passes(&passes, &descriptors_b).expect("c3");
         assert_eq!(c1.structural_hash(), c2.structural_hash());
         assert_eq!(c2.structural_hash(), c3.structural_hash());
+    }
+
+    fn tex_d_size(side: u32) -> ResourceClassDescriptor {
+        ResourceClassDescriptor::Texture(crate::frame_graph::descriptor::TextureDescriptor {
+            width: side,
+            height: side,
+            depth_or_array_layers: 1,
+            mip_level_count: 1,
+            sample_count: 1,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            dimension: wgpu::TextureDimension::D2,
+            view_dimension: wgpu::TextureViewDimension::D2,
+        })
+    }
+
+    fn buf_d_size(bytes: u64) -> ResourceClassDescriptor {
+        ResourceClassDescriptor::Buffer(crate::frame_graph::descriptor::BufferDescriptor {
+            size_bytes: bytes,
+            usage: wgpu::BufferUsages::UNIFORM,
+        })
+    }
+
+    // AG-MAX-1: textures-only group; largest (4096²) wins.
+    #[test]
+    fn aliasing_group_max_descriptor_picks_largest_texture() {
+        let g = AliasingGroup(vec![r(1), r(2), r(3)]);
+        let mut descriptors = BTreeMap::new();
+        descriptors.insert(r(1), tex_d_size(1024));
+        descriptors.insert(r(2), tex_d_size(4096));
+        descriptors.insert(r(3), tex_d_size(2048));
+        let max = g
+            .max_descriptor(&descriptors)
+            .expect("non-empty descriptors");
+        assert_eq!(*max, tex_d_size(4096), "max must be the 4096² texture");
+    }
+
+    // AG-MAX-2: buffers-only group; largest by size_bytes wins.
+    #[test]
+    fn aliasing_group_max_descriptor_picks_largest_buffer() {
+        let g = AliasingGroup(vec![r(1), r(2), r(3)]);
+        let mut descriptors = BTreeMap::new();
+        descriptors.insert(r(1), buf_d_size(1024));
+        descriptors.insert(r(2), buf_d_size(16_384));
+        descriptors.insert(r(3), buf_d_size(4096));
+        let max = g
+            .max_descriptor(&descriptors)
+            .expect("non-empty descriptors");
+        assert_eq!(*max, buf_d_size(16_384), "max must be the 16 KiB buffer");
+    }
+
+    // AG-MAX-3: empty group → None.
+    #[test]
+    fn aliasing_group_max_descriptor_returns_none_for_empty_group() {
+        let g = AliasingGroup(vec![]);
+        let mut descriptors = BTreeMap::new();
+        descriptors.insert(r(1), tex_d_size(1024));
+        assert!(
+            g.max_descriptor(&descriptors).is_none(),
+            "empty group has no max descriptor"
+        );
+    }
+
+    // AG-MAX-4: non-empty group with empty descriptors → None (the
+    // precondition that surfaces as
+    // ResourceMapError::MissingDescriptorForGroup at the builder layer).
+    #[test]
+    fn aliasing_group_max_descriptor_returns_none_for_missing_descriptors() {
+        let g = AliasingGroup(vec![r(1), r(2)]);
+        let descriptors: BTreeMap<ResourceId, ResourceClassDescriptor> = BTreeMap::new();
+        assert!(
+            g.max_descriptor(&descriptors).is_none(),
+            "group with no descriptor entries returns None"
+        );
     }
 }

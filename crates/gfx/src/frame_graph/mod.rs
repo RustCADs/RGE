@@ -56,6 +56,7 @@ pub mod compile;
 pub mod descriptor;
 pub mod pass;
 pub mod resource;
+pub mod resource_map;
 pub mod texture_pool;
 
 use std::collections::BTreeMap;
@@ -65,6 +66,7 @@ pub use compile::{AliasingGroup, CompileError, CompiledFrameGraph, ResourceLifet
 pub use descriptor::{BufferDescriptor, ResourceClassDescriptor, TextureDescriptor};
 pub use pass::PassNode;
 pub use resource::{ResourceId, ResourceUsage};
+pub use resource_map::{build_resource_map, ResourceMap, ResourceMapError};
 use rge_kernel_graph_foundation::{stable_node_id, Graph, GraphError, NodeId};
 pub use texture_pool::{AliasingGroupId, TexturePool};
 use thiserror::Error;
