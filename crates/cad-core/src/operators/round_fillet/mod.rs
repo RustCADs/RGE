@@ -170,23 +170,71 @@ pub(crate) struct RoundFilletSpec {
 }
 
 // ---------------------------------------------------------------------------
+// RoundFilletPathSpec — multi-segment swept-cylinder spec (sub-ζ Commit 2)
+// ---------------------------------------------------------------------------
+
+/// Multi-segment path spec for round-fillet operations on edges that
+/// span more than 2 endpoints — specifically Revolve side-side edges
+/// (sub-ζ Commit 2):
+///
+/// * **Partial-mode Revolve side-side**: an open arc with `segments + 1`
+///   ring positions; the path runs from `bot_{(i+1)%N}` at ring 0
+///   (θ=0) through intermediate rings to `top_{(i+1)%N}` at ring
+///   `segments` (θ=angle). `closed_loop = false`.
+/// * **Full-mode Revolve side-side**: a closed circular loop with
+///   `segments` ring positions; ring `M-1` wraps back to ring 0
+///   (θ = 2π = θ_0). `closed_loop = true`.
+///
+/// The dihedral angle along the path is **constant** (equal to the
+/// profile's interior polygon angle at the shared profile-vertex),
+/// but the inward DIRECTIONS rotate around the Y-axis as θ varies.
+/// Hence `path_face_a_inwards` and `path_face_b_inwards` carry one
+/// unit-vector per ring; the per-ring inward direction is the
+/// rotated copy of the XY-plane inward direction.
+///
+/// `pub(crate)` only — same boundary as [`RoundFilletSpec`].
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct RoundFilletPathSpec {
+    /// Vertex indices along the path in the upstream tessellation's
+    /// `positions` array. For open paths size is M+1 (= segments+1
+    /// for Revolve partial side-side); for closed loops size is M
+    /// (= segments for Revolve full-mode side-side; ring M-1 wraps
+    /// to ring 0 implicitly via `closed_loop`).
+    pub(crate) path_vertices: Vec<u32>,
+    /// `TopologyFaceId` of adjacent face A (same across all rings of
+    /// the path — Side(i) doesn't change identity as θ varies).
+    pub(crate) face_a_id: TopologyFaceId,
+    /// Same for adjacent face B (Side((i+1)%N)).
+    pub(crate) face_b_id: TopologyFaceId,
+    /// Per-ring inward direction in face A's tangent plane at that
+    /// ring, perpendicular to the edge tangent at that ring, pointing
+    /// INTO face A's interior. Unit vector at each ring. Size matches
+    /// `path_vertices.len()`.
+    pub(crate) path_face_a_inwards: Vec<[f32; 3]>,
+    /// Per-ring inward direction in face B's tangent plane.
+    /// Size matches `path_vertices.len()`.
+    pub(crate) path_face_b_inwards: Vec<[f32; 3]>,
+    /// True for closed-loop paths (full-mode Revolve side-side);
+    /// `RoundFilletOp::evaluate`'s Path branch wraps ring `M-1` to
+    /// ring `0` for the closing segment. False for open paths
+    /// (partial-mode Revolve side-side).
+    pub(crate) closed_loop: bool,
+}
+
+// ---------------------------------------------------------------------------
 // RoundFilletSpecKind — variant carrier for 2-endpoint vs path specs
 // ---------------------------------------------------------------------------
 
 /// Discriminator over the two per-edge spec shapes the round-fillet
-/// substrate carries (sub-ζ Commit 1 introduction, behaviorally inert).
+/// substrate carries.
 ///
-/// At sub-ζ Commit 1 the enum has ONE variant `TwoEndpoint` wrapping
-/// the existing [`RoundFilletSpec`] byte-identical. The wrapper exists
-/// to let sub-ζ Commit 2 add a `Path(RoundFilletPathSpec)` variant
-/// alongside without disturbing the 2-endpoint code path. The
-/// `RoundFilletOp::evaluate` body's `for spec in &self.round_specs`
-/// loop dispatches on this enum via `match`; at Commit 1 the single
-/// `TwoEndpoint` arm contains the byte-identical sub-β.γ general-
-/// dihedral cylinder math from `978f507`. Commit 2 adds the `Path`
-/// arm with multi-segment swept-cylinder math; Rust's exhaustive-
-/// match requirement forces Commit 2 to update the dispatch
-/// explicitly when the variant lands.
+/// At sub-ζ Commit 1 the enum had ONE variant `TwoEndpoint`. Sub-ζ
+/// Commit 2 adds the `Path(RoundFilletPathSpec)` variant for
+/// multi-segment swept-cylinder fillets on Revolve side-side edges.
+/// The `RoundFilletOp::evaluate` body's `for spec_kind in
+/// &self.round_specs` loop dispatches via `match` — Rust's
+/// exhaustive-match requirement forced the `Path` arm to be added
+/// alongside `TwoEndpoint` here.
 ///
 /// `pub(crate)` only — same boundary as [`RoundFilletSpec`].
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -196,6 +244,11 @@ pub(crate) enum RoundFilletSpecKind {
     /// seam + sub-δ.revisit Loft cases). Inner [`RoundFilletSpec`]
     /// shape preserved byte-identical from sub-β.γ-extend `978f507`.
     TwoEndpoint(RoundFilletSpec),
+    /// Multi-segment swept-cylinder fillet (sub-ζ Commit 2 — Revolve
+    /// side-side circular paths, both partial-mode open arcs and
+    /// full-mode closed loops). See [`RoundFilletPathSpec`] for the
+    /// per-ring data layout.
+    Path(RoundFilletPathSpec),
 }
 
 impl RoundFilletSpecKind {
@@ -203,11 +256,7 @@ impl RoundFilletSpecKind {
     ///
     /// Used at test call-sites that direct-call
     /// `RoundFilletUpstream::resolve_round_spec(idx)` and then access
-    /// spec fields like `spec.face_a_id`. Pre-sub-ζ those sites worked
-    /// against `Result<RoundFilletSpec, ..>` directly; post-Commit 1
-    /// the trait returns `Result<RoundFilletSpecKind, ..>` and the
-    /// test sites unwrap via `.expect_two_endpoint()` to access the
-    /// inner spec's fields. Production code paths
+    /// spec fields like `spec.face_a_id`. Production code paths
     /// (`RoundFilletOp::evaluate`'s match dispatch +
     /// `from_upstream`'s storage push) don't need this accessor —
     /// they handle the variant explicitly.
@@ -215,6 +264,22 @@ impl RoundFilletSpecKind {
     pub(crate) fn expect_two_endpoint(&self) -> &RoundFilletSpec {
         match self {
             RoundFilletSpecKind::TwoEndpoint(spec) => spec,
+            RoundFilletSpecKind::Path(_) => {
+                panic!("expected RoundFilletSpecKind::TwoEndpoint, got Path")
+            }
+        }
+    }
+
+    /// Test-only accessor: panics if the variant is not `Path`.
+    /// Sibling of [`Self::expect_two_endpoint`] for sub-ζ Path-branch
+    /// tests.
+    #[cfg(test)]
+    pub(crate) fn expect_path(&self) -> &RoundFilletPathSpec {
+        match self {
+            RoundFilletSpecKind::Path(path) => path,
+            RoundFilletSpecKind::TwoEndpoint(_) => {
+                panic!("expected RoundFilletSpecKind::Path, got TwoEndpoint")
+            }
         }
     }
 }
@@ -458,6 +523,194 @@ impl Operator for RoundFilletOp {
             // swept-cylinder math must be added.
             let spec = match spec_kind {
                 RoundFilletSpecKind::TwoEndpoint(spec) => spec,
+                RoundFilletSpecKind::Path(path_spec) => {
+                    // Sub-ζ Commit 2 Path branch: multi-segment swept-
+                    // cylinder fillet along a circular-path edge
+                    // (Revolve partial side-side open arc; Revolve
+                    // full-mode side-side closed loop).
+                    //
+                    // For each ring r along the path:
+                    //   1. Compute sub-β.γ general-dihedral inset +
+                    //      axis_center + cross-section vertices at
+                    //      that ring's position pos_r using per-ring
+                    //      inward directions a_r, b_r.
+                    //   2. Append 2 inset vertices (face A / face B
+                    //      tangent foot on each face's plane at pos_r).
+                    //   3. Append (N+1) cross-section vertices forming
+                    //      a quarter/general arc around axis_center_r
+                    //      in the perpendicular-to-edge cross-section
+                    //      plane.
+                    //
+                    // Then stitch cross-sections at consecutive rings
+                    // with 2*N triangles per ring-step (M ring-steps
+                    // for closed loops, M-1 for open paths). Total
+                    // cylinder triangles = 2 * M_segments * N where
+                    // M_segments = M for closed loops, M-1 for open
+                    // (M = path_vertices.len()).
+                    //
+                    // Face-strip substitution sweeps ALL face A /
+                    // face B triangles and replaces ANY occurrence of
+                    // a path-vertex index with the corresponding
+                    // ring's inset index. Side(i) and Side((i+1)%N)
+                    // span every ring along the seam, so each ring's
+                    // substitution is keyed by the path-vertex →
+                    // inset-index mapping built up per ring.
+                    let m = path_spec.path_vertices.len();
+                    if m == 0 {
+                        return Err(OpError::InvalidParameter(
+                            "round fillet path spec has zero ring positions".to_string(),
+                        ));
+                    }
+                    if path_spec.path_face_a_inwards.len() != m
+                        || path_spec.path_face_b_inwards.len() != m
+                    {
+                        return Err(OpError::InvalidParameter(format!(
+                            "round fillet path spec inward-arrays length mismatch: \
+                             path_vertices.len() = {}, path_face_a_inwards.len() = {}, \
+                             path_face_b_inwards.len() = {}",
+                            m,
+                            path_spec.path_face_a_inwards.len(),
+                            path_spec.path_face_b_inwards.len(),
+                        )));
+                    }
+
+                    let mut inset_a_indices: Vec<u32> = Vec::with_capacity(m);
+                    let mut inset_b_indices: Vec<u32> = Vec::with_capacity(m);
+                    let mut cross_section_indices: Vec<Vec<u32>> = Vec::with_capacity(m);
+
+                    for r in 0..m {
+                        let path_vertex_usize = path_spec.path_vertices[r] as usize;
+                        if path_vertex_usize >= positions.len() {
+                            return Err(OpError::InvalidParameter(format!(
+                                "round fillet path vertex index out of bounds at ring {}: \
+                                 vertex = {}, positions.len = {}",
+                                r,
+                                path_spec.path_vertices[r],
+                                positions.len()
+                            )));
+                        }
+                        let pos_r = positions[path_vertex_usize];
+                        let a = path_spec.path_face_a_inwards[r];
+                        let b = path_spec.path_face_b_inwards[r];
+
+                        let dot_ab_raw = a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+                        let dot_ab = dot_ab_raw.clamp(-1.0, 1.0);
+                        let sin_phi_sq = 1.0 - dot_ab * dot_ab;
+                        if sin_phi_sq < DIHEDRAL_EPSILON_SQ {
+                            return Err(OpError::InvalidParameter(format!(
+                                "round fillet path-ring {r} near-degenerate dihedral: \
+                                 a·b = {dot_ab_raw} (sin²(φ) = {sin_phi_sq} < {DIHEDRAL_EPSILON_SQ})"
+                            )));
+                        }
+                        let sin_phi = sin_phi_sq.sqrt();
+                        let phi = dot_ab.acos();
+                        let inv_sin_phi = 1.0 / sin_phi;
+                        let inset_scale = (1.0 + dot_ab) * inv_sin_phi;
+                        let axis_scale = inv_sin_phi;
+
+                        let inset_a = vec_add(pos_r, vec_scale(a, self.radius * inset_scale));
+                        let inset_b = vec_add(pos_r, vec_scale(b, self.radius * inset_scale));
+                        let inset_a_idx = u32::try_from(positions.len()).unwrap_or(u32::MAX);
+                        positions.push(inset_a);
+                        inset_a_indices.push(inset_a_idx);
+                        let inset_b_idx = u32::try_from(positions.len()).unwrap_or(u32::MAX);
+                        positions.push(inset_b);
+                        inset_b_indices.push(inset_b_idx);
+
+                        let two_inward_sum = vec_add(a, b);
+                        let axis_center =
+                            vec_add(pos_r, vec_scale(two_inward_sum, self.radius * axis_scale));
+                        let arc_span = std::f32::consts::PI - phi;
+
+                        #[allow(
+                            clippy::cast_precision_loss,
+                            reason = "ROUND_FILLET_SEGMENTS is 8; precision loss in usize→f32 is well below tessellation tolerance"
+                        )]
+                        let segments_f = ROUND_FILLET_SEGMENTS as f32;
+                        let mut ring_cs_indices = Vec::with_capacity(ROUND_FILLET_SEGMENTS + 1);
+                        for k in 0..=ROUND_FILLET_SEGMENTS {
+                            #[allow(
+                                clippy::cast_precision_loss,
+                                reason = "k bounded by ROUND_FILLET_SEGMENTS; precision loss negligible"
+                            )]
+                            let t = k as f32 / segments_f;
+                            let theta = arc_span * t;
+                            let cos_t = theta.cos();
+                            let cos_t_plus_phi = (theta + phi).cos();
+                            let coef_a = cos_t_plus_phi * inv_sin_phi;
+                            let coef_b = -cos_t * inv_sin_phi;
+                            let radial = [
+                                coef_a * a[0] + coef_b * b[0],
+                                coef_a * a[1] + coef_b * b[1],
+                                coef_a * a[2] + coef_b * b[2],
+                            ];
+                            let cs_pos = vec_add(axis_center, vec_scale(radial, self.radius));
+                            let cs_idx = u32::try_from(positions.len()).unwrap_or(u32::MAX);
+                            positions.push(cs_pos);
+                            ring_cs_indices.push(cs_idx);
+                        }
+                        cross_section_indices.push(ring_cs_indices);
+                    }
+
+                    // Face-strip substitution: for every face-A /
+                    // face-B triangle, scan its 3 indices; if any
+                    // equals a path-vertex, replace with the
+                    // corresponding ring's inset index (inset_a for
+                    // face_a triangles; inset_b for face_b
+                    // triangles).
+                    if let Some(labels) = face_labels.as_ref() {
+                        for (tri_idx, label) in labels.iter().enumerate() {
+                            let target_is_a = *label == path_spec.face_a_id;
+                            let target_is_b = *label == path_spec.face_b_id;
+                            if !target_is_a && !target_is_b {
+                                continue;
+                            }
+                            for j in 0..3 {
+                                let idx_pos = tri_idx * 3 + j;
+                                let current = indices[idx_pos];
+                                if let Some(r) =
+                                    path_spec.path_vertices.iter().position(|v| *v == current)
+                                {
+                                    indices[idx_pos] = if target_is_a {
+                                        inset_a_indices[r]
+                                    } else {
+                                        inset_b_indices[r]
+                                    };
+                                }
+                            }
+                        }
+                    }
+
+                    // Stitch consecutive cross-sections with
+                    // quad-strip triangles. For open paths iterate r
+                    // in [0, M-1); for closed loops iterate r in
+                    // [0, M) with r_next = (r+1) % M wrap.
+                    let num_stitches = if path_spec.closed_loop { m } else { m - 1 };
+                    for r in 0..num_stitches {
+                        let r_next = (r + 1) % m;
+                        for k in 0..ROUND_FILLET_SEGMENTS {
+                            let a1 = cross_section_indices[r][k];
+                            let a2 = cross_section_indices[r][k + 1];
+                            let b1 = cross_section_indices[r_next][k];
+                            let b2 = cross_section_indices[r_next][k + 1];
+                            indices.push(a1);
+                            indices.push(b1);
+                            indices.push(b2);
+                            indices.push(a1);
+                            indices.push(b2);
+                            indices.push(a2);
+                            if let Some(labels) = face_labels.as_mut() {
+                                labels.push(TopologyFaceId::DEGENERATE);
+                                labels.push(TopologyFaceId::DEGENERATE);
+                            }
+                        }
+                    }
+
+                    // Path branch is self-contained; skip the
+                    // TwoEndpoint body below by continuing the outer
+                    // for-loop.
+                    continue;
+                }
             };
             let vertex_a_usize = spec.vertex_a as usize;
             let vertex_b_usize = spec.vertex_b as usize;
