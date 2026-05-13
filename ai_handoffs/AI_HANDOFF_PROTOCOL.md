@@ -133,7 +133,83 @@ Every packet — regardless of type — MUST contain at minimum:
 - `STATUS`
 
 Plus packet-type-specific structured sections — see the templates in
-`ai_handoffs/templates/`.
+`ai_handoffs/templates/`. Every packet MUST also end with the
+machine-readable completion footer — see `Machine-Readable Completion
+Footer` below.
+
+## Machine-Readable Completion Footer
+
+Every packet MUST end with a deterministic completion footer block, so the
+next role (a polling watcher, a CI hook, or another AI agent) can detect
+packet completion without inspecting chat-UI state or guessing from the
+document body. Orchestration is filesystem-state-based, not chat-UI-based.
+
+### Format
+
+The footer is plain Markdown — two horizontal rules (`---`) wrapping five
+key-value lines:
+
+```text
+---
+
+HANDOFF_STATUS: <COMPLETE | FAILED | BLOCKED | NEEDS_HUMAN>
+DISPATCH_ID: <same as the header>
+AUTHOR: <same as the header>
+NEXT_ROLE: <role the recipient should fulfill next>
+EXIT_CODE: <0 for success; non-zero for failure>
+
+---
+```
+
+The footer MUST be the last non-empty content in the file. No prose, no
+additional sections, and no signature blocks may follow it. The Markdown
+horizontal rules surrounding the block are part of the standard.
+
+### `HANDOFF_STATUS` Values
+
+- `COMPLETE` — packet is fully written and ready to consume.
+- `FAILED` — the author attempted the role and failed; the next role
+  should read the body for the failure mode before retrying or routing.
+- `BLOCKED` — the author is waiting on input from the next role (e.g.
+  clarification, missing context, environment issue) before the dispatch
+  can advance.
+- `NEEDS_HUMAN` — explicit human arbitration is required; no AI role
+  should proceed until the Human Arbiter records a decision (typically in
+  a follow-up packet authored by the Planner).
+
+### `NEXT_ROLE` Values
+
+- `EXECUTOR_AI` — Executor should act on this packet next.
+- `REVIEWER_AI` — Reviewer should act on this packet next.
+- `PLANNER_AI` — Planner should decide the next step.
+- `HUMAN_ARBITER` — User must intervene before any AI proceeds.
+- `NONE` — terminal; no further packet is expected in this dispatch
+  (typical for `FINAL_CLOSEOUT` with `STATUS: CLOSED` or `ABANDONED`).
+
+### Polling Pattern
+
+A downstream watcher detects packet completion with a line-anchored grep:
+
+```bash
+while ! grep -q "^HANDOFF_STATUS: COMPLETE$" ai_handoffs/<packet>.md; do
+  sleep 2
+done
+```
+
+Match the marker line-anchored so partial writes or earlier mentions in
+the document body (e.g. quoting another packet's footer in prose) do not
+produce false positives. The footer's placement at end-of-file also makes
+detection robust against truncated reads.
+
+### Why a Filesystem-Level Marker
+
+Orchestrating multi-agent work through chat-UI state causes hanging loops,
+partial reads, race conditions, duplicate reviews, and semantic drift —
+these are classical distributed-system coordination problems. The
+filesystem (specifically, the dispatch's Markdown packets in
+`ai_handoffs/`) is the right protocol bus in v1. Future versions may add
+structured JSON sidecars (e.g. `<packet>.meta.json` carrying the same
+fields), but the Markdown footer is sufficient and authoritative for v1.
 
 ## Rules
 
@@ -176,6 +252,13 @@ Without an approved `CORRECTION_PACKET`, no correction is performed.
 
 A `FINAL_CLOSEOUT` that omits any of these is invalid and the dispatch is
 not considered closed.
+
+### 6. Every packet must end with the machine-readable completion footer
+
+See `Machine-Readable Completion Footer` above. The footer is mandatory.
+A packet missing the footer is invalid, regardless of how complete its
+body looks. Downstream polling MUST gate on the footer line
+(`^HANDOFF_STATUS: <value>$`), not on the body.
 
 ## Repository Layout
 

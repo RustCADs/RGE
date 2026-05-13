@@ -80,3 +80,13 @@ of the following occur:
 
 <Optional: rationale, references to prior dispatches, ADRs, design tradeoffs,
 known-unknowns, alternatives that were considered and rejected.>
+
+---
+
+HANDOFF_STATUS: <COMPLETE | FAILED | BLOCKED | NEEDS_HUMAN>
+DISPATCH_ID: <same as header>
+AUTHOR: <same as header, e.g. Planner / Claude>
+NEXT_ROLE: EXECUTOR_AI
+EXIT_CODE: 0
+
+---

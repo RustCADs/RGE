@@ -79,3 +79,13 @@ warranted.
 Planner: <role> / <AI identity>
 Timestamp: <ISO-8601 local>
 Status: <CLOSED | ABANDONED>
+
+---
+
+HANDOFF_STATUS: <COMPLETE | FAILED | BLOCKED | NEEDS_HUMAN>
+DISPATCH_ID: <same as header>
+AUTHOR: <same as header, e.g. Planner / Codex>
+NEXT_ROLE: NONE
+EXIT_CODE: <0 if STATUS: CLOSED; non-zero if STATUS: ABANDONED>
+
+---

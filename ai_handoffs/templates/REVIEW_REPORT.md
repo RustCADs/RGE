@@ -66,3 +66,13 @@ One of:
   2. <enumerated finding>
 - **REJECT** — fundamental scope / approach problem; abandon and re-plan.
    Justification: <one paragraph>.
+
+---
+
+HANDOFF_STATUS: <COMPLETE | FAILED | BLOCKED | NEEDS_HUMAN>
+DISPATCH_ID: <same as header>
+AUTHOR: <same as header, e.g. Reviewer / Codex>
+NEXT_ROLE: PLANNER_AI
+EXIT_CODE: <0 if APPROVED for closeout; non-zero otherwise>
+
+---

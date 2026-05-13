@@ -60,3 +60,13 @@ The Executor MUST re-run these gates after the corrections:
 
 <Rationale for the chosen correction subset, why the deferred findings are
 deferred, any new context or constraints the Executor should be aware of.>
+
+---
+
+HANDOFF_STATUS: <COMPLETE | FAILED | BLOCKED | NEEDS_HUMAN>
+DISPATCH_ID: <same as header>
+AUTHOR: <same as header, e.g. Planner / Codex>
+NEXT_ROLE: EXECUTOR_AI
+EXIT_CODE: 0
+
+---

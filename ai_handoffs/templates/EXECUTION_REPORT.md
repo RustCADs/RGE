@@ -70,3 +70,13 @@ envelope, or any acceptance criterion that was relaxed. If none, write
    root if they are still present)>
 - Branch: <branch>
 - Last commit: `<hash>` <subject>
+
+---
+
+HANDOFF_STATUS: <COMPLETE | FAILED | BLOCKED | NEEDS_HUMAN>
+DISPATCH_ID: <same as header>
+AUTHOR: <same as header, e.g. Executor / Claude>
+NEXT_ROLE: REVIEWER_AI
+EXIT_CODE: <0 if all gates green; non-zero for any failure noted in the body>
+
+---
