@@ -107,6 +107,64 @@ fn unit_cuboid_render_mesh() -> RenderMesh {
 }
 
 // ---------------------------------------------------------------------------
+// Multi-sample assertion helpers (MAIN-RENDER-VISUAL-FIDELITY-002 dispatch
+// 2026-05-14): broaden the original single-pixel-per-region assertions to
+// catch diagonal-boundary leakage and region inversion. Same color
+// thresholds as before; only the sample count grows.
+// ---------------------------------------------------------------------------
+
+/// Assert a single pixel falls inside the **overlay** region:
+/// orange-dominant (high red, low blue, fully opaque alpha).
+fn assert_overlay_pixel(buf: &ReadbackBuffer, x: u32, y: u32) {
+    let (r, _g, b, a) = buf.pixel(x, y).expect("pixel in bounds");
+    assert_eq!(
+        a, 255,
+        "alpha should be fully opaque at lit overlay pixel ({x}, {y})"
+    );
+    assert!(
+        r > 80,
+        "overlay region red channel should be high (lit orange) at ({x}, {y}); got r={r}"
+    );
+    assert!(
+        b < 80,
+        "overlay region blue channel should be LOW (orange has near-zero blue) at ({x}, {y}); got b={b}. \
+         If b is high here, the overlay's orange material did NOT win over the cuboid's white — \
+         likely depth-state regression or render-order bug."
+    );
+}
+
+/// Assert a single pixel falls inside the **cuboid-only** region:
+/// white-ish (high red AND high blue, fully opaque alpha).
+fn assert_cuboid_only_pixel(buf: &ReadbackBuffer, x: u32, y: u32) {
+    let (r, _g, b, a) = buf.pixel(x, y).expect("pixel in bounds");
+    assert_eq!(
+        a, 255,
+        "alpha should be fully opaque at lit cuboid-only pixel ({x}, {y})"
+    );
+    assert!(
+        r > 80,
+        "cuboid-only region red channel should be high (lit white) at ({x}, {y}); got r={r}"
+    );
+    assert!(
+        b > 80,
+        "cuboid-only region blue channel should be HIGH (white has all RGB high) at ({x}, {y}); got b={b}. \
+         If b is low here, the overlay's orange material leaked into the cuboid-only region — \
+         index-buffer or render-pass-scoping bug."
+    );
+}
+
+/// Assert a single pixel falls inside the **background** region:
+/// near-black (sum of R+G+B is small; clear color = BLACK).
+fn assert_background_pixel(buf: &ReadbackBuffer, x: u32, y: u32) {
+    let (r, g, b, _a) = buf.pixel(x, y).expect("pixel in bounds");
+    let bg_sum = u32::from(r) + u32::from(g) + u32::from(b);
+    assert!(
+        bg_sum < 30,
+        "background pixel at ({x}, {y}) should be near-black (clear color = BLACK); got (r,g,b) = ({r}, {g}, {b})"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // LOAD-BEARING visual harness test
 // ---------------------------------------------------------------------------
 
@@ -320,54 +378,42 @@ fn lit_mesh_depth_overlay_pixel_readback() {
     // = pixels (16, 48) → (48, 48) → (48, 16) → LOWER-RIGHT half of
     // the +Z face silhouette (bounded by bottom edge, right edge,
     // and the diagonal from top-right (48, 16) to bottom-left (16, 48)).
+    // The diagonal line equation in pixel coords is `x + y = 64`;
+    // overlay covers pixels where `x + y > 64` inside the silhouette.
     //
     // Cuboid-only triangle (input 4→6→7; output vertices 9→10→11)
     // covers NDC (-0.5,-0.5) → (+0.5,+0.5) → (-0.5,+0.5) = pixels
-    // (16, 48) → (48, 16) → (16, 16) → UPPER-LEFT half.
+    // (16, 48) → (48, 16) → (16, 16) → UPPER-LEFT half. Pixels
+    // where `x + y < 64` inside the silhouette.
+    //
+    // MAIN-RENDER-VISUAL-FIDELITY-002 broadens the original
+    // single-pixel-per-region assertions to three sample points per
+    // region. Samples are chosen well inside each region (margin ≥ 4
+    // pixels from any region boundary, especially the diagonal) so
+    // the assertions stay stable under the recorder host's headless
+    // target and camera. Same color thresholds as before; only the
+    // sample count grows.
 
-    // (a) Inside overlay triangle: pixel (40, 40). At pixel y=40,
-    //     diagonal x = 16 + ((48-40)/(48-16)) * (48-16) = 16 + 8 = 24.
-    //     Overlay covers x ≥ 24 at y=40; pixel x=40 is well inside.
-    let (overlay_r, _overlay_g, overlay_b, overlay_a) =
-        buf.pixel(40, 40).expect("pixel (40, 40) in bounds");
-    assert_eq!(overlay_a, 255, "alpha should be fully opaque at lit pixel");
-    assert!(
-        overlay_r > 80,
-        "overlay region red channel should be high (lit orange); got r={overlay_r}"
-    );
-    assert!(
-        overlay_b < 80,
-        "overlay region blue channel should be LOW (orange has near-zero blue); got b={overlay_b}. \
-         If b is high here, the overlay's orange material did NOT win over the cuboid's white — \
-         likely depth-state regression or render-order bug."
-    );
+    // (a) Overlay region (lower-right of diagonal): three sample
+    //     points distributed across the region's interior. Each
+    //     must show orange-dominant pixels (high red, low blue).
+    assert_overlay_pixel(&buf, 40, 40); // center of overlay (40 + 40 = 80, margin 16 past diagonal)
+    assert_overlay_pixel(&buf, 44, 24); // upper-right of overlay (44 + 24 = 68, margin 4 past diagonal)
+    assert_overlay_pixel(&buf, 38, 44); // lower-center of overlay (38 + 44 = 82, margin 18 past diagonal)
 
-    // (b) Inside cuboid-only triangle: pixel (24, 24). At pixel y=24,
-    //     diagonal x = 16 + ((48-24)/(48-16)) * (48-16) = 16 + 24 = 40.
-    //     Cuboid-only covers x ≤ 40 at y=24; pixel x=24 is well
-    //     inside.
-    let (cuboid_r, _cuboid_g, cuboid_b, cuboid_a) =
-        buf.pixel(24, 24).expect("pixel (24, 24) in bounds");
-    assert_eq!(cuboid_a, 255, "alpha should be fully opaque at lit pixel");
-    assert!(
-        cuboid_r > 80,
-        "cuboid-only region red channel should be high (lit white); got r={cuboid_r}"
-    );
-    assert!(
-        cuboid_b > 80,
-        "cuboid-only region blue channel should be HIGH (white has all RGB high); got b={cuboid_b}. \
-         If b is low here, the overlay's orange material leaked into the cuboid-only region — \
-         index-buffer or render-pass-scoping bug."
-    );
+    // (b) Cuboid-only region (upper-left of diagonal): three sample
+    //     points. Each must show white-ish pixels (high red AND
+    //     high blue).
+    assert_cuboid_only_pixel(&buf, 24, 24); // center of cuboid-only (24 + 24 = 48, margin 16 before diagonal)
+    assert_cuboid_only_pixel(&buf, 20, 30); // left-center of cuboid-only (20 + 30 = 50, margin 14)
+    assert_cuboid_only_pixel(&buf, 30, 20); // upper-center of cuboid-only (30 + 20 = 50, margin 14)
 
-    // (c) Outside cuboid silhouette: pixel (4, 4). Clearly outside
-    //     [16..48] × [16..48].
-    let (bg_r, bg_g, bg_b, _bg_a) = buf.pixel(4, 4).expect("pixel (4, 4) in bounds");
-    let bg_sum = u32::from(bg_r) + u32::from(bg_g) + u32::from(bg_b);
-    assert!(
-        bg_sum < 30,
-        "background pixel should be near-black (clear color = BLACK); got (r,g,b) = ({bg_r}, {bg_g}, {bg_b})"
-    );
+    // (c) Background region (outside silhouette [16..48]×[16..48]):
+    //     three sample points at distinct image corners. Each must
+    //     show near-black pixels (clear color = BLACK).
+    assert_background_pixel(&buf, 4, 4); // top-left corner
+    assert_background_pixel(&buf, 60, 4); // top-right corner (x=60 > 48)
+    assert_background_pixel(&buf, 4, 60); // bottom-left corner (y=60 > 48)
 
     // Used the depth lifetime guard; explicit drop after assertions.
     drop(_depth_lifetime);
