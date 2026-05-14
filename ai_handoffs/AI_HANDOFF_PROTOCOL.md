@@ -64,6 +64,53 @@ decisions). For one-shot trivial tasks the existing repo-level docs are enough.
 6. **If `REJECTED`:** Planner writes `FINAL_CLOSEOUT` with `STATUS: ABANDONED`
    and a written reason.
 
+## Pre-Execution Review (Optional, Single-Reviewer)
+
+A pre-execution review is OPTIONAL but recommended for substrate-impacting
+dispatches (anything touching `crates/**`, `kernel/**`, `runtime/**`,
+`editor/**`, ADRs, architecture lints, or any tracked production source).
+The post-execution review at `Dispatch Lifecycle` step 3 above is the only
+REQUIRED review.
+
+If a pre-execution review is used:
+
+1. **Exactly one reviewer.** Multiple pre-execution review packets are
+   wasteful and explicitly discouraged. Choose a model that is NOT the
+   Executor for the dispatch (cross-model second-opinion). For the
+   current Planner=Codex / Executor=Claude working setup, the pre-exec
+   reviewer is `Reviewer / OpenAI Codex` (same model as Planner, but a
+   distinct role-packet).
+
+2. **The Executor consumes the pre-exec review** — it does NOT write a
+   duplicate "Reviewer2" / second-opinion approval packet when
+   concurring. Empirical lesson from the ROLEFLOW + MAIN-RENDER
+   dispatch series (2026-05-13 / 2026-05-14): duplicate pre-execution
+   approval packets added no signal beyond the first reviewer's
+   `APPROVE`.
+
+3. **Concurring path**: If the Executor concurs with the pre-exec review
+   and has no critique, the `EXECUTION_REPORT` notes in its
+   `Pre-Execution Review Consumed` section: "Pre-execution review
+   consumed; no additional pre-exec critique. Proceeded to execution."
+   No duplicate `REVIEW_REPORT` is written.
+
+4. **Critique path**: If the Executor finds a real issue before
+   executing, it MUST halt. Halting means writing an `EXECUTION_REPORT`
+   with `STATUS: BLOCKED`, `HANDOFF_STATUS: BLOCKED`, and
+   `NEXT_ROLE: PLANNER_AI` (or `STATUS: NEEDS_HUMAN`,
+   `HANDOFF_STATUS: NEEDS_HUMAN`, and `NEXT_ROLE: HUMAN_ARBITER` if
+   explicit arbitration is required). The critique goes in the `Open
+   Questions for Reviewer` and `Deviations from Task Packet` sections of
+   the `EXECUTION_REPORT`. The Planner then issues a `CORRECTION_PACKET`
+   (or re-plans via a new `TASK_PACKET`). The Executor does NOT write a
+   duplicate `REVIEW_REPORT` to express disagreement; the
+   `EXECUTION_REPORT`'s footer-status carries the signal.
+
+5. **Watcher behaviour**: filesystem watchers polling for dispatch
+   readiness MUST wait for the `EXECUTION_REPORT` after the single
+   pre-exec review, NOT for an additional duplicate approval packet
+   from the Executor.
+
 ## Correction Loop
 
 Corrections require Planner approval. Reviewer findings are recommendations,
@@ -259,6 +306,24 @@ See `Machine-Readable Completion Footer` above. The footer is mandatory.
 A packet missing the footer is invalid, regardless of how complete its
 body looks. Downstream polling MUST gate on the footer line
 (`^HANDOFF_STATUS: <value>$`), not on the body.
+
+### 7. Pre-execution review is single-reviewer; no duplicate rubber-stamp
+
+If a dispatch has a pre-execution review (optional but recommended for
+substrate-impacting work — see `Pre-Execution Review (Optional,
+Single-Reviewer)` above), exactly one reviewer writes it, typically the
+model that is NOT the Executor. The Executor does NOT write a duplicate
+second-opinion approval packet. If the Executor disagrees with the
+pre-execution review, it halts via the `EXECUTION_REPORT`'s header and
+footer (`STATUS: BLOCKED`, `HANDOFF_STATUS: BLOCKED`,
+`NEXT_ROLE: PLANNER_AI`; or `NEEDS_HUMAN` / `HUMAN_ARBITER` when human
+arbitration is required) and the `Open Questions for Reviewer` body
+section — never via a duplicate `REVIEW_REPORT` packet.
+
+This rule encodes the v2 simplification adopted 2026-05-14 after the
+ROLEFLOW + MAIN-RENDER dispatch series demonstrated that duplicate
+pre-execution `REVIEW_REPORT` packets from the Executor added no signal
+beyond the first reviewer's `APPROVE`.
 
 ## Repository Layout
 

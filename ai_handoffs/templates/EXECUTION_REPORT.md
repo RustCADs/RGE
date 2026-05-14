@@ -13,6 +13,30 @@ STATUS: AWAITING_REVIEW
 
 `ai_handoffs/<DISPATCH_ID>_TASK_<TIMESTAMP>.md`
 
+## Pre-Execution Review Consumed
+
+<If a pre-execution review packet exists for this dispatch, reference it
+by filename here and state whether the Executor concurs. Example:
+
+- Pre-execution review: `ai_handoffs/<DISPATCH_ID>_REVIEW_<TIMESTAMP>.md`
+   (Reviewer / <AI identity>, APPROVED). Executor concurs; no additional
+   pre-exec critique. Proceeded to execution.
+
+If no pre-execution review exists for this dispatch, write:
+"No pre-execution review issued for this dispatch."
+
+If the Executor DISAGREES with the pre-execution review, do NOT proceed
+to execution. Instead:
+- Set the header `STATUS` to `BLOCKED` or `NEEDS_HUMAN`.
+- Set footer `HANDOFF_STATUS: BLOCKED` and `NEXT_ROLE: PLANNER_AI`, or
+   `HANDOFF_STATUS: NEEDS_HUMAN` and `NEXT_ROLE: HUMAN_ARBITER`.
+- Document the critique in the `Open Questions for Reviewer` and
+   `Deviations from Task Packet` sections below.
+- The Planner will route a `CORRECTION_PACKET` or new `TASK_PACKET`.
+- Do NOT write a duplicate `REVIEW_REPORT` packet; the Executor's
+   critique flows through the `EXECUTION_REPORT` itself per Rule 7 of
+   the protocol.>
+
 ## What I Changed
 
 ### Source
