@@ -1,0 +1,53 @@
+{
+  "type": "object",
+  "properties": {
+    "verdict": {
+      "type": "string",
+      "enum": ["pass", "needs_changes", "block"]
+    },
+    "summary": {
+      "type": "string"
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": ["low", "medium", "high", "critical"]
+          },
+          "file": {
+            "type": "string"
+          },
+          "line": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "issue": {
+            "type": "string"
+          },
+          "evidence": {
+            "type": "string"
+          },
+          "suggested_fix": {
+            "type": "string"
+          }
+        },
+        "required": ["severity", "file", "issue", "suggested_fix"],
+        "additionalProperties": false
+      }
+    },
+    "tests_to_run": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "follow_up_prompt_for_claude": {
+      "type": "string"
+    }
+  },
+  "required": ["verdict", "summary", "findings", "tests_to_run", "follow_up_prompt_for_claude"],
+  "additionalProperties": false
+}

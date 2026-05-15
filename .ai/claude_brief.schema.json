@@ -1,0 +1,28 @@
+{
+  "type": "object",
+  "properties": {
+    "task": {
+      "type": "string"
+    },
+    "change_summary": {
+      "type": "string"
+    },
+    "risk_areas": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "review_instructions_for_codex": {
+      "type": "string"
+    },
+    "constraints": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": ["task", "change_summary", "risk_areas", "review_instructions_for_codex", "constraints"],
+  "additionalProperties": false
+}

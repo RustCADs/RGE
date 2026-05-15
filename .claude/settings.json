@@ -1,0 +1,18 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -ExecutionPolicy Bypass -File \"${CLAUDE_PROJECT_DIR}\\.claude\\hooks\\codex-review.ps1\"",
+            "args": [],
+            "async": true,
+            "timeout": 300
+          }
+        ]
+      }
+    ]
+  }
+}
