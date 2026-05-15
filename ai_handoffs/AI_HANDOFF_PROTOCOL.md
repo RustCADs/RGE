@@ -254,9 +254,77 @@ Orchestrating multi-agent work through chat-UI state causes hanging loops,
 partial reads, race conditions, duplicate reviews, and semantic drift —
 these are classical distributed-system coordination problems. The
 filesystem (specifically, the dispatch's Markdown packets in
-`ai_handoffs/`) is the right protocol bus in v1. Future versions may add
-structured JSON sidecars (e.g. `<packet>.meta.json` carrying the same
-fields), but the Markdown footer is sufficient and authoritative for v1.
+`ai_handoffs/`) is the right protocol bus. The Markdown packet and its
+footer remain authoritative; an optional machine-readable `.meta.json`
+sidecar (see below) mirrors the packet for watchers and agents that
+prefer structured parsing over Markdown scraping.
+
+## Machine-Readable Sidecar (`.meta.json`)
+
+Each canonical Markdown packet MAY be accompanied by a JSON sidecar that
+mirrors its header fields and completion footer. The sidecar is OPTIONAL:
+the Markdown packet is authoritative, and a packet with no sidecar is
+fully valid. The sidecar exists so watchers, CI hooks, and other AI
+agents can read dispatch state without scraping Markdown prose.
+
+### Filename
+
+```
+ai_handoffs/<DISPATCH_ID>_<PACKET_TYPE>_<TIMESTAMP>.meta.json
+```
+
+The sidecar shares its packet's basename; only the extension differs
+(`.md` for the authoritative packet, `.meta.json` for the sidecar).
+
+### Schema
+
+The sidecar conforms to `.ai/handoff.schema.json` (JSON Schema draft-07,
+`schema_version: handoff-sidecar-v1`). It carries the five required
+header fields (`dispatch_id`, `author`, `timestamp`, `related_files`,
+`status`), the three completion-footer fields (`handoff_status`,
+`next_role`, `exit_code`), plus `packet_type` and `schema_version`.
+Packet-type-specific sections — findings, verification results,
+remaining risks, and so on — MAY be mirrored via the schema's optional
+fields.
+
+### Generation and lifecycle
+
+`new-handoff.ps1` at the repository root has two modes:
+
+- **Scaffold** (`-DispatchId <id> -PacketType <TYPE> -Author "<role> / <ai>"`)
+  creates ONLY the canonical Markdown packet, copied from the matching
+  `templates/` file. It does NOT create a `.meta.json` sidecar: a freshly
+  scaffolded packet is an unfilled template, and an incomplete or
+  unfilled packet has no sidecar.
+- **Finalize** (`-Finalize -PacketPath <path>`) is run after the packet
+  has been filled in. It parses the completed packet's header and
+  completion footer, rejects any packet that still contains template
+  placeholders, and writes the `.meta.json` sidecar from the packet's
+  actual values.
+
+A sidecar is therefore generated only after packet finalization, never
+at scaffold time. Its presence means a completed packet was parsed; an
+incomplete or scaffolded-but-unfilled packet has no sidecar.
+
+`new-handoff.ps1` does NOT scaffold root-level `<SENDER>to<RECEIVER>_*.md`
+files: the earlier `ai-handoff-v1` sender/receiver exploration is
+superseded by this sidecar and is not a canonical convention. Historical
+root `OPENAItoCLAUDE_*` / `CLAUDEtoOPENAI_*` files remain valid
+historical precedent only.
+
+### Polling with the sidecar
+
+Because the sidecar is written only by finalize, its existence already
+implies a completed packet was parsed. A watcher MAY gate on the sidecar
+instead of the Markdown footer:
+
+```bash
+until [ -f "ai_handoffs/<packet>.meta.json" ]; do sleep 2; done
+jq -e '.handoff_status == "COMPLETE"' "ai_handoffs/<packet>.meta.json"
+```
+
+The line-anchored Markdown-footer grep (above) remains valid and is the
+fallback when no sidecar is present.
 
 ## Rules
 
@@ -337,7 +405,9 @@ ai_handoffs/
     CORRECTION_PACKET.md
     FINAL_CLOSEOUT.md
   <DISPATCH_ID>_TASK_<TIMESTAMP>.md
+  <DISPATCH_ID>_TASK_<TIMESTAMP>.meta.json     # optional sidecar
   <DISPATCH_ID>_EXEC_<TIMESTAMP>.md
+  <DISPATCH_ID>_EXEC_<TIMESTAMP>.meta.json     # optional sidecar
   ...
 ```
 

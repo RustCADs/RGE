@@ -1,0 +1,136 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "RGE AI Handoff Packet Sidecar",
+  "description": "Machine-readable .meta.json sidecar for a canonical ai_handoffs/<DISPATCH_ID>_<PACKET_TYPE>_<TIMESTAMP>.md packet. The Markdown packet is authoritative prose; this sidecar mirrors its header fields and machine-readable completion footer so watchers, CI hooks, and AI agents can parse dispatch state without scraping Markdown. The sidecar is optional. Defined by dispatch POSTV0-HANDOFF-SIDECAR-RECONCILE-001; see ai_handoffs/AI_HANDOFF_PROTOCOL.md.",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "handoff-sidecar-v1",
+      "description": "Schema identifier. Fixed for this version."
+    },
+    "dispatch_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Stable dispatch identifier; identical across every packet in the dispatch."
+    },
+    "packet_type": {
+      "type": "string",
+      "enum": ["TASK", "EXEC", "REVIEW", "CORRECT", "CLOSEOUT"],
+      "description": "Which lifecycle packet this sidecar mirrors."
+    },
+    "author": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Role + AI identity, e.g. 'Planner / OpenAI Codex', 'Executor / Claude', 'Reviewer / Codex'."
+    },
+    "timestamp": {
+      "type": "string",
+      "minLength": 1,
+      "description": "ISO-8601 local form, matching the packet filename timestamp slug."
+    },
+    "related_files": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Mirrors the packet's RELATED_FILES section."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["OPEN", "AWAITING_REVIEW", "BLOCKED", "NEEDS_HUMAN", "APPROVED", "NEEDS_CORRECTION", "REJECTED", "CORRECTION_OPEN", "CLOSED", "ABANDONED"],
+      "description": "Packet STATUS line. TASK: OPEN. EXEC: AWAITING_REVIEW|BLOCKED|NEEDS_HUMAN. REVIEW: APPROVED|NEEDS_CORRECTION|REJECTED. CORRECT: CORRECTION_OPEN. CLOSEOUT: CLOSED|ABANDONED."
+    },
+    "handoff_status": {
+      "type": "string",
+      "enum": ["COMPLETE", "FAILED", "BLOCKED", "NEEDS_HUMAN"],
+      "description": "Mirrors the HANDOFF_STATUS completion-footer line."
+    },
+    "next_role": {
+      "type": "string",
+      "enum": ["EXECUTOR_AI", "REVIEWER_AI", "PLANNER_AI", "HUMAN_ARBITER", "NONE"],
+      "description": "Mirrors the NEXT_ROLE completion-footer line."
+    },
+    "exit_code": {
+      "type": "integer",
+      "description": "Mirrors the EXIT_CODE completion-footer line. 0 for success; non-zero for failure."
+    },
+    "source_packet": {
+      "type": "string",
+      "description": "Optional. Filename of the packet this one responds to (e.g. the TASK an EXEC acts on)."
+    },
+    "findings": {
+      "type": "array",
+      "description": "Optional. Mirrors REVIEW_REPORT findings.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "category": { "type": "string", "enum": ["correct", "needs_correction", "latent_risk"] },
+          "severity": { "type": "string", "enum": ["low", "medium", "high", "critical"] },
+          "file": { "type": "string" },
+          "line": { "type": "integer", "minimum": 1 },
+          "detail": { "type": "string" },
+          "recommended_fix": { "type": "string" }
+        },
+        "required": ["category", "detail"],
+        "additionalProperties": false
+      }
+    },
+    "verification": {
+      "type": "array",
+      "description": "Optional. Verification-gate commands run and their observed results.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "command": { "type": "string" },
+          "result": { "type": "string" }
+        },
+        "required": ["command", "result"],
+        "additionalProperties": false
+      }
+    },
+    "deviations": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Optional. Mirrors the EXECUTION_REPORT 'Deviations from Task Packet' section."
+    },
+    "open_questions": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Optional. Mirrors the EXECUTION_REPORT 'Open Questions for Reviewer' section."
+    },
+    "recommended_action": {
+      "type": "string",
+      "description": "Optional. Mirrors the REVIEW_REPORT 'Recommended Action'."
+    },
+    "approved_corrections": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Optional. Mirrors the CORRECTION_PACKET approved-corrections list."
+    },
+    "deferred_findings": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Optional. Mirrors the CORRECTION_PACKET deferred-findings list."
+    },
+    "final_commits": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Optional. Mirrors the FINAL_CLOSEOUT commit list."
+    },
+    "test_count_delta": {
+      "type": "string",
+      "description": "Optional. Mirrors the FINAL_CLOSEOUT test-count delta."
+    },
+    "remaining_risks": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Optional. Mirrors the FINAL_CLOSEOUT remaining-risks (required non-empty there per protocol Rule 5)."
+    },
+    "suggested_follow_on": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Optional. Mirrors the FINAL_CLOSEOUT suggested follow-on tasks."
+    }
+  },
+  "required": ["schema_version", "dispatch_id", "packet_type", "author", "timestamp", "related_files", "status", "handoff_status", "next_role", "exit_code"],
+  "additionalProperties": false
+}
