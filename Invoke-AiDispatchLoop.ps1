@@ -224,7 +224,7 @@ function Get-MarkerValue {
         $norm = ($line -replace '`', '').Trim()
         $norm = ($norm -replace '^[>\-\*\+\s]+', '').Trim()
         if ($norm -match $pattern) {
-            $candidate = ($matches[1] -replace '^[\*"''\s]+', '' -replace '[\*"''\s]+$', '')
+            $candidate = ($matches[1] -replace '^[\*"''\s]+', '' -replace '[\*"''\s.,;]+$', '')
             if ($candidate) { $value = $candidate }
         }
     }
