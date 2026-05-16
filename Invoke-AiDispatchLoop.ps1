@@ -200,108 +200,6 @@ function Invoke-CodexPrompt {
     }
 }
 
-function Get-JsonValueType {
-    param($Value)
-    if ($null -eq $Value) { return 'null' }
-    if ($Value -is [string]) { return 'string' }
-    if ($Value -is [bool]) { return 'boolean' }
-    if ($Value -is [byte] -or $Value -is [int16] -or $Value -is [int] -or $Value -is [long]) { return 'integer' }
-    if ($Value -is [float] -or $Value -is [double] -or $Value -is [decimal]) { return 'number' }
-    if ($Value -is [System.Array]) { return 'array' }
-    if ($Value -is [pscustomobject] -or $Value -is [hashtable]) { return 'object' }
-    return $Value.GetType().Name
-}
-
-function Test-JsonSchemaSubset {
-    param(
-        $Value,
-        $Schema,
-        [string]$Path = '$'
-    )
-
-    $schemaProps = @($Schema.PSObject.Properties.Name)
-    if ($schemaProps -contains 'type') {
-        $allowedTypes = @($Schema.type)
-        $actualType = Get-JsonValueType $Value
-        $matchesType = $false
-        foreach ($allowedType in $allowedTypes) {
-            if ($actualType -eq $allowedType -or ($allowedType -eq 'number' -and $actualType -eq 'integer')) {
-                $matchesType = $true
-                break
-            }
-        }
-        if (-not $matchesType) {
-            Fail "Claude JSON result does not match schema at ${Path}: expected $($allowedTypes -join '/'), got $actualType."
-        }
-    }
-
-    if (($schemaProps -contains 'enum') -and $null -ne $Value) {
-        $enumValues = @($Schema.enum)
-        if ($enumValues -notcontains $Value) {
-            Fail "Claude JSON result does not match schema at ${Path}: '$Value' is not one of $($enumValues -join ', ')."
-        }
-    }
-
-    $actualType = Get-JsonValueType $Value
-    if ($actualType -eq 'object') {
-        $valueProps = @($Value.PSObject.Properties.Name)
-        if ($schemaProps -contains 'required') {
-            foreach ($requiredName in @($Schema.required)) {
-                if ($valueProps -notcontains $requiredName) {
-                    # Tolerate a missing required array (Claude omits empty []); a missing required scalar still fails.
-                    $missingSchema = $null
-                    if ($schemaProps -contains 'properties') { $missingSchema = $Schema.properties.$requiredName }
-                    if ($missingSchema -and (@($missingSchema.type) -contains 'array')) { continue }
-                    Fail "Claude JSON result does not match schema at ${Path}: missing required property '$requiredName'."
-                }
-            }
-        }
-        if (($schemaProps -contains 'additionalProperties') -and $Schema.additionalProperties -eq $false -and ($schemaProps -contains 'properties')) {
-            $allowedProps = @($Schema.properties.PSObject.Properties.Name)
-            foreach ($valueName in $valueProps) {
-                if ($allowedProps -notcontains $valueName) {
-                    Fail "Claude JSON result does not match schema at ${Path}: unexpected property '$valueName'."
-                }
-            }
-        }
-        if ($schemaProps -contains 'properties') {
-            foreach ($propertySchema in @($Schema.properties.PSObject.Properties)) {
-                if ($valueProps -contains $propertySchema.Name) {
-                    Test-JsonSchemaSubset -Value $Value.($propertySchema.Name) -Schema $propertySchema.Value -Path "${Path}.$($propertySchema.Name)"
-                }
-            }
-        }
-    } elseif ($actualType -eq 'array' -and ($schemaProps -contains 'items')) {
-        $index = 0
-        foreach ($item in @($Value)) {
-            Test-JsonSchemaSubset -Value $item -Schema $Schema.items -Path "${Path}[$index]"
-            $index++
-        }
-    }
-}
-
-function Convert-ClaudeResultJson {
-    param(
-        [string]$ResultText,
-        [string]$SchemaPath
-    )
-
-    $payload = $ResultText.Trim()
-    if ($payload -match '(?s)^```(?:json)?\s*(.*?)\s*```$') {
-        $payload = $matches[1].Trim()
-    }
-
-    try {
-        $result = $payload | ConvertFrom-Json
-    } catch {
-        Fail "Claude result was not parseable JSON. Error: $($_.Exception.Message)"
-    }
-
-    $schema = Read-JsonFile $SchemaPath
-    Test-JsonSchemaSubset -Value $result -Schema $schema
-    return $result
-}
-
 function Test-PacketForbidsSidecar {
     param([System.IO.FileInfo]$Packet)
 
@@ -313,34 +211,43 @@ function Test-PacketForbidsSidecar {
     )
 }
 
-function Invoke-ClaudeJson {
+function Get-MarkerValue {
+    # Extract a line-anchored 'NAME: value' marker from free-form model output.
+    # Tolerates leading list/quote/emphasis decoration and surrounding backticks
+    # or quotes; preserves interior characters (path separators, underscores).
+    # Returns the value of the last matching line, or $null if none is present.
+    param([string]$Text, [string]$Name)
+
+    $value = $null
+    $pattern = '^' + [regex]::Escape($Name) + '\s*:\s*(.+)$'
+    foreach ($line in ($Text -split "`r?`n")) {
+        $norm = ($line -replace '`', '').Trim()
+        $norm = ($norm -replace '^[>\-\*\+\s]+', '').Trim()
+        if ($norm -match $pattern) {
+            $candidate = ($matches[1] -replace '^[\*"''\s]+', '' -replace '[\*"''\s]+$', '')
+            if ($candidate) { $value = $candidate }
+        }
+    }
+    return $value
+}
+
+function Invoke-ClaudeMarker {
+    # Run a Claude step and extract line-anchored markers from its prose output.
+    # The verbatim response is saved to OutputPath as the record and as Codex
+    # revision context. No JSON parsing or schema validation on the critical
+    # path: each marker in $Markers maps a NAME to either an allowed-values
+    # array (required, enum-checked) or $null (optional, free-form).
     param(
         [string]$Prompt,
-        [string]$SchemaPath,
+        [hashtable]$Markers,
         [string]$OutputPath,
         [ValidateSet('acceptEdits', 'auto', 'bypassPermissions', 'default', 'dontAsk', 'plan')]
         [string]$PermissionMode
     )
 
-    $schemaContent = Get-Content -Raw -LiteralPath $SchemaPath
-    $envelopePath = $OutputPath -replace '\.json$', '.envelope.json'
-    $stderrPath = $OutputPath -replace '\.json$', '.stderr.txt'
-    $wrappedPrompt = @"
-CRITICAL OUTPUT CONTRACT:
-- Your final terminal response must be exactly one JSON object.
-- Do not return prose, Markdown, a summary, or a table outside that JSON object.
-- If you need to perform repo work first, do the work, then make the final
-  response only the JSON object.
-- The JSON object must match the schema below.
-
-$Prompt
-
-Return exactly one JSON object matching this schema. Do not wrap it in Markdown.
-Do not include explanatory text outside the JSON object.
-
-Schema:
-$schemaContent
-"@
+    $base = $OutputPath -replace '\.[^.\\/]+$', ''
+    $envelopePath = "$base.envelope.json"
+    $stderrPath = "$base.stderr.txt"
 
     $args = @(
         '-p',
@@ -350,12 +257,12 @@ $schemaContent
     )
     if ($ClaudeModel) { $args += @('--model', $ClaudeModel) }
 
-    # Same PS 5.1 stderr/EAP hazard as Invoke-CodexPrompt — isolate the npm claude shim.
+    # Same PS 5.1 stderr/EAP hazard as Invoke-CodexPrompt - isolate the npm claude shim.
     $global:LASTEXITCODE = 0
     $prevEap = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
-        & claude @args $wrappedPrompt > $envelopePath 2> $stderrPath
+        & claude @args $Prompt > $envelopePath 2> $stderrPath
     } finally {
         $ErrorActionPreference = $prevEap
     }
@@ -363,7 +270,7 @@ $schemaContent
         Fail "claude failed. See $stderrPath"
     }
     if (-not (Test-Path -LiteralPath $envelopePath) -or (Get-Item -LiteralPath $envelopePath).Length -eq 0) {
-        Fail "claude produced no JSON output. See $stderrPath"
+        Fail "claude produced no output. See $stderrPath"
     }
 
     $envelope = Read-JsonFile $envelopePath
@@ -374,10 +281,28 @@ $schemaContent
     if (-not ($props -contains 'result')) {
         Fail "claude did not return a result payload. See $envelopePath"
     }
-    $result = Convert-ClaudeResultJson -ResultText $envelope.result -SchemaPath $SchemaPath
 
-    Write-TextFile $OutputPath ($result | ConvertTo-Json -Depth 16)
-    return $result
+    $resultText = [string]$envelope.result
+    Write-TextFile $OutputPath $resultText
+
+    $extracted = @{}
+    foreach ($name in @($Markers.Keys)) {
+        $allowed = $Markers[$name]
+        $value = Get-MarkerValue -Text $resultText -Name $name
+        if ($null -eq $value) {
+            if ($allowed) {
+                Fail "claude response is missing the required '${name}:' marker line. See $OutputPath"
+            }
+        } elseif ($allowed -and ($allowed -notcontains $value)) {
+            Fail "claude '${name}:' marker value '$value' is not one of: $($allowed -join ', '). See $OutputPath"
+        }
+        $extracted[$name] = $value
+    }
+
+    return [pscustomobject]@{
+        Text    = $resultText
+        Markers = $extracted
+    }
 }
 
 function Test-ClaudeCliReady {
@@ -461,8 +386,7 @@ Rules:
 function Invoke-ClaudePlanGate {
     param([System.IO.FileInfo]$TaskPacket, [int]$RevisionNumber)
     $taskRel = Get-RepoRelativePath $TaskPacket.FullName
-    $schema = Join-Path $script:AiDir 'claude_plan_gate.schema.json'
-    $out = Join-Path $script:RunDir ("claude.plan_gate.rev{0}.json" -f $RevisionNumber)
+    $out = Join-Path $script:RunDir ("claude.plan_gate.rev{0}.md" -f $RevisionNumber)
     $prompt = @"
 You are Claude acting as Executor preflight gate for RGE.
 
@@ -473,22 +397,35 @@ $taskRel
 You must not edit files. Read the packet, inspect only the repo context needed
 to decide whether the plan is executable, bounded, and protocol-safe.
 
-Return structured JSON only. Use:
-- verdict=approve if the task is safe to execute as written.
-- verdict=needs_changes if Codex should revise the TASK packet first.
-- verdict=block if execution should not proceed without human arbitration.
+Write your review as free-form prose. Cover, in whatever structure you prefer:
+- the verdict reasoning,
+- any blocking reasons,
+- recommended changes to the TASK packet,
+- the commands you actually ran.
 
-Include commands_run with any commands you actually ran.
+End your response with exactly one line, by itself, anchored at column 1:
+
+GATE_VERDICT: approve
+
+Substitute one of these values for 'approve':
+- approve        the task is safe to execute as written.
+- needs_changes  Codex should revise the TASK packet first.
+- block          execution must not proceed without human arbitration.
+
+That GATE_VERDICT line must be the final line of your response. Do not wrap it
+in Markdown, quotes, or a code block.
 "@
-    return Invoke-ClaudeJson -Prompt $prompt -SchemaPath $schema -OutputPath $out -PermissionMode 'plan'
+    $res = Invoke-ClaudeMarker -Prompt $prompt `
+        -Markers @{ 'GATE_VERDICT' = @('approve', 'needs_changes', 'block') } `
+        -OutputPath $out -PermissionMode 'plan'
+    return [pscustomobject]@{ verdict = $res.Markers['GATE_VERDICT']; review = $res.Text }
 }
 
 function Invoke-ClaudeExecute {
     param([System.IO.FileInfo]$ActivePacket, [string]$PacketKind, [int]$Round)
 
     $packetRel = Get-RepoRelativePath $ActivePacket.FullName
-    $schema = Join-Path $script:AiDir 'claude_execution_result.schema.json'
-    $out = Join-Path $script:RunDir ("claude.execute.round{0}.json" -f $Round)
+    $out = Join-Path $script:RunDir ("claude.execute.round{0}.md" -f $Round)
     $prompt = @"
 You are Executor / Claude in the RGE repository.
 
@@ -507,12 +444,39 @@ Protocol rules:
 - Fill the EXEC packet completely.
 - If the active packet allows sidecar creation, run:
   .\new-handoff.ps1 -Finalize -PacketPath <exec packet path>
-- If the active packet forbids sidecar `.meta.json` creation, do not finalize
-  the EXEC packet; mention that deliberate skip in the returned JSON notes.
-- Return structured JSON only, including exec_packet as the repo-relative
-  path to the EXECUTION_REPORT if one was written.
+- If the active packet forbids sidecar .meta.json creation, do not finalize
+  the EXEC packet; note that deliberate skip in your summary.
+
+Write a free-form prose summary of the execution: what changed, the
+verification commands you ran and their results, the final git status, and
+any notes for the reviewer.
+
+End your response with exactly these two lines, by themselves, anchored at
+column 1:
+
+EXEC_STATUS: executed
+EXEC_PACKET: ai_handoffs/<EXECUTION_REPORT file name>.md
+
+Substitute one EXEC_STATUS value for 'executed':
+- executed  the enumerated scope was carried out.
+- blocked   a halt condition stopped execution.
+- failed    execution was attempted but did not complete.
+
+For EXEC_PACKET give the repo-relative path to the EXECUTION_REPORT you wrote,
+or the single word none if no report was written. These two lines must be the
+final lines of your response. Do not wrap them in Markdown, quotes, or a code
+block.
 "@
-    return Invoke-ClaudeJson -Prompt $prompt -SchemaPath $schema -OutputPath $out -PermissionMode $ClaudePermissionMode
+    $res = Invoke-ClaudeMarker -Prompt $prompt `
+        -Markers @{ 'EXEC_STATUS' = @('executed', 'blocked', 'failed'); 'EXEC_PACKET' = $null } `
+        -OutputPath $out -PermissionMode $ClaudePermissionMode
+    $packet = $res.Markers['EXEC_PACKET']
+    if ($packet -and ($packet -match '^(none|<none>|n/?a|null|-)$')) { $packet = $null }
+    return [pscustomobject]@{
+        status      = $res.Markers['EXEC_STATUS']
+        exec_packet = $packet
+        report      = $res.Text
+    }
 }
 
 function Invoke-CodexControl {
@@ -610,8 +574,6 @@ $script:RunDir = Join-Path $script:AiDir ("dispatch-{0}" -f $DispatchId)
 foreach ($path in @(
     $script:NewHandoff,
     $script:McpConfig,
-    (Join-Path $script:AiDir 'claude_plan_gate.schema.json'),
-    (Join-Path $script:AiDir 'claude_execution_result.schema.json'),
     (Join-Path $script:AiDir 'codex_control.schema.json'),
     (Join-Path $script:HandoffDir 'AI_HANDOFF_PROTOCOL.md')
 )) {
@@ -670,7 +632,7 @@ if ($ResumeApprovedTask) {
     for ($i = 0; $i -le $MaxPlanRevisions; $i++) {
         Invoke-PlanFill -TaskPacket $taskPacket -RevisionNumber $i -PriorClaudeGatePath $gatePath
         $gate = Invoke-ClaudePlanGate -TaskPacket $taskPacket -RevisionNumber $i
-        $gatePath = Join-Path $script:RunDir ("claude.plan_gate.rev{0}.json" -f $i)
+        $gatePath = Join-Path $script:RunDir ("claude.plan_gate.rev{0}.md" -f $i)
         Write-Output "Claude plan gate rev ${i}: $($gate.verdict)"
         if ($gate.verdict -eq 'approve') {
             $approved = $true

@@ -25,7 +25,7 @@ commit.
 8. Parameters
 9. Exact CLI invocations
 10. The prompts — copy/paste
-11. Structured-output schemas
+11. Structured output and markers
 12. `.mcp.json`
 13. The packet protocol
 14. Known gotchas & fixes (read this before porting)
@@ -93,6 +93,9 @@ cd <repo-root>
 
 # C. Resume — execute an already-approved, finalized TASK (no new TASK created)
 .\Invoke-AiDispatchLoop.ps1 -DispatchId MYPROJECT-TASK-001 -ResumeApprovedTask
+
+# D. Watch a dispatch from another terminal (read-only)
+.\Watch-AiDispatch.ps1 -DispatchId MYPROJECT-TASK-001
 ```
 
 Add `-AllowDirtyTracked` if the working tree has pre-existing tracked
@@ -107,19 +110,17 @@ it in a real interactive terminal, not a wrapped/CI runner with a short timeout
 | Path | Role | Port? |
 |---|---|---|
 | `Invoke-AiDispatchLoop.ps1` | The orchestrator (this automation). | **Copy** |
+| `Watch-AiDispatch.ps1` | Read-only watcher for packets and `.ai/dispatch-<ID>/` scratch while a run is live. | **Copy** |
 | `new-handoff.ps1` | Packet scaffold/finalize tool. Scaffolds a `.md` packet; on `-Finalize` parses a completed packet and writes its `.meta.json` sidecar. | **Copy** |
 | `.mcp.json` | MCP server config passed to `claude`. | **Copy/adapt** |
-| `.ai/claude_plan_gate.schema.json` | Schema for Claude's gate verdict. | **Copy** |
-| `.ai/claude_execution_result.schema.json` | Schema for Claude's execution result. | **Copy** |
 | `.ai/codex_control.schema.json` | Schema for Codex's control review. | **Copy** |
 | `ai_handoffs/AI_HANDOFF_PROTOCOL.md` | The packet protocol spec. | **Copy/adapt** |
 | `ai_handoffs/templates/*.md` | Packet templates (TASK_PACKET, EXECUTION_REPORT, REVIEW_REPORT, CORRECTION_PACKET, FINAL_CLOSEOUT). | **Copy** |
 | `ai_handoffs/<ID>_<TYPE>_<TS>.md` (+ `.meta.json`) | Generated packets (per dispatch). | generated |
-| `.ai/dispatch-<ID>/` | Per-run scratch: prompt files, raw model logs, model JSON. | generated — **git-ignore** |
+| `.ai/dispatch-<ID>/` | Per-run scratch: prompt files, raw model logs, Claude marker records, Codex control JSON. | generated — **git-ignore** |
 
 The orchestrator hard-requires (preflight aborts if missing): `new-handoff.ps1`,
-`.mcp.json`, the three `.ai/*.schema.json` files, and
-`ai_handoffs/AI_HANDOFF_PROTOCOL.md`.
+`.mcp.json`, `.ai/codex_control.schema.json`, and `ai_handoffs/AI_HANDOFF_PROTOCOL.md`.
 
 ---
 
@@ -253,12 +254,14 @@ Get-Content -Raw <prompt-file> | codex exec --cd <repo-root> --sandbox read-only
   --output-schema <schema.json> --output-last-message <out.json> -
 ```
 
-**Claude** (`Invoke-ClaudeJson`) — prompt is passed as a **trailing positional
-argument** (never via stdin — see §14.2):
+**Claude** (`Invoke-ClaudeMarker`) — prompt is passed as a **trailing positional
+argument** (never via stdin — see §14.2). Claude still uses
+`--output-format json`, but only for the CLI envelope; the payload is free-form
+prose with final marker lines that the orchestrator extracts:
 
 ```powershell
 claude -p --mcp-config <.mcp.json> --permission-mode <plan|acceptEdits|...> `
-  --output-format json [--model <m>] "<wrapped-prompt>"
+  --output-format json [--model <m>] "<prompt with final marker contract>"
 ```
 
 **Claude readiness probe** (`Test-ClaudeCliReady`):
@@ -318,7 +321,7 @@ Rules:
 
 Placeholders: `$taskRel` = repo-relative path of the scaffolded TASK packet;
 `$script:GoalText` = the `-Goal`/`-GoalFile` text; `$RevisionNumber` = 0-based
-revision index; `$gateContext` = the prior Claude gate JSON, or
+revision index; `$gateContext` = the prior Claude gate prose/marker record, or
 `No prior Claude gate.` on revision 0.
 
 ### 10.2 Claude — plan gate (permission mode: `plan`)
@@ -333,15 +336,28 @@ $taskRel
 You must not edit files. Read the packet, inspect only the repo context needed
 to decide whether the plan is executable, bounded, and protocol-safe.
 
-Return structured JSON only. Use:
-- verdict=approve if the task is safe to execute as written.
-- verdict=needs_changes if Codex should revise the TASK packet first.
-- verdict=block if execution should not proceed without human arbitration.
+Write your review as free-form prose. Cover, in whatever structure you prefer:
+- the verdict reasoning,
+- any blocking reasons,
+- recommended changes to the TASK packet,
+- the commands you actually ran.
 
-Include commands_run with any commands you actually ran.
+End your response with exactly one line, by itself, anchored at column 1:
+
+GATE_VERDICT: approve
+
+Substitute one of these values for 'approve':
+- approve        the task is safe to execute as written.
+- needs_changes  Codex should revise the TASK packet first.
+- block          execution must not proceed without human arbitration.
+
+That GATE_VERDICT line must be the final line of your response. Do not wrap it
+in Markdown, quotes, or a code block.
 ```
 
-This text is then wrapped — see §10.6.
+The orchestrator saves the verbatim response to
+`.ai/dispatch-<ID>/claude.plan_gate.rev<N>.md` and branches only on the
+`GATE_VERDICT:` marker.
 
 ### 10.3 Claude — execute (permission mode: `-ClaudePermissionMode`, default `acceptEdits`)
 
@@ -363,14 +379,34 @@ Protocol rules:
 - Fill the EXEC packet completely.
 - If the active packet allows sidecar creation, run:
   .\new-handoff.ps1 -Finalize -PacketPath <exec packet path>
-- If the active packet forbids sidecar `.meta.json` creation, do not finalize
-  the EXEC packet; mention that deliberate skip in the returned JSON notes.
-- Return structured JSON only, including exec_packet as the repo-relative
-  path to the EXECUTION_REPORT if one was written.
+- If the active packet forbids sidecar .meta.json creation, do not finalize
+  the EXEC packet; note that deliberate skip in your summary.
+
+Write a free-form prose summary of the execution: what changed, the
+verification commands you ran and their results, the final git status, and
+any notes for the reviewer.
+
+End your response with exactly these two lines, by themselves, anchored at
+column 1:
+
+EXEC_STATUS: executed
+EXEC_PACKET: ai_handoffs/<EXECUTION_REPORT file name>.md
+
+Substitute one EXEC_STATUS value for 'executed':
+- executed  the enumerated scope was carried out.
+- blocked   a halt condition stopped execution.
+- failed    execution was attempted but did not complete.
+
+For EXEC_PACKET give the repo-relative path to the EXECUTION_REPORT you wrote,
+or the single word none if no report was written. These two lines must be the
+final lines of your response. Do not wrap them in Markdown, quotes, or a code
+block.
 ```
 
 Placeholders: `$PacketKind` = `TASK` or `CORRECTION`; `$packetRel` = repo-relative
-path of the active packet; `$DispatchId` = the dispatch id. Wrapped per §10.6.
+path of the active packet; `$DispatchId` = the dispatch id. The orchestrator
+saves the verbatim response to `.ai/dispatch-<ID>/claude.execute.round<N>.md`
+and branches only on `EXEC_STATUS:` plus the optional `EXEC_PACKET:` path.
 
 ### 10.4 Codex — control review (sandbox: `read-only`)
 
@@ -430,96 +466,43 @@ Rules:
 `$packetRel` = the scaffolded CORRECTION packet; `$controlJson` = the Codex
 control-review JSON from §10.4.
 
-### 10.6 Claude JSON wrapper (applied to every Claude prompt)
+### 10.6 Claude marker contract
 
-Because `claude --json-schema` is unusable here (§14.3), the schema is appended
-to the prompt instead and a strict output-contract preamble is prepended. Every
-Claude prompt above is sent wrapped as:
+Claude's `--json-schema` flag is unusable here (§14.3), and strict prompt-level
+JSON validation proved brittle for gate/execute steps. The loop now hard-depends
+only on the fields it actually consumes and extracts them as line-anchored
+markers from Claude's prose:
 
-```text
-CRITICAL OUTPUT CONTRACT:
-- Your final terminal response must be exactly one JSON object.
-- Do not return prose, Markdown, a summary, or a table outside that JSON object.
-- If you need to perform repo work first, do the work, then make the final
-  response only the JSON object.
-- The JSON object must match the schema below.
+- Plan gate: final line `GATE_VERDICT: approve|needs_changes|block`
+- Execute: final lines `EXEC_STATUS: executed|blocked|failed` and
+  `EXEC_PACKET: <repo-relative path|none>`
 
-<one of the Claude prompts from §10.2 / §10.3>
-
-Return exactly one JSON object matching this schema. Do not wrap it in Markdown.
-Do not include explanatory text outside the JSON object.
-
-Schema:
-<contents of the matching .ai/*.schema.json file>
-```
+The full prose remains the audit record and revision context. The markers are
+the only Claude payload data used for control flow. This intentionally matches
+the packet protocol's footer-marker style (`HANDOFF_STATUS:` / `NEXT_ROLE:` /
+`EXIT_CODE:`).
 
 ---
 
-## 11. Structured-output schemas
+## 11. Structured output and markers
 
 **Asymmetry — important.** Codex returns structured JSON *natively* via
 `--output-schema <file> --output-last-message <out>`; the orchestrator reads
-that `<out>` file directly. Claude's equivalent flag (`--json-schema`) **hangs**
-in this environment (§14.3), so Claude gets the schema embedded in its prompt
-(§10.6), the orchestrator reads the `result` field of Claude's
-`--output-format json` envelope, strips any Markdown code fences, parses it, and
-validates it against the schema **locally** (the `Test-JsonSchemaSubset` /
-`Convert-ClaudeResultJson` functions). Do **not** "fix" this by re-adding
-`--json-schema`.
+that `<out>` file directly for the control review. Claude uses
+`--output-format json` only to obtain the CLI envelope; the envelope's `result`
+payload is saved as prose and parsed only for the markers in §10.6. Do **not**
+"fix" this by re-adding `claude --json-schema` or prompt-level JSON schemas for
+Claude.
 
-### 11.1 `.ai/claude_plan_gate.schema.json`
+### 11.1 Claude markers
 
-```json
-{
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "Claude plan gate",
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["verdict", "summary", "blocking_reasons", "recommended_changes", "commands_run"],
-  "properties": {
-    "verdict": { "type": "string", "enum": ["approve", "needs_changes", "block"] },
-    "summary": { "type": "string" },
-    "blocking_reasons": { "type": "array", "items": { "type": "string" } },
-    "recommended_changes": { "type": "array", "items": { "type": "string" } },
-    "commands_run": { "type": "array", "items": { "type": "string" } }
-  }
-}
-```
+`Get-MarkerValue` extracts the last line matching `NAME: value`, tolerating
+minor Markdown/list/quote decoration around the line. Required enum markers
+cause a loud failure if missing or outside their allowed set. Optional markers
+return `$null`; `EXEC_PACKET:` is optional because the loop can fall back to the
+latest matching EXEC packet on disk.
 
-### 11.2 `.ai/claude_execution_result.schema.json`
-
-```json
-{
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "Claude execution result",
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["status", "summary", "exec_packet", "changed_files", "verification", "final_git_status", "notes"],
-  "properties": {
-    "status": { "type": "string", "enum": ["executed", "blocked", "failed"] },
-    "summary": { "type": "string" },
-    "exec_packet": { "type": ["string", "null"] },
-    "changed_files": { "type": "array", "items": { "type": "string" } },
-    "verification": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["command", "result", "exit_code"],
-        "properties": {
-          "command": { "type": "string" },
-          "result": { "type": "string" },
-          "exit_code": { "type": ["integer", "null"] }
-        }
-      }
-    },
-    "final_git_status": { "type": "string" },
-    "notes": { "type": "array", "items": { "type": "string" } }
-  }
-}
-```
-
-### 11.3 `.ai/codex_control.schema.json`
+### 11.2 `.ai/codex_control.schema.json`
 
 ```json
 {
@@ -553,10 +536,6 @@ validates it against the schema **locally** (the `Test-JsonSchemaSubset` /
   }
 }
 ```
-
-The local validator (`Test-JsonSchemaSubset`) supports a *subset* of JSON Schema:
-`type`, `enum`, `required`, `additionalProperties: false`, `properties`, and
-`items`. Keep schemas within that subset.
 
 ---
 
@@ -622,7 +601,7 @@ PS 5.1 raises it as a *terminating* `NativeCommandError`.
 **Fix:** wrap every external-CLI call in a localized
 `$ErrorActionPreference = 'Continue'` (`try { ... } finally { restore }`) and
 detect real failure with `$LASTEXITCODE`. Applied in `Invoke-CodexPrompt`,
-`Invoke-ClaudeJson`, and `Test-ClaudeCliReady`.
+`Invoke-ClaudeMarker`, and `Test-ClaudeCliReady`.
 
 ### 14.2 `claude -p` over a stdin pipe hangs
 
@@ -641,9 +620,9 @@ a TTY.)
 indefinitely — reproduced even with a tiny one-line schema and no MCP, so it is
 **not** quote-mangling, auth, the repo, or `.mcp.json`. It is intrinsic to the
 flag in this environment.
-**Fix:** do **not** use `--json-schema`. Use plain `--output-format json`, embed
-the schema in the prompt (§10.6), read the `result` field of the JSON envelope,
-strip Markdown fences, and validate against the schema locally in PowerShell.
+**Fix:** do **not** use `--json-schema`. Use plain `--output-format json`, read
+the `result` field of the JSON envelope, save it verbatim as prose, and extract
+line-anchored markers from that prose (§10.6).
 
 ### 14.4 `claude` CLI must be authenticated
 
@@ -666,7 +645,8 @@ timeout. `-PlanOnly` is shorter but can still be borderline.
 ### 14.6 Codex structured output works; Claude's does not
 
 `codex exec --output-schema` is reliable and is used for the control review.
-Only Claude's `--json-schema` is broken (§14.3). Do not assume symmetry.
+Only Claude's `--json-schema` is broken (§14.3), so Claude gate/execute output
+uses markers instead of local JSON schema validation. Do not assume symmetry.
 
 ### 14.7 The loop never commits
 
@@ -692,12 +672,11 @@ multi-dispatch runner, keep this gate or uncommitted work will pile up.
 5. **Adapt `.mcp.json`** (§12) — keep, empty, or add MCP servers as you wish.
 6. Add `.ai/dispatch-*/` to `.gitignore`.
 7. Confirm **PowerShell 5.1+** and that the §14 fixes are intact in your copy of
-   the script (EAP isolation; positional Claude prompt; no `--json-schema`;
-   `Test-ClaudeCliReady`).
+   the script (EAP isolation; positional Claude prompt; marker extraction; no
+   `--json-schema`; `Test-ClaudeCliReady`).
 8. **Rehearse:** run a `-PlanOnly` dispatch with a small audit-only goal first.
    Verify it reaches `Claude plan gate rev 0: approve` and `TASK finalized`
    before trusting a full run.
-9. Keep schemas within the validator's supported subset (§11).
 
 ---
 
@@ -705,8 +684,9 @@ multi-dispatch runner, keep this gate or uncommitted work will pile up.
 
 - **Per-run scratch** lands in `.ai/dispatch-<DISPATCH_ID>/`: `codex.prompt.md`,
   `codex.*.log`, `claude.*.envelope.json`, `claude.*.stderr.txt`,
-  `claude.*.json` (validated result), `claude.ready.*`, finalize dry-run logs.
-  This is where to look when a run fails.
+  `claude.plan_gate.rev*.md` / `claude.execute.round*.md` (verbatim Claude prose
+  + markers), `claude.ready.*`, `codex.control.round*.json`, and finalize
+  dry-run logs. This is where to look when a run fails.
 - **Generated packets** land in `ai_handoffs/` as `<ID>_<TYPE>_<TS>.md`. TASK
   and CORRECTION packets are finalized (a `.meta.json` sidecar is written). The
   EXEC packet is auto-finalized too — *unless* the active packet's text forbids
@@ -714,8 +694,8 @@ multi-dispatch runner, keep this gate or uncommitted work will pile up.
   finalization is deliberately skipped and the run prints
   `EXEC sidecar finalization skipped; ...`.
 - **What to inspect after a run:** the TASK packet; the EXEC packet; the Codex
-  control verdict + `commit_readiness`; for `-PlanOnly`, the gate JSON at
-  `.ai/dispatch-<ID>/claude.plan_gate.rev0.json`.
+  control verdict + `commit_readiness`; for `-PlanOnly`, the gate prose and
+  `GATE_VERDICT:` marker at `.ai/dispatch-<ID>/claude.plan_gate.rev0.md`.
 - **Failure is loud:** every abort prints a `Fail` message naming the log to
   read, and exits non-zero.
 - **A failed/aborted run leaves debris** (an unfinalized TASK packet, a run

@@ -94,14 +94,14 @@ are even more isolated, but cost 20× the disk and a fetch each.)
 
 `git worktree add` materializes only **committed** files. The orchestrator and
 its dependencies are currently **untracked**, so a fresh worktree would not
-contain them — and the orchestrator resolves `new-handoff.ps1`, `.mcp.json`, and
-the `.ai/*.schema.json` files relative to its worktree root.
+contain them — and the orchestrator resolves `new-handoff.ps1`, `.mcp.json`,
+`.ai/codex_control.schema.json`, and the handoff protocol files relative to its
+worktree root.
 
 Pick one:
 
 - **Option A — commit the infrastructure** (cleanest). Commit
   `Invoke-AiDispatchLoop.ps1`, `new-handoff.ps1`, `.mcp.json`,
-  `.ai/claude_plan_gate.schema.json`, `.ai/claude_execution_result.schema.json`,
   `.ai/codex_control.schema.json`, `ai_handoffs/AI_HANDOFF_PROTOCOL.md`, and
   `ai_handoffs/templates/*`. Every `git worktree add` then includes them
   automatically.
@@ -238,7 +238,6 @@ if (-not $WorktreeRoot) {
 # If you committed the infra (Option A), this list can be emptied.
 $infra = @(
     'Invoke-AiDispatchLoop.ps1', 'new-handoff.ps1', '.mcp.json',
-    '.ai/claude_plan_gate.schema.json', '.ai/claude_execution_result.schema.json',
     '.ai/codex_control.schema.json', 'ai_handoffs/AI_HANDOFF_PROTOCOL.md'
 )
 
