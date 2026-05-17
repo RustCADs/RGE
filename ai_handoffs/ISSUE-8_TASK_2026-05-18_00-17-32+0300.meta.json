@@ -1,0 +1,19 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-8",
+    "packet_type": "TASK",
+    "author": "Planner / OpenAI Codex",
+    "timestamp": "2026-05-18_00-17-32+0300",
+    "related_files": [
+                          "AI_DISPATCH_AUTOMATION.md",
+                          "Invoke-AiDispatchAuto.ps1",
+                          "Register-AiDispatchSchedule.ps1",
+                          ".ai/dispatch.verify.ps1",
+                          ".ai/dispatch.tasks.md",
+                          "Get-AiDispatchHealth.ps1"
+                      ],
+    "status": "OPEN",
+    "handoff_status": "COMPLETE",
+    "next_role": "EXECUTOR_AI",
+    "exit_code": 0
+}

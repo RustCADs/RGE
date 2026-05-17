@@ -123,8 +123,13 @@ it in a real interactive terminal, not a wrapped/CI runner with a short timeout
 | `Invoke-AiDispatchQueue.ps1` | GitHub issue queue runner; commits and auto-publishes passed dispatches. | **Copy/adapt** |
 | `Watch-AiDispatch.ps1` | Read-only watcher for packets and `.ai/dispatch-<ID>/` scratch while a run is live. | **Copy** |
 | `new-handoff.ps1` | Packet scaffold/finalize tool. Scaffolds a `.md` packet; on `-Finalize` parses a completed packet and writes its `.meta.json` sidecar. | **Copy** |
+| `Invoke-AiDispatchAuto.ps1` | Autonomous driver: Codex selects the next task from `.ai/dispatch.tasks.md` and runs it through the dispatch queue. | **Copy/adapt** |
+| `Register-AiDispatchSchedule.ps1` | Registers, queries, and removes the unattended Windows Scheduled Task that triggers dispatch automation on a recurring interval. | **Copy/adapt** |
+| `Get-AiDispatchHealth.ps1` | Read-only dispatch-health readout over retained `.ai/dispatch-*` run directories. | **Copy/adapt** |
 | `.mcp.json` | MCP server config passed to `claude`. | **Copy/adapt** |
 | `.ai/codex_control.schema.json` | Schema for Codex's control review. | **Copy** |
+| `.ai/dispatch.verify.ps1` | Canonical post-execution verification gate; mirrors CI before Codex control and publish. | **Copy/adapt** |
+| `.ai/dispatch.tasks.md` | Autonomous task-selection brief/backlog consumed by the autonomous driver. | **Copy/adapt** |
 | `ai_handoffs/AI_HANDOFF_PROTOCOL.md` | The packet protocol spec. | **Copy/adapt** |
 | `ai_handoffs/templates/*.md` | Packet templates (TASK_PACKET, EXECUTION_REPORT, REVIEW_REPORT, CORRECTION_PACKET, FINAL_CLOSEOUT). | **Copy** |
 | `ai_handoffs/<ID>_<TYPE>_<TS>.md` (+ `.meta.json`) | Generated packets (per dispatch). | generated |
