@@ -246,6 +246,34 @@ exhausted the dispatch aborts.
 | Plan only | add `-PlanOnly` | Stops after the TASK is approved and finalized. No execution. |
 | Resume approved TASK | `-DispatchId X -ResumeApprovedTask` | Skips scaffold/plan/gate/finalize. Locates the existing finalized TASK for `X` (must have a `.meta.json` sidecar = proof it was approved) and runs only the execution + control phase. **No new TASK is created.** Mutually exclusive with `-PlanOnly`. |
 
+### 7.1 Unattended operation
+
+Three scripts layer on top of `Invoke-AiDispatchLoop.ps1` to run dispatches
+without a human at the keyboard: a scheduler fires a runner, the runner selects
+one unit of work, and each script processes exactly one dispatch per tick.
+
+`Invoke-AiDispatchQueue.ps1` is the **GitHub issue-queue layer**. Each
+invocation pulls the oldest open issue labelled `ai-dispatch`, runs it through
+the full dispatch loop on a per-issue `ai-dispatch/ISSUE-<n>` branch, relabels
+the issue, and posts a result comment. Publishing is gated: only a run that
+exits 0 with a `pass` control verdict is fast-forwarded into `main` and pushed,
+while failed or blocked runs stay local for inspection. A temp-dir lock file
+stops a new invocation from colliding with one still in flight.
+
+`Invoke-AiDispatchAuto.ps1` is the **task-selection layer** above the queue
+runner. When no `ai-dispatch` issue is pending, Codex reads the task brief
+(`.ai/dispatch.tasks.md`), picks the next task, files an issue for it, and
+hands off to `Invoke-AiDispatchQueue.ps1`. Its `-PublishMode` decides what
+happens to a passed task: `branch` (default) leaves the work on its branch for
+a human to merge, while `main` auto-publishes to `origin/main`. It also halts
+for human review once a capped number of autonomous issues exist.
+
+`Register-AiDispatchSchedule.ps1` is the **recurring-trigger layer**. It
+registers a Windows Scheduled Task that fires one of the two runners on a fixed
+interval — the issue queue by default, or the autonomous driver with
+`-Autonomous`. Because the queue's single-run lock makes any tick that overlaps
+a still-running dispatch skip, a long dispatch never stacks up behind ticks.
+
 ---
 
 ## 8. Parameters
