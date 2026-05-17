@@ -105,6 +105,9 @@ function Invoke-Tool {
     try {
         $code = Invoke-Capture -File $tmp -Exe $Exe -CmdArgs $CmdArgs
         $text = (Get-Content -Raw -LiteralPath $tmp -ErrorAction SilentlyContinue)
+        # Get-Content -Raw yields $null for empty output; normalize to '' so
+        # callers can safely call .Trim()/string ops on the result.
+        if ($null -eq $text) { $text = '' }
         return [pscustomobject]@{ Code = $code; Text = $text }
     } finally {
         Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
