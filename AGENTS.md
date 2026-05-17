@@ -43,6 +43,8 @@ a committed change, not a packet.
   CLI/runtime gotchas (PowerShell 5.1 stderr trap, `claude` auth, why
   `--json-schema` is avoided, the ~10-minute command ceiling).
 - `AI_DISPATCH_PARALLEL.md` — running many dispatches concurrently.
+- `.ai/dispatch.verify.ps1` — the canonical verification gate the AI dispatch
+  loop runs.
 - `Invoke-AiDispatchAuto.ps1` — autonomous driver: Codex selects the next task
   from `.ai/dispatch.tasks.md` and runs it through the dispatch queue.
 - `Register-AiDispatchSchedule.ps1` — registers the unattended Windows
