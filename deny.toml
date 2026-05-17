@@ -14,7 +14,11 @@ no-default-features   = false
 [advisories]
 db-path  = "~/.cargo/advisory-db"
 db-urls  = ["https://github.com/rustsec/advisory-db"]
-ignore   = []
+ignore   = [
+    # Transitive via egui_dock/simba as of 2026-05-17; RustSec reports no safe
+    # upgrade path. Keep visible here until upstreams migrate off `paste`.
+    "RUSTSEC-2024-0436",
+]
 
 [licenses]
 confidence-threshold = 0.93
@@ -30,15 +34,24 @@ allow = [
     "Unicode-3.0",
     "MPL-2.0",
     "CC0-1.0",
+    "OFL-1.1",
+    "Ubuntu-font-1.0",
 ]
 exceptions = []
 
 [bans]
 multiple-versions = "warn"
-wildcards         = "deny"
+# This workspace intentionally uses many local path/workspace dependencies
+# without registry versions. Keep the signal visible, but do not make every
+# internal crate edge fail the supply-chain gate.
+wildcards         = "warn"
 highlight         = "all"
 
 [sources]
 unknown-registry = "deny"
 unknown-git      = "deny"
-allow-git        = []
+allow-git        = [
+    # `csgrs 0.20.1` still pins yanked `core2`; the workspace overrides it to
+    # the archived v0.4.0-content commit. See the root Cargo.toml patch note.
+    "https://github.com/bbqsrc/core2.git",
+]
