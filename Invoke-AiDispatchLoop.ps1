@@ -76,6 +76,12 @@ param(
 
     [switch]$SkipVerification,
 
+    [ValidateRange(60, 7200)]
+    [int]$ModelTimeoutSec = 1800,
+
+    [ValidateRange(120, 14400)]
+    [int]$VerifyTimeoutSec = 3600,
+
     [Parameter(Mandatory, ParameterSetName = 'ResumeTask')]
     [switch]$ResumeApprovedTask
 )
@@ -172,6 +178,69 @@ function Finalize-Packet {
     return (Get-Item -LiteralPath $created)
 }
 
+function Invoke-WithTimeout {
+    # Run a native command with a hard timeout. The command runs inside a
+    # child powershell so that, on timeout, its whole process tree can be
+    # killed (taskkill /T) -- a hung cargo/codex/claude cannot then sit until
+    # the scheduled task kills the entire queue. Arguments are passed via a
+    # clixml params file so the call operator quotes them correctly, including
+    # a multi-line prompt argument. stdout goes to OutFile; stderr to ErrFile
+    # if given, else merged into OutFile. Returns @{ Code; TimedOut }.
+    param(
+        [string]$Exe,
+        [string[]]$Arguments,
+        [string]$OutFile,
+        [int]$TimeoutSec,
+        [string]$StdinFile = '',
+        [string]$ErrFile = ''
+    )
+    $base = [System.IO.Path]::GetTempFileName()
+    $paramsFile = "$base.params.xml"
+    $launcherFile = "$base.launcher.ps1"
+    @{
+        Exe = $Exe; Arguments = $Arguments; OutFile = $OutFile
+        StdinFile = $StdinFile; ErrFile = $ErrFile
+    } | Export-Clixml -LiteralPath $paramsFile
+    $launcher = @'
+param([string]$ParamsFile)
+$ErrorActionPreference = 'Continue'
+$p = Import-Clixml -LiteralPath $ParamsFile
+$a = @($p.Arguments)
+$o = [string]$p.OutFile
+$e = [string]$p.ErrFile
+$s = [string]$p.StdinFile
+if ($s) {
+    if ($e) { Get-Content -Raw -LiteralPath $s | & $p.Exe @a > $o 2> $e }
+    else    { Get-Content -Raw -LiteralPath $s | & $p.Exe @a > $o 2>&1 }
+} else {
+    if ($e) { & $p.Exe @a > $o 2> $e }
+    else    { & $p.Exe @a > $o 2>&1 }
+}
+exit $LASTEXITCODE
+'@
+    [System.IO.File]::WriteAllText($launcherFile, $launcher, [System.Text.UTF8Encoding]::new($false))
+    $timedOut = $false
+    $code = 0
+    try {
+        $proc = Start-Process -FilePath 'powershell.exe' -PassThru -NoNewWindow -ArgumentList @(
+            '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $launcherFile, $paramsFile)
+        # Touch .Handle so the Process object caches it; without this a
+        # -PassThru process returns $null from .ExitCode after it exits.
+        $null = $proc.Handle
+        if ($proc.WaitForExit($TimeoutSec * 1000)) {
+            $proc.WaitForExit()
+            $code = $proc.ExitCode
+        } else {
+            $timedOut = $true
+            & taskkill /T /F /PID $proc.Id *> $null
+            $code = 124
+        }
+    } finally {
+        Remove-Item -LiteralPath $base, $paramsFile, $launcherFile -Force -ErrorAction SilentlyContinue
+    }
+    return [pscustomobject]@{ Code = $code; TimedOut = $timedOut }
+}
+
 function Invoke-CodexPrompt {
     param(
         [string]$Prompt,
@@ -192,16 +261,12 @@ function Invoke-CodexPrompt {
     }
     $args += '-'
 
-    # PS 5.1 turns a native command's stderr into a terminating error under EAP=Stop; the npm codex shim banners to stderr, so isolate it with Continue.
-    $global:LASTEXITCODE = 0
-    $prevEap = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
-    try {
-        Get-Content -Raw -LiteralPath $promptPath | & codex @args > $LogPath 2>&1
-    } finally {
-        $ErrorActionPreference = $prevEap
+    $r = Invoke-WithTimeout -Exe 'codex' -Arguments $args -StdinFile $promptPath `
+        -OutFile $LogPath -TimeoutSec $ModelTimeoutSec
+    if ($r.TimedOut) {
+        Fail "codex exec timed out after ${ModelTimeoutSec}s (terminal infrastructure failure). See $LogPath"
     }
-    if ($LASTEXITCODE -ne 0) {
+    if ($r.Code -ne 0) {
         Fail "codex exec failed. See $LogPath"
     }
 }
@@ -295,16 +360,12 @@ function Invoke-ClaudeMarker {
     )
     if ($ClaudeModel) { $args += @('--model', $ClaudeModel) }
 
-    # Same PS 5.1 stderr/EAP hazard as Invoke-CodexPrompt - isolate the npm claude shim.
-    $global:LASTEXITCODE = 0
-    $prevEap = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
-    try {
-        & claude @args $Prompt > $envelopePath 2> $stderrPath
-    } finally {
-        $ErrorActionPreference = $prevEap
+    $r = Invoke-WithTimeout -Exe 'claude' -Arguments ($args + $Prompt) `
+        -OutFile $envelopePath -ErrFile $stderrPath -TimeoutSec $ModelTimeoutSec
+    if ($r.TimedOut) {
+        Fail "claude timed out after ${ModelTimeoutSec}s (terminal infrastructure failure). See $stderrPath"
     }
-    if ($LASTEXITCODE -ne 0) {
+    if ($r.Code -ne 0) {
         Fail "claude failed. See $stderrPath"
     }
     if (-not (Test-Path -LiteralPath $envelopePath) -or (Get-Item -LiteralPath $envelopePath).Length -eq 0) {
@@ -354,17 +415,14 @@ function Test-ClaudeCliReady {
     $probeOut = Join-Path $script:RunDir 'claude.ready.envelope.json'
     $probeErr = Join-Path $script:RunDir 'claude.ready.stderr.txt'
 
-    $global:LASTEXITCODE = 0
-    $prevEap = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
-    try {
-        & claude -p --output-format json 'Return exactly: ready' > $probeOut 2> $probeErr
-    } finally {
-        $ErrorActionPreference = $prevEap
+    $r = Invoke-WithTimeout -Exe 'claude' -OutFile $probeOut -ErrFile $probeErr -TimeoutSec 180 `
+        -Arguments @('-p', '--output-format', 'json', 'Return exactly: ready')
+    if ($r.TimedOut) {
+        Fail "claude readiness probe timed out after 180s. Check the Claude CLI / auth, then retry."
     }
 
     if (-not (Test-Path -LiteralPath $probeOut) -or (Get-Item -LiteralPath $probeOut).Length -eq 0) {
-        if ($LASTEXITCODE -ne 0) {
+        if ($r.Code -ne 0) {
             Fail "claude readiness probe failed. See $probeErr"
         }
         Fail "claude readiness probe produced no JSON output. See $probeErr"
@@ -375,7 +433,7 @@ function Test-ClaudeCliReady {
     if (($props -contains 'is_error') -and $probe.is_error) {
         Fail "claude is not ready: $($probe.result). Run Claude Code login/auth setup, then retry."
     }
-    if ($LASTEXITCODE -ne 0) {
+    if ($r.Code -ne 0) {
         Fail "claude readiness probe failed. See $probeErr"
     }
 }
@@ -617,20 +675,16 @@ function Invoke-Verification {
         return [pscustomobject]@{ Passed = $true; Skipped = $true; ExitCode = 0; Log = $log }
     }
 
-    # Same PS 5.1 stderr/EAP hazard as the other native calls - isolate it.
-    $global:LASTEXITCODE = 0
-    $prevEap = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
-    try {
-        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script:VerifyScriptPath > $log 2>&1
-    } finally {
-        $ErrorActionPreference = $prevEap
+    $r = Invoke-WithTimeout -Exe 'powershell.exe' -OutFile $log -TimeoutSec $VerifyTimeoutSec `
+        -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $script:VerifyScriptPath)
+    if ($r.TimedOut) {
+        Add-Content -LiteralPath $log -Value "`n[orchestrator] verification timed out after ${VerifyTimeoutSec}s; process tree killed."
     }
-    $code = $LASTEXITCODE
     return [pscustomobject]@{
-        Passed   = ($code -eq 0)
+        Passed   = ((-not $r.TimedOut) -and ($r.Code -eq 0))
         Skipped  = $false
-        ExitCode = $code
+        TimedOut = $r.TimedOut
+        ExitCode = $r.Code
         Log      = $log
     }
 }
@@ -899,12 +953,17 @@ for ($round = 0; $round -le $MaxCorrectionRounds; $round++) {
     $verification = Invoke-Verification -Round $round
     if ($verification.Skipped) {
         Write-Output "Verification round ${round}: SKIPPED (-SkipVerification)"
+    } elseif ($verification.TimedOut) {
+        Write-Output "Verification round ${round}: TIMED OUT (over ${VerifyTimeoutSec}s)"
     } elseif ($verification.Passed) {
         Write-Output "Verification round ${round}: pass (exit 0)"
     } else {
         Write-Output "Verification round ${round}: FAIL (exit $($verification.ExitCode)) - see $(Get-RepoRelativePath $verification.Log)"
     }
 
+    if ($verification.TimedOut) {
+        Fail "Verification timed out (over ${VerifyTimeoutSec}s) - terminal infrastructure failure, not a correctable task. See $(Get-RepoRelativePath $verification.Log)"
+    }
     if (-not $verification.Passed) {
         if ($round -ge $MaxCorrectionRounds) {
             Fail "Verification gate failed (exit $($verification.ExitCode)) and MaxCorrectionRounds=$MaxCorrectionRounds is exhausted. See $(Get-RepoRelativePath $verification.Log)"
