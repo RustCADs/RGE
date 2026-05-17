@@ -14,8 +14,10 @@
       3. Ask Claude to review the TASK as an executor gate.
       4. If Claude approves, finalize the TASK sidecar.
       5. Ask Claude to execute and write/finalize an EXECUTION_REPORT.
-      6. Ask Codex to perform a read-only control review of the diff,
-         packets, and verification claims.
+      6. Run the verification gate (.ai/dispatch.verify.ps1). A non-zero
+         exit fails the round before any control review runs.
+      7. Ask Codex to perform a read-only control review of the diff,
+         packets, and verification results.
 
     If Codex control returns needs_changes and MaxCorrectionRounds is greater
     than zero, the script asks Codex to write a CORRECTION_PACKET and routes
@@ -69,6 +71,10 @@ param(
     [switch]$AllowDirtyTracked,
 
     [switch]$PlanOnly,
+
+    [string]$VerifyScript = '',
+
+    [switch]$SkipVerification,
 
     [Parameter(Mandatory, ParameterSetName = 'ResumeTask')]
     [switch]$ResumeApprovedTask
@@ -537,9 +543,18 @@ block.
 }
 
 function Invoke-CodexControl {
-    param([System.IO.FileInfo]$TaskPacket, [System.IO.FileInfo]$ExecPacket, [int]$Round)
+    param(
+        [System.IO.FileInfo]$TaskPacket,
+        [System.IO.FileInfo]$ExecPacket,
+        [int]$Round,
+        [string]$VerificationLog = ''
+    )
 
     $taskRel = Get-RepoRelativePath $TaskPacket.FullName
+    $verifyNote = ''
+    if ($VerificationLog -and (Test-Path -LiteralPath $VerificationLog)) {
+        $verifyNote = "`n- $(Get-RepoRelativePath $VerificationLog) -- the orchestrator already ran the canonical CI verification gate (format, architecture lints, supply chain, workspace tests) and it passed; corroborate it rather than trusting EXECUTION_REPORT prose alone"
+    }
     $execRel = if ($ExecPacket) { Get-RepoRelativePath $ExecPacket.FullName } else { '<none>' }
     $schema = Join-Path $script:AiDir 'codex_control.schema.json'
     $out = Join-Path $script:RunDir ("codex.control.round{0}.json" -f $Round)
@@ -560,7 +575,7 @@ Also inspect:
 - git status --short --branch
 - git diff
 - relevant changed files
-- verification claims in the EXECUTION_REPORT
+- verification claims in the EXECUTION_REPORT$verifyNote
 - ai_handoffs/AI_HANDOFF_PROTOCOL.md if protocol interpretation matters
 
 Return schema-compliant JSON only. Use:
@@ -575,11 +590,61 @@ Do not edit files. Do not stage. Do not commit. Do not push.
     return (Read-JsonFile $out)
 }
 
+function Invoke-Verification {
+    # Run the canonical verification gate (.ai/dispatch.verify.ps1 by default).
+    # Exit 0 means the working tree passes the same checks CI enforces; a
+    # non-zero exit fails the round before any control review or publish.
+    param([int]$Round)
+
+    $log = Join-Path $script:RunDir ("verification.round{0}.log" -f $Round)
+    if ($SkipVerification) {
+        Write-TextFile $log "Verification skipped: -SkipVerification was set."
+        return [pscustomobject]@{ Passed = $true; Skipped = $true; ExitCode = 0; Log = $log }
+    }
+
+    # Same PS 5.1 stderr/EAP hazard as the other native calls - isolate it.
+    $global:LASTEXITCODE = 0
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script:VerifyScriptPath > $log 2>&1
+    } finally {
+        $ErrorActionPreference = $prevEap
+    }
+    $code = $LASTEXITCODE
+    return [pscustomobject]@{
+        Passed   = ($code -eq 0)
+        Skipped  = $false
+        ExitCode = $code
+        Log      = $log
+    }
+}
+
 function Invoke-CorrectionPacket {
-    param([object]$ControlResult, [int]$Round)
+    param([object]$ControlResult, [object]$Verification, [int]$Round)
     $packet = Invoke-NewPacket -PacketType 'CORRECT' -Author 'Planner / OpenAI Codex'
     $packetRel = Get-RepoRelativePath $packet.FullName
-    $controlJson = ($ControlResult | ConvertTo-Json -Depth 16)
+
+    if ($ControlResult) {
+        $reviewContext = "Codex control review result (JSON):`n`n" +
+            ($ControlResult | ConvertTo-Json -Depth 16)
+    } elseif ($Verification) {
+        $verifyTail = ''
+        if ($Verification.Log -and (Test-Path -LiteralPath $Verification.Log)) {
+            $verifyTail = (Get-Content -LiteralPath $Verification.Log -Tail 120 -ErrorAction SilentlyContinue) -join "`n"
+        }
+        $reviewContext = @"
+The post-execution verification gate FAILED (exit code $($Verification.ExitCode)).
+The dispatch cannot pass until verification does. Verification runs the
+canonical CI checks: format, architecture lints, supply chain, workspace
+tests and doctests. Tail of the verification log:
+
+$verifyTail
+"@
+    } else {
+        $reviewContext = '(no review context was supplied)'
+    }
+
     $prompt = @"
 You are Planner / OpenAI Codex in the RGE repository.
 
@@ -587,12 +652,11 @@ Write a CORRECTION_PACKET only. Edit only this file:
 
 $packetRel
 
-Codex control review result:
-
-$controlJson
+$reviewContext
 
 Rules:
-- Enumerate only the fixes approved by the control review.
+- Enumerate only the fixes needed to make the dispatch pass review and the
+  verification gate.
 - Do not expand scope.
 - Do not edit any source, docs, schemas, scripts, or other packets.
 - Fill every placeholder.
@@ -637,6 +701,16 @@ foreach ($path in @(
     if (-not (Test-Path -LiteralPath $path)) {
         Fail "Required file missing: $path"
     }
+}
+
+$script:VerifyScriptPath = if ($VerifyScript) {
+    if ([System.IO.Path]::IsPathRooted($VerifyScript)) { $VerifyScript }
+    else { Join-Path $script:RepoRoot $VerifyScript }
+} else {
+    Join-Path $script:AiDir 'dispatch.verify.ps1'
+}
+if (-not $SkipVerification -and -not (Test-Path -LiteralPath $script:VerifyScriptPath)) {
+    Fail "Verification script not found: $script:VerifyScriptPath. Create it, pass -VerifyScript <path>, or run with -SkipVerification (an unverified dispatch can then publish - not recommended)."
 }
 
 if ($ResumeApprovedTask) {
@@ -717,6 +791,7 @@ $activePacket = $taskPacket
 $activeKind = 'TASK'
 $lastExecPacket = $null
 $finalControl = $null
+$verification = $null
 
 for ($round = 0; $round -le $MaxCorrectionRounds; $round++) {
     $execResult = Invoke-ClaudeExecute -ActivePacket $activePacket -PacketKind $activeKind -Round $round
@@ -741,7 +816,33 @@ for ($round = 0; $round -le $MaxCorrectionRounds; $round++) {
         }
     }
 
-    $finalControl = Invoke-CodexControl -TaskPacket $taskPacket -ExecPacket $lastExecPacket -Round $round
+    # Hard verification gate: the working tree must pass the canonical CI
+    # checks before Codex control runs. A non-zero exit cannot become a pass.
+    $verification = Invoke-Verification -Round $round
+    if ($verification.Skipped) {
+        Write-Output "Verification round ${round}: SKIPPED (-SkipVerification)"
+    } elseif ($verification.Passed) {
+        Write-Output "Verification round ${round}: pass (exit 0)"
+    } else {
+        Write-Output "Verification round ${round}: FAIL (exit $($verification.ExitCode)) - see $(Get-RepoRelativePath $verification.Log)"
+    }
+
+    if (-not $verification.Passed) {
+        if ($round -ge $MaxCorrectionRounds) {
+            Fail "Verification gate failed (exit $($verification.ExitCode)) and MaxCorrectionRounds=$MaxCorrectionRounds is exhausted. See $(Get-RepoRelativePath $verification.Log)"
+        }
+        $activePacket = Invoke-CorrectionPacket -Verification $verification -Round $round
+        $activeKind = 'CORRECTION'
+        Write-Output "CORRECTION finalized (verification failure): $(Get-RepoRelativePath $activePacket.FullName)"
+        continue
+    }
+
+    # Hand Codex the verification log only when verification actually ran:
+    # supplying it asserts the gate passed, which is false under
+    # -SkipVerification (the log exists but records a skip).
+    $verifyLogForControl = if ($verification.Skipped) { '' } else { $verification.Log }
+    $finalControl = Invoke-CodexControl -TaskPacket $taskPacket -ExecPacket $lastExecPacket `
+        -Round $round -VerificationLog $verifyLogForControl
     Write-Output "Codex control round ${round}: $($finalControl.verdict)"
 
     if ($finalControl.verdict -eq 'pass') {
@@ -764,6 +865,13 @@ Write-Output "Dispatch loop finished."
 Write-Output "Task: $(Get-RepoRelativePath $taskPacket.FullName)"
 if ($lastExecPacket) {
     Write-Output "Latest EXEC: $(Get-RepoRelativePath $lastExecPacket.FullName)"
+}
+if ($verification) {
+    if ($verification.Skipped) {
+        Write-Output "Verification: skipped (-SkipVerification)"
+    } else {
+        Write-Output "Verification: pass (exit 0)"
+    }
 }
 if ($finalControl) {
     Write-Output "Codex control verdict: $($finalControl.verdict)"

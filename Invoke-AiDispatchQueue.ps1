@@ -278,6 +278,166 @@ function Get-RepoRelativePathForQueue {
     return ($full -replace '\\', '/')
 }
 
+function Get-ControlVerdict {
+    # The dispatch loop writes a schema-validated codex.control.round<N>.json
+    # per control round. Return the newest round's verdict, read from that
+    # structured artifact rather than scraped from loop stdout. Returns
+    # 'unknown' when no control JSON exists (loop failed before any review).
+    param([string]$RunDir)
+    if (-not (Test-Path -LiteralPath $RunDir)) { return 'unknown' }
+    $control = Get-ChildItem -LiteralPath $RunDir -File -Filter 'codex.control.round*.json' -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime |
+        Select-Object -Last 1
+    if (-not $control) { return 'unknown' }
+    try {
+        $obj = Get-Content -Raw -LiteralPath $control.FullName | ConvertFrom-Json
+    } catch {
+        return 'unknown'
+    }
+    if ($obj -and $obj.verdict) { return [string]$obj.verdict }
+    return 'unknown'
+}
+
+function Test-ProcessAlive {
+    param([int]$ProcessId)
+    if ($ProcessId -le 0) { return $false }
+    return [bool](Get-Process -Id $ProcessId -ErrorAction SilentlyContinue)
+}
+
+function Get-LockInfo {
+    # Parse the queue lock file. The owner pid lets a stale lock (owner process
+    # dead) be told apart from a genuine concurrent run, without waiting out
+    # the age-based StaleLockMinutes window.
+    param([string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) { return $null }
+    $raw = (Get-Content -Raw -LiteralPath $Path -ErrorAction SilentlyContinue)
+    $ownerPid = 0
+    if ($raw -and $raw -match 'pid=(\d+)') { $ownerPid = [int]$matches[1] }
+    return [pscustomobject]@{
+        OwnerPid = $ownerPid
+        Alive    = (Test-ProcessAlive -ProcessId $ownerPid)
+        AgeMin   = ((Get-Date) - (Get-Item -LiteralPath $Path).LastWriteTime).TotalMinutes
+    }
+}
+
+function Get-PriorFeedback {
+    # Build a feedback block from a previous failed run's artifacts in the
+    # gitignored run dir, for injection into a retry's goal.
+    param([string]$RunDir)
+    if (-not (Test-Path -LiteralPath $RunDir)) { return '' }
+    $parts = @()
+    $control = Get-ChildItem -LiteralPath $RunDir -File -Filter 'codex.control.round*.json' -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime | Select-Object -Last 1
+    if ($control) {
+        try {
+            $c = Get-Content -Raw -LiteralPath $control.FullName | ConvertFrom-Json
+            if ($c.verdict) { $parts += "Prior Codex control verdict: $($c.verdict)" }
+            if ($c.summary) { $parts += "Prior control summary: $($c.summary)" }
+            if ($c.required_fixes -and @($c.required_fixes).Count -gt 0) {
+                $parts += 'Prior required fixes:'
+                $parts += (@($c.required_fixes) | ForEach-Object { "  - $_" })
+            }
+        } catch { }
+    }
+    $verify = Get-ChildItem -LiteralPath $RunDir -File -Filter 'verification.round*.log' -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime | Select-Object -Last 1
+    if ($verify) {
+        $vt = (Get-Content -LiteralPath $verify.FullName -Tail 40 -ErrorAction SilentlyContinue) -join "`n"
+        if ($vt) { $parts += "Prior verification gate output (tail):`n$vt" }
+    }
+    if ($parts.Count -eq 0) { return '' }
+    return ($parts -join "`n")
+}
+
+function Invoke-OrphanRecovery {
+    # Recover from a dispatch run killed mid-flight: an issue stuck in
+    # <label>-running with no live queue process, a leftover dispatch branch,
+    # queue-parked stashes, or a non-main checkout. Resets such issues to the
+    # queue so they are retried, and returns the repo to a clean main.
+    # Resilient by design: a recovery failure warns but never aborts the tick.
+    param([string]$RepoSlug, [string]$QueueLabel, [string]$RunLabel)
+
+    $list = Invoke-Tool -Exe 'gh' -CmdArgs @(
+        'issue', 'list', '--repo', $RepoSlug, '--label', $RunLabel,
+        '--state', 'open', '--limit', '100', '--json', 'number,title')
+    if ($list.Code -ne 0) {
+        Write-Output "WARNING: orphan recovery could not list '$RunLabel' issues (exit $($list.Code)); skipping recovery."
+        return
+    }
+    $orphans = @()
+    if ($list.Text -and $list.Text.Trim()) {
+        try {
+            $parsed = $list.Text | ConvertFrom-Json
+            if ($null -ne $parsed) { $orphans = @($parsed) }
+        } catch {
+            Write-Output 'WARNING: orphan recovery could not parse issue JSON; skipping recovery.'
+            return
+        }
+    }
+    if ($orphans.Count -eq 0) { return }
+
+    Write-Output "Orphan recovery: $($orphans.Count) issue(s) stuck in '$RunLabel' with no live run."
+
+    # Return to a clean main, but only when the repo is on main or on a
+    # queue-owned ai-dispatch/ISSUE-* branch -- that branch is the interrupted
+    # run's own, and its partial edits never published, so discarding them is
+    # safe. On any other branch the working tree may hold a human's
+    # uncommitted work: stop and ask rather than force-clean over it.
+    $curBranch = (Invoke-Tool -Exe 'git' -CmdArgs @('symbolic-ref', '--short', 'HEAD')).Text.Trim()
+    if ($curBranch -and $curBranch -ne 'main') {
+        if ($curBranch -match '^ai-dispatch/ISSUE-') {
+            Write-Output "  repo left on queue branch '$curBranch'; forcing back to main (discarding interrupted work)."
+            $co = Invoke-Tool -Exe 'git' -CmdArgs @('checkout', '-f', 'main')
+            if ($co.Code -ne 0) {
+                Write-Output "  WARNING: could not checkout main (exit $($co.Code)): $($co.Text)"
+            }
+        } else {
+            Fail ("Orphan recovery found an interrupted dispatch, but the repo is on " +
+                "branch '$curBranch' - not main, not a queue branch. That branch may " +
+                "hold uncommitted work, so the queue will not force-clean it. Return " +
+                "to a clean main by hand, then re-run.")
+        }
+    }
+
+    # Restore any queue-parked stashes (pop one at a time; indices shift).
+    for ($i = 0; $i -lt 20; $i++) {
+        $stashList = (Invoke-Tool -Exe 'git' -CmdArgs @('stash', 'list')).Text
+        $ref = $null
+        foreach ($line in @($stashList -split "`r?`n")) {
+            if ($line -match 'ai-dispatch-queue park:' -and $line -match '^(stash@\{\d+\})') {
+                $ref = $matches[1]; break
+            }
+        }
+        if (-not $ref) { break }
+        Write-Output "  restoring parked stash $ref."
+        $pop = Invoke-Tool -Exe 'git' -CmdArgs @('stash', 'pop', $ref)
+        if ($pop.Code -ne 0) {
+            Write-Output "  WARNING: 'git stash pop $ref' failed (exit $($pop.Code)); leaving it stashed."
+            break
+        }
+    }
+
+    foreach ($o in $orphans) {
+        $oid = "ISSUE-$($o.number)"
+        $obranch = "ai-dispatch/$oid"
+        if ((Invoke-Tool -Exe 'git' -CmdArgs @('branch', '--list', $obranch)).Text.Trim()) {
+            Write-Output "  deleting interrupted branch $obranch."
+            Invoke-Tool -Exe 'git' -CmdArgs @('branch', '-D', $obranch) | Out-Null
+        }
+        $relabel = Invoke-Tool -Exe 'gh' -CmdArgs @(
+            'issue', 'edit', "$($o.number)", '--repo', $RepoSlug,
+            '--remove-label', $RunLabel, '--add-label', $QueueLabel)
+        if ($relabel.Code -eq 0) {
+            Write-Output "  issue #$($o.number) reset to '$QueueLabel' for retry."
+            Invoke-Tool -Exe 'gh' -CmdArgs @(
+                'issue', 'comment', "$($o.number)", '--repo', $RepoSlug,
+                '--body', "An AI dispatch run for this issue was interrupted before it finished. The queue has reset it to ``$QueueLabel`` and will pick it up again.") | Out-Null
+        } else {
+            Write-Output "  WARNING: could not relabel issue #$($o.number) (exit $($relabel.Code)): $($relabel.Text)"
+        }
+    }
+}
+
 # --- Environment -----------------------------------------------------------
 
 $script:RepoRoot = $PSScriptRoot
@@ -305,16 +465,29 @@ if ($originUrl -notmatch 'github\.com[:/](.+?)(?:\.git)?/?$') {
 }
 $repoSlug = $matches[1]
 
+$runLabel = "${QueueLabel}-running"
+$doneLabel = "${QueueLabel}-done"
+$failLabel = "${QueueLabel}-failed"
+$retryLabel = "${QueueLabel}-retry"
+
 # --- Single-run lock -------------------------------------------------------
 
-if (Test-Path -LiteralPath $script:LockPath) {
-    $lockAge = (Get-Date) - (Get-Item -LiteralPath $script:LockPath).LastWriteTime
-    if ($lockAge.TotalMinutes -lt $StaleLockMinutes) {
+$lockInfo = Get-LockInfo -Path $script:LockPath
+if ($lockInfo) {
+    if ($lockInfo.Alive) {
         Write-Output ("A dispatch-queue run is already in progress " +
-            "(lock age {0:n0}m < {1}m). Skipping this tick." -f $lockAge.TotalMinutes, $StaleLockMinutes)
+            "(lock owner pid $($lockInfo.OwnerPid) is alive). Skipping this tick.")
         exit 0
     }
-    Write-Output ("Lock is stale ({0:n0}m old); overriding." -f $lockAge.TotalMinutes)
+    if ($lockInfo.OwnerPid -le 0 -and $lockInfo.AgeMin -lt $StaleLockMinutes) {
+        # No readable pid and the lock is recent: cannot confirm the owner
+        # died, so stay conservative and skip rather than risk a double run.
+        Write-Output ("A dispatch-queue lock exists with no readable pid " +
+            "(age {0:n0}m < {1}m). Skipping this tick." -f $lockInfo.AgeMin, $StaleLockMinutes)
+        exit 0
+    }
+    Write-Output ("Lock is stale (owner pid $($lockInfo.OwnerPid) not running; " +
+        "age {0:n0}m); overriding." -f $lockInfo.AgeMin)
 }
 if (-not $DryRun) {
     Write-Utf8 $script:LockPath "pid=$PID started=$((Get-Date).ToString('o'))"
@@ -322,6 +495,11 @@ if (-not $DryRun) {
 }
 
 try {
+    # --- Recover any dispatch interrupted by a killed or crashed run -------
+    if (-not $DryRun) {
+        Invoke-OrphanRecovery -RepoSlug $repoSlug -QueueLabel $QueueLabel -RunLabel $runLabel
+    }
+
     # --- Preflight: clean main, in sync with origin ------------------------
 
     $currentBranch = (Git-Step @('symbolic-ref', '--short', 'HEAD')).Trim()
@@ -347,10 +525,6 @@ try {
     }
 
     # --- Select the oldest unprocessed queued issue ------------------------
-
-    $runLabel = "${QueueLabel}-running"
-    $doneLabel = "${QueueLabel}-done"
-    $failLabel = "${QueueLabel}-failed"
 
     $list = Invoke-Tool -Exe 'gh' -CmdArgs @(
         'issue', 'list', '--repo', $repoSlug, '--label', $QueueLabel,
@@ -383,10 +557,12 @@ try {
     $id = "ISSUE-$($issue.number)"
     $branch = "ai-dispatch/$id"
     $title = if ($issue.title) { [string]$issue.title } else { '(no title)' }
+    $issueLabelNames = @($issue.labels | ForEach-Object { $_.name })
+    $isRetry = ($issueLabelNames -contains $retryLabel)
 
     Write-Output "Repo:     $repoSlug"
     Write-Output "Queued:   $($pending.Count) issue(s)"
-    Write-Output "Next:     #$($issue.number) - $title"
+    Write-Output "Next:     #$($issue.number) - $title$(if ($isRetry) { '  [RETRY]' } else { '' })"
     Write-Output "Dispatch: $id  ->  branch $branch"
 
     if ($DryRun) {
@@ -408,7 +584,8 @@ try {
         @{ Name = $QueueLabel; Color = '0e8a16'; Desc = 'Queued for the AI dispatch loop' },
         @{ Name = $runLabel;   Color = 'fbca04'; Desc = 'AI dispatch in progress' },
         @{ Name = $doneLabel;  Color = '5319e7'; Desc = 'AI dispatch processed' },
-        @{ Name = $failLabel;  Color = 'd93f0b'; Desc = 'AI dispatch run failed' }
+        @{ Name = $failLabel;  Color = 'd93f0b'; Desc = 'AI dispatch run failed' },
+        @{ Name = $retryLabel; Color = 'd4c5f9'; Desc = 'AI dispatch re-queued for one retry' }
     )
     foreach ($l in $labelSpec) {
         Invoke-Tool -Exe 'gh' -CmdArgs @(
@@ -426,6 +603,33 @@ try {
 
     $goalBody = if ($issue.body -and $issue.body.Trim()) { [string]$issue.body } else { $title }
     $goalText = "GitHub issue #$($issue.number): $title`r`n`r`n$goalBody"
+    if ($isRetry) {
+        Write-Output "Retry run: issue carries '$retryLabel'; injecting prior-attempt feedback."
+        $liveRunDir = Join-Path $script:RepoRoot (Join-Path '.ai' "dispatch-$id")
+        # Archive the prior attempt's run dir so the retry's loop cannot
+        # overwrite its artifacts. .ai/dispatch-*/ is gitignored, and so is
+        # each .attemptN archive; pick the next free slot.
+        $priorRunDir = ''
+        if (Test-Path -LiteralPath $liveRunDir) {
+            $n = 1
+            while (Test-Path -LiteralPath "$liveRunDir.attempt$n") { $n++ }
+            $archiveDir = "$liveRunDir.attempt$n"
+            try {
+                Move-Item -LiteralPath $liveRunDir -Destination $archiveDir -Force
+                $priorRunDir = $archiveDir
+                Write-Output "  archived prior run dir -> $(Get-RepoRelativePathForQueue $archiveDir)"
+            } catch {
+                Write-Output "  WARNING: could not archive prior run dir: $($_.Exception.Message)"
+                $priorRunDir = $liveRunDir
+            }
+        }
+        if ($priorRunDir) {
+            $feedback = Get-PriorFeedback -RunDir $priorRunDir
+            if ($feedback) {
+                $goalText += "`r`n`r`n--- PRIOR ATTEMPT FAILED - ADDRESS THIS FEEDBACK ---`r`n$feedback"
+            }
+        }
+    }
     $goalFile = Join-Path $env:TEMP "rge-ai-dispatch-goal-$id.txt"
     Write-Utf8 $goalFile $goalText
 
@@ -457,9 +661,10 @@ try {
     Write-Output "Dispatch loop exited with code $loopExit."
 
     $loopText = (Get-Content -Raw -LiteralPath $loopLog -ErrorAction SilentlyContinue)
-    $verdict = 'unknown'
-    $vm = [regex]::Matches([string]$loopText, '(?im)^Codex control verdict:\s*(\S+)\s*$')
-    if ($vm.Count -gt 0) { $verdict = $vm[$vm.Count - 1].Groups[1].Value }
+    # Read the Codex control verdict from the structured run-dir JSON the loop
+    # writes (schema-validated), not by scraping loop stdout. Newest round wins.
+    $runDir = Join-Path $script:RepoRoot (Join-Path '.ai' "dispatch-$id")
+    $verdict = Get-ControlVerdict -RunDir $runDir
 
     # --- Write detailed audit log, then commit the branch ------------------
 
@@ -579,14 +784,33 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
         ($loopText -split "`r?`n" | Select-Object -Last 30) -join "`n"
     } else { '(no loop output captured)' }
     $runFailed = ($loopExit -ne 0 -or $publishFailed)
-    $statusIcon = if (-not $runFailed) { 'succeeded' } else { 'FAILED' }
+    $willRetry = ($runFailed -and -not $isRetry)
+    if ($willRetry -and $committed) {
+        # First failure of a retry-eligible issue: discard the failed branch so
+        # the retry starts clean. Raw artifacts remain in .ai/dispatch-<id>/.
+        Invoke-Tool -Exe 'git' -CmdArgs @('branch', '-D', $branch) | Out-Null
+    }
+    $statusIcon = if (-not $runFailed) {
+        'succeeded'
+    } elseif ($willRetry) {
+        'FAILED (auto-retry queued)'
+    } else {
+        'FAILED'
+    }
+    $retryNote = if ($willRetry) {
+        "`n- Re-queued for one automatic retry; the next run gets the prior-attempt feedback."
+    } elseif ($isRetry -and $runFailed) {
+        "`n- This was the retry attempt; the issue is now marked ``$failLabel`` for human review."
+    } else {
+        ''
+    }
     $commentBody = @"
 **AI dispatch run $statusIcon** - dispatch ``$id``
 
 - Loop exit code: ``$loopExit``
 - Codex control verdict: ``$verdict``
 - $branchLine
-- Detailed log: ``$(Get-RepoRelativePathForQueue $dispatchLogPath)``
+- Detailed log: ``$(Get-RepoRelativePathForQueue $dispatchLogPath)``$retryNote
 
 <details><summary>Dispatch loop output (tail)</summary>
 
@@ -606,9 +830,16 @@ _Posted by Invoke-AiDispatchQueue.ps1. Successful control-passed runs are auto-p
         Write-Output "WARNING: could not post result comment (exit $($comment.Code)): $($comment.Text)"
     }
 
-    $relabel = @('issue', 'edit', "$($issue.number)", '--repo', $repoSlug,
-        '--remove-label', $runLabel, '--remove-label', $QueueLabel, '--add-label', $doneLabel)
-    if ($runFailed) { $relabel += @('--add-label', $failLabel) }
+    if ($willRetry) {
+        # Re-queue for one automatic retry: keep the queue label so the issue
+        # is re-selected, drop running, add the retry marker. No done/failed.
+        $relabel = @('issue', 'edit', "$($issue.number)", '--repo', $repoSlug,
+            '--remove-label', $runLabel, '--add-label', $retryLabel)
+    } else {
+        $relabel = @('issue', 'edit', "$($issue.number)", '--repo', $repoSlug,
+            '--remove-label', $runLabel, '--remove-label', $QueueLabel, '--add-label', $doneLabel)
+        if ($runFailed) { $relabel += @('--add-label', $failLabel) }
+    }
     $rl = Invoke-Tool -Exe 'gh' -CmdArgs $relabel
     if ($rl.Code -ne 0) {
         Write-Output "WARNING: could not finalize labels on issue #$($issue.number) (exit $($rl.Code)): $($rl.Text)"
@@ -635,7 +866,11 @@ _Posted by Invoke-AiDispatchQueue.ps1. Successful control-passed runs are auto-p
     Write-Output ""
     Write-Output "Dispatch $id $statusIcon (loop exit $loopExit, verdict $verdict)."
     Write-Output $branchLine.Replace('`', '')
-    Write-Output "Issue #$($issue.number) relabelled; result comment posted."
+    if ($willRetry) {
+        Write-Output "Issue #$($issue.number) re-queued for one automatic retry; result comment posted."
+    } else {
+        Write-Output "Issue #$($issue.number) relabelled; result comment posted."
+    }
     if (-not $runFailed -and -not $NoPublish) {
         Write-Output "Issue #$($issue.number) closed after publish."
     }

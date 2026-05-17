@@ -1,0 +1,147 @@
+#Requires -Version 5.1
+<#
+.SYNOPSIS
+    Register, inspect, or remove a Windows Scheduled Task that runs the RGE AI
+    dispatch queue on a recurring interval -- the unattended trigger.
+
+.DESCRIPTION
+    Invoke-AiDispatchQueue.ps1 processes one queued GitHub issue per run. To
+    drain the queue without a Claude Code session open, this script registers
+    a Scheduled Task that fires the queue every -IntervalMinutes. The queue's
+    own single-run lock keeps overlapping ticks from colliding, and its
+    orphan-recovery janitor cleans up after any tick that is interrupted.
+
+    The task runs as the current user with an Interactive logon: it fires
+    while you are logged on and needs no stored password. A run missed because
+    the machine was asleep is caught up on the next wake (-StartWhenAvailable).
+
+.PARAMETER IntervalMinutes
+    Minutes between queue ticks. Default 30. A full dispatch can take longer
+    than one interval; that is fine -- the queue lock makes a new tick skip
+    while the previous one is still running.
+
+.PARAMETER TaskName
+    Scheduled Task name. Default 'RGE-AiDispatchQueue'.
+
+.PARAMETER Unregister
+    Remove the task instead of creating it.
+
+.PARAMETER Status
+    Report the task state, last run, and next run; change nothing.
+
+.EXAMPLE
+    .\Register-AiDispatchSchedule.ps1
+    # Register the task to run the queue every 30 minutes.
+
+.EXAMPLE
+    .\Register-AiDispatchSchedule.ps1 -IntervalMinutes 15
+    .\Register-AiDispatchSchedule.ps1 -Status
+    .\Register-AiDispatchSchedule.ps1 -Unregister
+
+.NOTES
+    No elevation is needed: the task is registered for the current user only.
+    Interactive logon is used deliberately -- an S4U (run-when-logged-off) task
+    may be unable to read the `gh` auth token from Windows Credential Manager.
+#>
+[CmdletBinding(DefaultParameterSetName = 'Register')]
+param(
+    [Parameter(ParameterSetName = 'Register')]
+    [ValidateRange(10, 1440)]
+    [int]$IntervalMinutes = 30,
+
+    [ValidatePattern('^[A-Za-z0-9 ._-]+$')]
+    [string]$TaskName = 'RGE-AiDispatchQueue',
+
+    [Parameter(Mandatory, ParameterSetName = 'Unregister')]
+    [switch]$Unregister,
+
+    [Parameter(Mandatory, ParameterSetName = 'Status')]
+    [switch]$Status
+)
+
+$ErrorActionPreference = 'Stop'
+
+function Fail {
+    param([string]$Message)
+    [Console]::Error.WriteLine($Message)
+    exit 1
+}
+
+$RepoRoot = $PSScriptRoot
+$queueScript = Join-Path $RepoRoot 'Invoke-AiDispatchQueue.ps1'
+
+# --- Status ----------------------------------------------------------------
+if ($Status) {
+    $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+    if (-not $task) {
+        Write-Output "Scheduled task '$TaskName' is not registered."
+        exit 0
+    }
+    $info = Get-ScheduledTaskInfo -TaskName $TaskName
+    $act = @($task.Actions)[0]
+    Write-Output "Task:      $TaskName"
+    Write-Output "State:     $($task.State)"
+    Write-Output "Last run:  $($info.LastRunTime)  (result 0x$('{0:X}' -f $info.LastTaskResult))"
+    Write-Output "Next run:  $($info.NextRunTime)"
+    Write-Output "Runs:      $($act.Execute) $($act.Arguments)"
+    exit 0
+}
+
+# --- Unregister ------------------------------------------------------------
+if ($Unregister) {
+    $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+    if (-not $task) {
+        Write-Output "Scheduled task '$TaskName' is not registered; nothing to remove."
+        exit 0
+    }
+    Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
+    Write-Output "Scheduled task '$TaskName' removed."
+    exit 0
+}
+
+# --- Register --------------------------------------------------------------
+if (-not (Test-Path -LiteralPath $queueScript)) {
+    Fail "Queue script not found next to this script: $queueScript"
+}
+
+$action = New-ScheduledTaskAction -Execute 'powershell.exe' `
+    -Argument ('-NoProfile -ExecutionPolicy Bypass -File "{0}"' -f $queueScript) `
+    -WorkingDirectory $RepoRoot
+
+# Repeat every $IntervalMinutes, effectively indefinitely. Building the
+# Repetition from a nested trigger supplies a long RepetitionDuration without
+# tripping the TimeSpan.MaxValue bug in older Schedule cmdlet builds.
+$startAt = (Get-Date).AddMinutes(2)
+$trigger = New-ScheduledTaskTrigger -Once -At $startAt
+$trigger.Repetition = (New-ScheduledTaskTrigger -Once -At $startAt `
+        -RepetitionInterval (New-TimeSpan -Minutes $IntervalMinutes) `
+        -RepetitionDuration (New-TimeSpan -Days 3650)).Repetition
+
+$settings = New-ScheduledTaskSettingsSet `
+    -StartWhenAvailable `
+    -MultipleInstances IgnoreNew `
+    -ExecutionTimeLimit (New-TimeSpan -Hours 3) `
+    -DontStopOnIdleEnd `
+    -AllowStartIfOnBatteries `
+    -DontStopIfGoingOnBatteries
+
+$currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+$principal = New-ScheduledTaskPrincipal -UserId $currentUser `
+    -LogonType Interactive -RunLevel Limited
+
+try {
+    Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger `
+        -Settings $settings -Principal $principal -Force `
+        -Description 'Runs the RGE AI dispatch queue (Invoke-AiDispatchQueue.ps1) on a recurring interval.' | Out-Null
+} catch {
+    Fail "Could not register scheduled task '$TaskName': $($_.Exception.Message)"
+}
+
+Write-Output "Scheduled task '$TaskName' registered."
+Write-Output "  Runs:    powershell.exe -File $queueScript"
+Write-Output "  Every:   $IntervalMinutes minute(s), starting $($startAt.ToString('yyyy-MM-dd HH:mm'))"
+Write-Output "  As user: $currentUser (Interactive; runs while logged on)"
+Write-Output ''
+Write-Output "Inspect: .\Register-AiDispatchSchedule.ps1 -Status"
+Write-Output "Remove:  .\Register-AiDispatchSchedule.ps1 -Unregister"
+Write-Output "Run now: Start-ScheduledTask -TaskName '$TaskName'"
