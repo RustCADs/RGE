@@ -406,7 +406,10 @@ block.
 Placeholders: `$PacketKind` = `TASK` or `CORRECTION`; `$packetRel` = repo-relative
 path of the active packet; `$DispatchId` = the dispatch id. The orchestrator
 saves the verbatim response to `.ai/dispatch-<ID>/claude.execute.round<N>.md`
-and branches only on `EXEC_STATUS:` plus the optional `EXEC_PACKET:` path.
+and branches on `EXEC_STATUS:` plus the optional `EXEC_PACKET:` path. If
+Claude omits `EXEC_STATUS:` but writes/finalizes a canonical EXEC packet, the
+loop falls back to that packet's footer markers (`HANDOFF_STATUS:` /
+`EXIT_CODE:`) instead of failing before Codex control.
 
 ### 10.4 Codex — control review (sandbox: `read-only`)
 
@@ -478,9 +481,12 @@ markers from Claude's prose:
   `EXEC_PACKET: <repo-relative path|none>`
 
 The full prose remains the audit record and revision context. The markers are
-the only Claude payload data used for control flow. This intentionally matches
-the packet protocol's footer-marker style (`HANDOFF_STATUS:` / `NEXT_ROLE:` /
-`EXIT_CODE:`).
+the preferred Claude payload data used for control flow. Execute has one
+bounded fallback: if Claude omits `EXEC_STATUS:` but leaves an EXEC packet with
+canonical footer markers, `HANDOFF_STATUS: COMPLETE` + `EXIT_CODE: 0` maps to
+`executed`; blocked/failed packet footer states map to `blocked`/`failed`.
+This mirrors the packet protocol's footer-marker style (`HANDOFF_STATUS:` /
+`NEXT_ROLE:` / `EXIT_CODE:`) without reintroducing fuzzy prose parsing.
 
 ---
 
@@ -500,7 +506,9 @@ Claude.
 minor Markdown/list/quote decoration around the line. Required enum markers
 cause a loud failure if missing or outside their allowed set. Optional markers
 return `$null`; `EXEC_PACKET:` is optional because the loop can fall back to the
-latest matching EXEC packet on disk.
+latest matching EXEC packet on disk. `EXEC_STATUS:` is normally enum-checked
+from Claude's response; when absent, `Resolve-ExecStatusFromPacket` may derive
+the status from the latest EXEC packet's exact footer markers.
 
 ### 11.2 `.ai/codex_control.schema.json`
 

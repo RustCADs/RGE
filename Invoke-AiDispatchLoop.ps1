@@ -231,6 +231,38 @@ function Get-MarkerValue {
     return $value
 }
 
+function Resolve-ExecStatusFromPacket {
+    param([System.IO.FileInfo]$Packet)
+
+    if (-not $Packet -or -not (Test-Path -LiteralPath $Packet.FullName)) {
+        return $null
+    }
+
+    $text = Get-Content -Raw -LiteralPath $Packet.FullName
+    $handoff = Get-MarkerValue -Text $text -Name 'HANDOFF_STATUS'
+    $packetStatus = Get-MarkerValue -Text $text -Name 'STATUS'
+    $exitRaw = Get-MarkerValue -Text $text -Name 'EXIT_CODE'
+
+    $handoffNorm = if ($handoff) { $handoff.ToUpperInvariant() } else { '' }
+    $packetStatusNorm = if ($packetStatus) { $packetStatus.ToUpperInvariant() } else { '' }
+    $exitCode = $null
+    if ($exitRaw -and $exitRaw -match '^-?\d+$') {
+        $exitCode = [int]$exitRaw
+    }
+
+    if ($handoffNorm -eq 'COMPLETE' -and $exitCode -eq 0) {
+        return 'executed'
+    }
+    if ($handoffNorm -in @('BLOCKED', 'NEEDS_HUMAN') -or $packetStatusNorm -in @('BLOCKED', 'NEEDS_HUMAN')) {
+        return 'blocked'
+    }
+    if ($handoffNorm -eq 'FAILED' -or $packetStatusNorm -eq 'FAILED' -or ($null -ne $exitCode -and $exitCode -ne 0)) {
+        return 'failed'
+    }
+
+    return $null
+}
+
 function Invoke-ClaudeMarker {
     # Run a Claude step and extract line-anchored markers from its prose output.
     # The verbatim response is saved to OutputPath as the record and as Codex
@@ -468,12 +500,37 @@ final lines of your response. Do not wrap them in Markdown, quotes, or a code
 block.
 "@
     $res = Invoke-ClaudeMarker -Prompt $prompt `
-        -Markers @{ 'EXEC_STATUS' = @('executed', 'blocked', 'failed'); 'EXEC_PACKET' = $null } `
+        -Markers @{ 'EXEC_STATUS' = $null; 'EXEC_PACKET' = $null } `
         -OutputPath $out -PermissionMode $ClaudePermissionMode
+    $status = $res.Markers['EXEC_STATUS']
+    if ($status -and (@('executed', 'blocked', 'failed') -notcontains $status)) {
+        Fail "claude 'EXEC_STATUS:' marker value '$status' is not one of: executed, blocked, failed. See $out"
+    }
     $packet = $res.Markers['EXEC_PACKET']
     if ($packet -and ($packet -match '^(none|<none>|n/?a|null|-)$')) { $packet = $null }
+    if (-not $status) {
+        $fallbackPacket = $null
+        if ($packet) {
+            $candidate = Join-Path $script:RepoRoot (($packet -replace '/', '\'))
+            if (Test-Path -LiteralPath $candidate) {
+                $fallbackPacket = Get-Item -LiteralPath $candidate
+            }
+        }
+        if (-not $fallbackPacket) {
+            $fallbackPacket = Get-LatestPacket -PacketType 'EXEC'
+        }
+        if ($fallbackPacket) {
+            $status = Resolve-ExecStatusFromPacket -Packet $fallbackPacket
+            if ($status -and -not $packet) {
+                $packet = Get-RepoRelativePath $fallbackPacket.FullName
+            }
+        }
+        if (-not $status) {
+            Fail "claude response is missing the required 'EXEC_STATUS:' marker line and no canonical EXEC packet footer could be used as fallback. See $out"
+        }
+    }
     return [pscustomobject]@{
-        status      = $res.Markers['EXEC_STATUS']
+        status      = $status
         exec_packet = $packet
         report      = $res.Text
     }
