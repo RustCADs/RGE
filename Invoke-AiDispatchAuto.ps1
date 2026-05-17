@@ -441,6 +441,30 @@ This text becomes the dispatch goal that Codex plans and Claude executes.>
         Fail "Could not create the autonomous task issue (exit $($created.Code)):`n$($created.Text)"
     }
     Write-Output "Filed autonomous task issue: $($created.Text.Trim())"
+
+    # GitHub's label index lags issue creation by a few seconds: gh issue
+    # create returns immediately, but gh issue list --label may not see the
+    # new issue yet. Wait until it is listable, or the queue (which selects by
+    # label) would see an empty queue and no-op this whole tick.
+    $newIssueNum = 0
+    if ($created.Text -match '/(\d+)\s*$') { $newIssueNum = [int]$matches[1] }
+    if ($newIssueNum -gt 0) {
+        $visible = $false
+        for ($poll = 1; $poll -le 12; $poll++) {
+            Start-Sleep -Seconds 5
+            $check = Get-IssuesJson @(
+                'issue', 'list', '--repo', $repoSlug, '--label', $queueLabel,
+                '--state', 'open', '--limit', '100', '--json', 'number')
+            if (@($check | ForEach-Object { $_.number }) -contains $newIssueNum) {
+                $visible = $true
+                Write-Output "Issue #$newIssueNum is listable after $($poll * 5)s; running the queue."
+                break
+            }
+        }
+        if (-not $visible) {
+            Write-Output "WARNING: issue #$newIssueNum not listable after 60s; the queue may no-op this tick (a later tick will pick it up)."
+        }
+    }
 }
 
 if ($DryRun) {
