@@ -137,6 +137,79 @@ cargo test -p rge-script-bench --release --lib \
 
 **Phase 3.4 exit criterion #3 status**: **CLOSED 2026-05-12 on recorder host only** — `cargo test ... -- --ignored --nocapture` exits 0; test result `ok. 1 passed; 0 failed; 0 ignored; 0 measured; 18 filtered out; finished in 3600.00s`. The cargo wall-clock matches `FORMAL_MEMORY_SOAK_DURATION = Duration::from_secs(60 * 60)` exactly, confirming the soak loop ran for its full minimum duration. Estimated cycle count (not directly captured by the test's stdout — the test holds the `MemorySoakReport` in a local but does NOT print its fields): at the re-validated 2026-05-12 Phase 3.3 p95 of 0.818 ms/cycle, 1 hour ≈ **~4.4M cycles**; preservation invariant `restored_components == cycles * entity_count` held across all of them.
 
+## Formal 1-hour memory soak — RUN 2026-05-17 (process-memory metrics enabled)
+
+Recorded 2026-05-17 (release-profile background test run). This is the first
+formal one-hour soak run against the 2026-05-16 process-memory harness revision
+described in "Memory-soak process-memory metrics" below — i.e. the
+"future release-readiness one-hour soak" that revision anticipated. Run via the
+exact formal target:
+
+```sh
+cargo test -p rge-script-bench --release --lib \
+  script_host::tests::phase_3_memory_soak_one_hour \
+  -- --ignored --nocapture
+```
+
+Toolchain / host: Windows 11 / x86_64 recorder host, `cargo 1.92.0` /
+`rustc 1.92.0`, `wasmtime 44.0.1`. Exit code 0; recorded cargo wall-clock
+3600.46 s; test harness summary
+`ok. 1 passed; 0 failed; 0 ignored; 0 measured; 28 filtered out; finished in 3600.00s`.
+
+Exact `--nocapture` stdout evidence:
+
+```
+phase3_memory_soak: entities=1000 cycles=3736934 elapsed_s=3600.00 restored_components=3736934000 expected_restored_components=3736934000 final_counter_sum=1000499500
+phase3_memory_soak_memory: samples=3736936 start_rss_bytes=8859648 end_rss_bytes=10346496 peak_rss_bytes=10510336 start_vss_bytes=1327104 end_vss_bytes=2695168 vss_delta_bytes=1368064
+```
+
+| workload | engine | scene | minimum_duration | metric | value |
+| --- | --- | --- | --- | --- | --- |
+| `memory_soak` | `script_host_counter` | 1,000 `Counter` entities | 1 hour (3600 s) | `elapsed_s` | **3600.00 s** |
+| `memory_soak` | `script_host_counter` | 1,000 `Counter` entities | 1 hour (3600 s) | `cycles` | **3736934** |
+| `memory_soak` | `script_host_counter` | 1,000 `Counter` entities | 1 hour (3600 s) | `restored_components` / `expected_restored_components` | **3736934000 / 3736934000** (equal — invariant HELD) |
+| `memory_soak` | `script_host_counter` | 1,000 `Counter` entities | 1 hour (3600 s) | `final_counter_sum` | **1000499500** |
+| `memory_soak` | `script_host_counter` | 1,000 `Counter` entities | 1 hour (3600 s) | process-memory `samples` | **3736936** (= start + one per cycle + end) |
+| `memory_soak` | `script_host_counter` | 1,000 `Counter` entities | 1 hour (3600 s) | `start_rss_bytes` | **8859648** |
+| `memory_soak` | `script_host_counter` | 1,000 `Counter` entities | 1 hour (3600 s) | `end_rss_bytes` | **10346496** |
+| `memory_soak` | `script_host_counter` | 1,000 `Counter` entities | 1 hour (3600 s) | `peak_rss_bytes` | **10510336** |
+| `memory_soak` | `script_host_counter` | 1,000 `Counter` entities | 1 hour (3600 s) | `start_vss_bytes` | **1327104** |
+| `memory_soak` | `script_host_counter` | 1,000 `Counter` entities | 1 hour (3600 s) | `end_vss_bytes` | **2695168** |
+| `memory_soak` | `script_host_counter` | 1,000 `Counter` entities | 1 hour (3600 s) | `vss_delta_bytes` | **1368064** |
+
+All byte counts above are recorded exactly as printed to stdout; none are
+normalized, rounded, or re-derived.
+
+**Platform mapping (honest).** On the Windows recorder host the `memory-stats`
+sampler reports *resident* memory as the process **working set**
+(`GetProcessMemoryInfo` → `WorkingSetSize`) and *virtual* memory as the process
+**commit charge** (`PagefileUsage`). So `peak_rss_bytes` is the peak working-set
+sample observed across the soak, and `vss_delta_bytes` is an end-minus-start
+**commit-charge** delta — not a virtual-address-space-span delta. The
+`vss_delta_bytes` value here is positive (`1368064`, i.e. commit charge grew);
+it is captured verbatim and would have been recorded as a negative number,
+unchanged, had the commit footprint shrunk.
+
+**Phase 3.4 exit criterion #3 — metrics-enabled re-run**: the one-hour soak
+exits 0, the ignored test reports `ok`, and `elapsed_s` (3600.00) meets the
+`FORMAL_MEMORY_SOAK_DURATION` 3600 s floor. Across 3736934 hot-reload cycles the
+preservation invariant `restored_components == cycles * entity_count` held
+exactly (3736934000 on both sides). The working set sampled from
+`start_rss_bytes=8859648` to `end_rss_bytes=10346496` with
+`peak_rss_bytes=10510336`, and commit charge from `start_vss_bytes=1327104` to
+`end_vss_bytes=2695168`, with no panic / hang / OOM. This run complements the
+2026-05-12 row above: that earlier run predates the metrics revision and its
+"no memory leak" reading was implicit, whereas this run backs it with captured
+process-memory numbers. The 2026-05-12 row stands unchanged as the pre-metrics
+historical record.
+
+**Scope limitation (LOAD-BEARING)**: CONSTRAINED-CERTIFIED on the recorder host
+only (Windows 11 / x86_64, single one-hour run). It does NOT certify allocator
+fragmentation, vendor / OS parity, sustained behavior beyond one hour, or the
+per-cycle memory-growth curve — only start, per-cycle-folded, and end samples
+are taken, summarized into peak plus endpoints. The values are single-run point
+samples, not a multi-run distribution.
+
 ## Formal W04 raw WasmtimeCranelift gates — RUN 2026-05-12
 
 Recorded 2026-05-12 (release-profile test run) via:
