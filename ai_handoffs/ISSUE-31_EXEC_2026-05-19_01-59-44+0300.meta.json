@@ -1,0 +1,14 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-31",
+    "packet_type": "EXEC",
+    "author": "Executor / Claude",
+    "timestamp": "2026-05-19_01-59-44+0300",
+    "related_files": [
+                          "crates/cad-projection/tests/render_adapter_smoke.rs — added one additive RoundFillet render-adapter smoke + file-level test inventory; added `BRepEdgeProvider`, `BRepProvider`, `RoundFilletOp` imports"
+                      ],
+    "status": "AWAITING_REVIEW",
+    "handoff_status": "COMPLETE",
+    "next_role": "REVIEWER_AI",
+    "exit_code": 0
+}
