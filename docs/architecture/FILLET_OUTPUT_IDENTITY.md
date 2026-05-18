@@ -1,137 +1,64 @@
 # FILLET_OUTPUT_IDENTITY
 
-| Status | **PARKED** — design note awaiting consumer pressure. NOT a doctrine doc; NOT an ADR. |
+| Status | **PARTIALLY RESOLVED** for chamfer `FilletOp`; cap-face stable B-Rep identity remains deferred. |
 |---|---|
-| Question | Whether topology-changing operators like `FilletOp` should implement output-side `BRepProvider` / `BRepEdgeProvider`. |
-| Triggered by | D-Fillet sub-α through sub-δ (2026-05-09): four direct providers (Cuboid + Extrude + Revolve + Loft) consume `BRepEdgeId` for input-side selection; `FilletOp::evaluate` produces a `Tessellation` whose new triangles have no identity scheme. |
-| Blocked on | A real consumer of output-side identity. Candidates: `cad-projection` per-triangle face-id queries, editor selection persistence across rebuilds, GFX picking, chained fillets, or Boolean lineage propagation through `topo_lineage`. |
-| Today's behavior | `FilletOp` falls into the `_` catch-all in both face and edge resolvers and returns `BRepResolveError::TopologyChangingOperator { kind: OpKind::Fillet }`. Filleted output is identity-opaque. |
+| Current decision | ADR-120 unparked tessellation face-label propagation for chamfer `FilletOp`. |
+| Still deferred | Direct `BRepProvider` / `BRepEdgeProvider` impls on `FilletOp` and stable `BRepFaceId`s for chamfer-cap geometry. |
+| Related ADRs | ADR-119 (`RoundFilletOp`), ADR-120 (chamfer `FilletOp` labels). |
 
-## Open question
+## Current behavior
 
-After D-Fillet sub-α through sub-δ, `FilletOp` accepts `BRepEdgeId`s as
-constructor inputs and validates them against the upstream operator's
-`BRepEdgeProvider`. The input-side consumer contract is closed across all
-four direct providers (Cuboid + Extrude + Revolve + Loft).
+Chamfer `FilletOp` is no longer output-label opaque for labeled input.
 
-But `FilletOp::evaluate` produces a `Tessellation` whose new triangles
-(the 2 chamfer-cap triangles per filleted edge) have no identity
-attribution. The unmodified upstream triangles also have no IDs in the
-projected output today, but they could in principle inherit from the
-upstream operator's `BRepProvider`. The new chamfer triangles, by
-contrast, have nowhere to inherit from — they are fabricated by the
-fillet operation.
+`FilletOp::evaluate`:
 
-The substrate question: **does `FilletOp` (and topology-changing
-operators in general) implement output-side `BRepProvider` /
-`BRepEdgeProvider`?** If yes, what identity scheme attributes
-identities to:
+- clones upstream positions and indices;
+- appends two chamfer-cap triangles per filleted edge;
+- preserves upstream `face_labels` when the upstream tessellation is labeled;
+- labels appended chamfer-cap triangles as `TopologyFaceId::DEGENERATE`;
+- keeps unlabeled upstream input unlabeled.
 
-- The unfilleted upstream faces and edges (clearly survivors).
-- The filleted edge itself (now consumed by a chamfer face).
-- The chamfer face (newly fabricated; no upstream parent).
-- The 2 boundary edges of the chamfer face (newly fabricated).
-- The adjacent upstream faces (slightly different shape; still "the
-  same face" semantically, or different?).
+The graph-level resolvers compose identity through `OperatorNode::Fillet`:
 
-## Candidate dispositions (no decision yet)
+- `brep_face_ids_for_node` inherits upstream face IDs unchanged;
+- `brep_edge_ids_for_node` inherits upstream edge IDs minus the selected
+  filleted edges.
 
-The `topo_lineage` substrate (D-7.4 prototype, 2026-05-07) introduced a
-`TopologyEvolution` enum: `Preserved` / `Split` / `Merged` / `Deleted`
-/ `Reinterpreted`. These are the natural vocabulary for the
-dispositions:
+The stable B-Rep identity of chamfer-cap geometry is still intentionally absent:
+`TopologyFaceId::DEGENERATE` cap triangles resolve to `None` in cad-projection.
 
-- **Unaffected upstream faces and edges** → `Preserved`. The 11
-  unfilleted edges of a Cuboid keep their original `BRepEdgeId`. The
-  4 unaffected faces keep their original `BRepFaceId`.
-- **The filleted edge** → either `Split` (the edge becomes 2 new
-  edges — the chamfer face's 2 long sides; the original ID maps to
-  both successors) or `Deleted` / `Reinterpreted` (the original ID
-  has no successor; downstream consumers see the edge as gone).
-  These are different downstream semantics for selection persistence.
-- **The chamfer face** → `Reinterpreted` (newly-introduced; no
-  upstream parent). What's the `BRepFaceId` derivation? Owner-seeded
-  from the fillet operation's own owner? From the filleted edge's
-  ID? These are different.
-- **Adjacent upstream faces** → likely `Preserved` (still "the +X
-  face of the cuboid" semantically), but their boundaries have
-  changed. Whether the boundary change matters for identity is the
-  decision.
+## What changed
 
-## Why parked
+The old parked note said `FilletOp` must keep returning unlabeled output until
+output-side identity was designed. Cad-projection is now that real consumer:
+face lookup, picking, selection partitioning, and highlight index generation all
+depend on resolving inherited face labels through operator roots.
 
-The substrate-doctrine principle is: **no substrate before pressure**.
-Today, no substrate consumes output-side identity from `FilletOp`:
+ADR-120 answers the bounded chamfer-label question without minting new stable
+cap-face IDs. It does not make `FilletOp` a direct `BRepProvider`, and it does
+not assign stable identity to chamfer caps.
 
-- `cad-projection` does not yet propagate per-triangle face IDs
-  through projection.
-- Editor / selection / picking layers do not yet exist.
-- GFX rendering does not consume face IDs.
-- Chained fillets work in the operator graph but the resolver
-  returns `TopologyChangingOperator` so no consumer can read
-  through the chain.
-- Boolean lineage is also `TopologyChangingOperator`-classified.
+## Remaining open question
 
-Designing output-side identity now would invent semantics for a
-contract that has no current consumer. The designed semantics would
-likely diverge from what the eventual real consumer needs.
+Do chamfer caps need stable B-Rep face IDs?
 
-## Trigger for un-parking
+That remains deferred until a consumer needs to select, persist, materialize, or
+otherwise address chamfer-cap faces across rebuilds. If that pressure appears,
+the next design step is a focused ADR or dispatch for a cap-face ID scheme,
+including kind bytes, canonical cap ordering, owner discipline, and interactions
+with topology lineage.
 
-This design note becomes an active substrate dispatch (or an ADR)
-when ONE of these consumer pressures lands:
+Until then callers should treat:
 
-1. **`cad-projection` integration** — when projection wants to answer
-   "what stable face/edge does this triangle correspond to?" for
-   filleted output, the chamfer triangles need identity.
-2. **Editor selection persistence** — when editor selection wants
-   to survive across rebuilds, including rebuilds that introduce
-   or remove fillets.
-3. **GFX picking** — when GFX picks a triangle and asks "what
-   semantic face was that?" through filleted output.
-4. **Chained fillets** — when `FilletOp::new_for_fillet(&FilletOp, …)`
-   becomes a real use case (currently rejected at the resolver
-   layer).
-5. **Boolean lineage propagation** — when Boolean output identity
-   forces the same semantic decisions on a parallel substrate, and
-   the question can be answered consistently across both topology-
-   changing operator families.
-
-The most likely first trigger is `cad-projection` integration.
-
-## Today's behavior (for callers)
-
-`FilletOp` is a topology-changing operator from the resolver's
-perspective. Both `topology::brep_face_ids_for_node` and
-`topology::brep_edge_ids_for_node` return:
-
-```rust
-Err(BRepResolveError::TopologyChangingOperator {
-    kind: OpKind::Fillet,
-})
-```
-
-when the resolved node is a `Fillet`. Callers who want stable
-identity from filleted output need to either:
-
-- Resolve identity at the upstream operator (before the fillet) and
-  accept that the chamfer geometry is identity-opaque; OR
-- Wait for output-side identity to be designed (this note).
-
-This behavior MUST be preserved until output-side identity is
-designed. Adding a `BRepProvider` / `BRepEdgeProvider` impl to
-`FilletOp` ahead of the trigger conditions above would invent
-semantics that the eventual consumer might not want.
+- inherited non-degenerate labels as stable upstream faces;
+- `TopologyFaceId::DEGENERATE` chamfer caps as transient geometry with no stable
+  `BRepFaceId`.
 
 ## Companion docs
 
-- `SEMANTIC_ARCHITECTURE_LAWS.md` Section 6 (Identity Continuity) —
-  the doctrine-tier framing of identity-survival semantics.
-- `topo_lineage::types::TopologyEvolution` — the prototype enum
-  that supplies the vocabulary for the candidate dispositions above.
-- `cad-core::topology::resolve` and `edge_resolve` — the resolvers
-  that today return `TopologyChangingOperator` for `FilletOp`.
-- D-7.2 sub-α through sub-ζ.ζ — the input-side substrate that this
-  question complements.
-- D-Fillet sub-α through sub-δ — the input-side consumer dispatches
-  that surfaced this question.
+- `docs/adr/ADR-120-chamfer-fillet-face-label-propagation.md`
+- `docs/adr/ADR-119-real-round-fillet-substrate.md`
+- `docs/architecture/SEMANTIC_ARCHITECTURE_LAWS.md` Section 6
+- `crates/cad-core/src/operators/fillet/mod.rs`
+- `crates/cad-core/src/topology/resolve.rs`
+- `crates/cad-core/src/topology/edge_resolve.rs`

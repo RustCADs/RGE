@@ -91,22 +91,22 @@ via explicit "defer to" cross-refs):
   SCENE_EXTRACTION_CONTRACT, PIE_SNAPSHOT, EDITOR_ACTIONS_COMMAND_BUS,
   CAD_TOPOLOGY_LINEAGE, and CAD_CORE_MODEL.
 
-## Parked design notes
+## Parked and historical design notes
 
 Short design notes that capture an open architectural question,
 record candidate dispositions, and explicitly state what would
 trigger the question becoming an active dispatch or ADR. These are
 **NOT** doctrine docs (no binding rule) and **NOT** ADRs (no
-decision yet). They live here to keep the open question visible
-without pretending to have answered it.
+decision by themselves). They live here to keep open questions and
+their supersession trail visible without pretending the note itself is
+the decision record.
 
 - **[`FILLET_OUTPUT_IDENTITY.md`](./FILLET_OUTPUT_IDENTITY.md)** —
-  whether topology-changing operators like `FilletOp` should
-  implement output-side `BRepProvider` / `BRepEdgeProvider`. Parked
-  pending a real consumer of output-side identity (cad-projection
-  integration, editor selection persistence, GFX picking, chained
-  fillets, or Boolean lineage). Until then `FilletOp` resolver
-  behavior stays as `TopologyChangingOperator`.
+  historical note for chamfer `FilletOp` output identity. ADR-120
+  unparked tessellation face-label propagation for cad-projection:
+  inherited upstream triangles keep their labels and chamfer caps are
+  `TopologyFaceId::DEGENERATE`. Stable B-Rep IDs for chamfer caps
+  remain deferred until a cap-face consumer appears.
 - **[`RGE_Multi_Agent_Orchestration.md`](./RGE_Multi_Agent_Orchestration.md)** —
   codified workflow protocol for multi-agent orchestration: the
   Decision / Orchestrator / Execution role split, `NEXT_ACTION` labels,

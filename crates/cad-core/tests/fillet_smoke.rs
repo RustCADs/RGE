@@ -20,7 +20,7 @@
 use rge_cad_core::{
     brep_edge_ids_for_node, brep_face_ids_for_node, BRepEdgeId, BRepEdgeProvider, BRepFaceId,
     BRepOwnerId, BRepProvider, CadGraph, CuboidOp, FilletError, FilletOp, Operator, OperatorNode,
-    TessellationCache, Tolerance,
+    Tessellation, TessellationCache, Tolerance, TopologyFaceId,
 };
 
 fn unit_cube() -> CuboidOp {
@@ -140,7 +140,53 @@ fn fillet_rebuild_produces_same_structural_delta_across_sizes() {
     assert_eq!(out_b.indices.len(), cube_b_tess.indices.len() + 6);
 }
 
-/// End-to-end Cuboid → Fillet through `CadGraph`/`OperatorGraph`
+/// Labeled upstream triangles keep their face labels through chamfer
+/// `FilletOp`, while the newly appended chamfer-cap triangles are marked
+/// `DEGENERATE` because they have no stable upstream `BRepFaceId`.
+#[test]
+fn fillet_preserves_upstream_face_labels_and_marks_chamfer_caps_degenerate() {
+    let owner = BRepOwnerId::from_bytes([0x6a; 16]);
+    let cube = unit_cube();
+    let edge_id = cube.brep_edge_ids(owner)[0];
+    let fillet = FilletOp::new(&cube, owner, vec![edge_id], 0.1).expect("fillet");
+
+    let cube_tess = cube.evaluate(&[]).expect("cube tess");
+    let upstream_labels = cube_tess
+        .face_labels()
+        .expect("CuboidOp emits labeled tessellation");
+    assert_eq!(upstream_labels.len(), 12);
+    assert!(fillet.output_is_labeled(&[true]));
+    assert!(!fillet.output_is_labeled(&[false]));
+
+    let out = fillet.evaluate(&[&cube_tess]).expect("fillet output");
+    let out_labels = out
+        .face_labels()
+        .expect("labeled upstream should produce labeled fillet output");
+    assert_eq!(out.triangle_count(), 14);
+    assert_eq!(out_labels.len(), out.triangle_count());
+    assert_eq!(
+        &out_labels[..upstream_labels.len()],
+        upstream_labels,
+        "upstream triangle labels must pass through unchanged"
+    );
+    assert_eq!(
+        &out_labels[upstream_labels.len()..],
+        &[TopologyFaceId::DEGENERATE, TopologyFaceId::DEGENERATE],
+        "new chamfer-cap triangles are nameless output-side geometry"
+    );
+
+    let unlabeled = Tessellation::new(cube_tess.positions.clone(), cube_tess.indices.clone())
+        .expect("unlabeled cube copy");
+    let out_unlabeled = fillet
+        .evaluate(&[&unlabeled])
+        .expect("fillet output from unlabeled input");
+    assert!(
+        out_unlabeled.face_labels().is_none(),
+        "unlabeled upstream must remain unlabeled"
+    );
+}
+
+/// End-to-end Cuboid -> Fillet through `CadGraph`/`OperatorGraph`
 /// evaluates and produces a well-formed tessellation.
 #[test]
 fn fillet_through_operator_graph_evaluates_correctly() {

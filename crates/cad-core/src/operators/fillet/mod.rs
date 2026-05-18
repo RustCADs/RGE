@@ -36,8 +36,9 @@
 //!   output mesh and inherits its `BRepFaceId` via
 //!   [`crate::topology::resolve::brep_face_ids_for_node`]'s
 //!   identity-preserving arm (D-Fillet sub-ε.α). Chamfer-cap
-//!   triangles remain unnamed; a future direct `BRepProvider` impl
-//!   with cap-face IDs is sub-ε.γ scope.
+//!   triangles remain unnamed at the stable B-Rep layer; when the
+//!   upstream tessellation is labeled, they are emitted as
+//!   [`TopologyFaceId::DEGENERATE`].
 //! * No `impl BRepEdgeProvider for FilletOp`. Edge identity flows via
 //!   the graph-level resolver with filtered inheritance —
 //!   [`crate::topology::edge_resolve::brep_edge_ids_for_node`] recurses
@@ -93,8 +94,10 @@
 //!   edges; filleted edges are excluded because they lose 2-endpoint
 //!   geometry under chamfering).
 //!
-//! Chamfer-cap triangles remain unnamed at both layers in v0 (no face
-//! ID, no edge ID minted for the cap geometry). Direct
+//! Chamfer-cap triangles remain unnamed at the stable B-Rep layer in
+//! v0 (no face ID, no edge ID minted for the cap geometry). When the
+//! upstream tessellation is labeled, their output-side tessellation
+//! labels are [`TopologyFaceId::DEGENERATE`]. Direct
 //! [`crate::topology::BRepProvider`] /
 //! [`crate::topology::BRepEdgeProvider`] impls on FilletOp itself are
 //! sub-ε.γ scope.
@@ -102,7 +105,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::operators::{OpError, OpKind, Operator};
-use crate::tessellation::Tessellation;
+use crate::tessellation::{Tessellation, TopologyFaceId};
 use crate::topology::{BRepEdgeId, BRepEdgeProvider, BRepOwnerId};
 
 mod cuboid;
@@ -371,6 +374,7 @@ impl Operator for FilletOp {
         let upstream = inputs[0];
         let mut positions = upstream.positions.clone();
         let mut indices = upstream.indices.clone();
+        let mut face_labels = upstream.face_labels.clone();
 
         // For each filleted edge, locate its 2 endpoint corners in
         // the upstream's vertex array and add 2 chamfer-cap triangles.
@@ -426,20 +430,28 @@ impl Operator for FilletOp {
             indices.push(spec.vertex_b);
             indices.push(offset_b_idx);
             indices.push(offset_a_idx);
+
+            if let Some(labels) = face_labels.as_mut() {
+                labels.push(TopologyFaceId::DEGENERATE);
+                labels.push(TopologyFaceId::DEGENERATE);
+            }
         }
 
-        Tessellation::new(positions, indices)
-            .map_err(|e| OpError::InvalidParameter(format!("fillet output invalid: {e}")))
+        let result = if let Some(labels) = face_labels {
+            Tessellation::with_labels(positions, indices, labels)
+        } else {
+            Tessellation::new(positions, indices)
+        };
+        result.map_err(|e| OpError::InvalidParameter(format!("fillet output invalid: {e}")))
     }
 
-    /// `FilletOp::evaluate` calls [`Tessellation::new`] on the
-    /// extended positions, which produces an unlabeled output
-    /// regardless of whether the upstream input carried
-    /// `face_labels`. Mirrors [`crate::operators::TransformOp`]'s
-    /// label-stripping override so the cache-key prediction matches
-    /// reality.
-    fn output_is_labeled(&self, _inputs_labeled: &[bool]) -> bool {
-        false
+    /// `FilletOp::evaluate` preserves labels for labeled upstream
+    /// input: upstream triangles keep their original labels and the
+    /// appended chamfer-cap triangles are marked
+    /// [`TopologyFaceId::DEGENERATE`]. Unlabeled input remains
+    /// unlabeled.
+    fn output_is_labeled(&self, inputs_labeled: &[bool]) -> bool {
+        inputs_labeled.first().copied().unwrap_or(false)
     }
 }
 
@@ -557,16 +569,15 @@ mod tests {
         ));
     }
 
-    /// `FilletOp::evaluate` strips labels (calls `Tessellation::new`
-    /// which always produces an unlabeled mesh) — so
-    /// `output_is_labeled` must return `false` regardless of input
-    /// label state. Mirrors `TransformOp::transform_output_is_labeled_strips`.
+    /// `FilletOp::evaluate` preserves labels for labeled input and keeps
+    /// unlabeled input unlabeled, so `output_is_labeled` mirrors the single
+    /// upstream input state.
     #[test]
-    fn output_is_labeled_strips() {
+    fn output_is_labeled_preserves_input_labeling() {
         let cube = unit_cube();
         let edge = cube.brep_edge_ids(owner())[0];
         let op = FilletOp::new(&cube, owner(), vec![edge], 0.1).expect("ok");
         assert!(!op.output_is_labeled(&[false]));
-        assert!(!op.output_is_labeled(&[true]));
+        assert!(op.output_is_labeled(&[true]));
     }
 }

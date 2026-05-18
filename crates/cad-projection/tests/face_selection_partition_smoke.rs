@@ -15,13 +15,11 @@
 //!    (Extrude).** Square → Pentagon rebuilds preserve Bottom + Top (which
 //!    are categorical per D-7.2-β) but invalidate the 4 square Side
 //!    selections (Side IDs include `profile_count` in the tag).
-//! 4. **LOAD-BEARING — filleted output invalidates everything.** Per
-//!    `docs/architecture/FILLET_OUTPUT_IDENTITY.md`, FilletOp emits an
-//!    unlabeled tessellation AND the resolver classifies Fillet as
-//!    topology-changing — so all FaceSelections built from the pre-fillet
-//!    cuboid IDs land in invalidated when partitioned against the filleted
-//!    projection. This test makes the parked design note's "trigger 1:
-//!    cad-projection integration" actively exercised.
+//! 4. **LOAD-BEARING — filleted output preserves upstream face selections.**
+//!    FilletOp preserves inherited Cuboid face labels and marks chamfer caps
+//!    `TopologyFaceId::DEGENERATE`, so FaceSelections built from pre-fillet
+//!    cuboid IDs remain in survivors when partitioned against the filleted
+//!    projection.
 //! 5. Owner mismatch invalidates everything (the entity's
 //!    `BRepHandle.brep_owner` is set to a different owner than the
 //!    selections were minted under).
@@ -305,7 +303,7 @@ fn face_selection_partition_invalidates_side_selections_on_profile_count_change(
     );
 }
 
-/// **LOAD-BEARING — filleted output invalidates everything.**
+/// **LOAD-BEARING — filleted output preserves upstream face selections.**
 ///
 /// Build a `Cuboid → Fillet` graph and bind the entity to the FILLET node.
 /// Capture the 6 cuboid face IDs as a FaceSelectionSet (built from the
@@ -313,19 +311,12 @@ fn face_selection_partition_invalidates_side_selections_on_profile_count_change(
 /// well-formed `BRepFaceId`). Partition the set against the filleted
 /// projection.
 ///
-/// Per `docs/architecture/FILLET_OUTPUT_IDENTITY.md`:
-///
-/// 1. `FilletOp::evaluate` produces an unlabeled `Tessellation`
-///    (`face_labels` is `None` in the projected mesh).
-/// 2. The resolver classifies `FilletOp` as `TopologyChangingOperator`.
-///
-/// Both gaps land every selection in the invalidated set. This test makes
-/// the parked design note's "trigger 1: cad-projection integration"
-/// concretely visible: the substrate is honest about the gap, the
-/// design note stays parked, and the consumer pressure is now in test
-/// code.
+/// FilletOp preserves inherited Cuboid labels and the face resolver inherits
+/// Cuboid `BRepFaceId`s through the Fillet root. The pre-fillet face
+/// selections therefore remain resolvable; only chamfer-cap triangles are
+/// `TopologyFaceId::DEGENERATE` and nameless.
 #[test]
-fn face_selection_partition_invalidates_all_on_filleted_output() {
+fn face_selection_partition_preserves_upstream_faces_on_filleted_output() {
     // Build a Cuboid → Fillet graph, with the entity bound to the FILLET
     // root (so the projected mesh is the filleted output).
     let mut graph = CadGraph::new();
@@ -388,15 +379,13 @@ fn face_selection_partition_invalidates_all_on_filleted_output() {
     });
     assert_eq!(
         survivors.len(),
-        0,
-        "filleted output is identity-opaque per FILLET_OUTPUT_IDENTITY.md \
-         (FilletOp emits unlabeled output AND resolver returns \
-         TopologyChangingOperator)"
+        6,
+        "FilletOp should preserve all upstream Cuboid face selections"
     );
     assert_eq!(
         invalidated.len(),
-        6,
-        "all pre-fillet face selections must invalidate when projection is filleted"
+        0,
+        "no upstream Cuboid face selection should invalidate through FilletOp"
     );
 }
 

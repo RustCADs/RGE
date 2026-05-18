@@ -7,11 +7,11 @@
 //!
 //! [`CadProjection::pick_face`] returns the **closest *resolvable* face hit**,
 //! not the closest geometric triangle hit. The distinction matters: a front
-//! Fillet / Boolean / Sweep surface emits unlabeled tessellation (or its
-//! source operator is classified [`TopologyChangingOperator`] from the
-//! resolver's perspective), so its triangles do **not** produce a
-//! [`BRepFaceId`]. Such triangles are **transparent** to the picker — they
-//! do NOT mask resolvable faces behind them.
+//! hit whose entity has no owner, whose mesh has no labels, whose triangle is
+//! labeled `TopologyFaceId::DEGENERATE`, or whose source operator cannot be
+//! resolved does **not** produce a [`BRepFaceId`]. Such triangles are
+//! **transparent** to the picker — they do NOT mask resolvable faces behind
+//! them.
 //!
 //! Algorithm (per-call, no caching, no acceleration structure):
 //!
@@ -34,15 +34,11 @@
 //!
 //! # Substrate posture
 //!
-//! Picking is the first selection-side substrate consumer of the
-//! D-projection-α/β/γ/δ face-ID propagation. For a Cuboid the picker resolves
-//! every front-facing triangle; for a Cuboid → Fillet output the picker
-//! returns `None` (every triangle's `brep_face_id_for_triangle` is `None`,
-//! and the rule says return `None` rather than fabricate identity). The
-//! parked [`FILLET_OUTPUT_IDENTITY.md`] design note's gap is now visible
-//! through the picker too — `face_picking_smoke.rs::pick_returns_none_for_filleted_only_geometry`
-//! references it explicitly. **The design note STAYS PARKED** — the picker
-//! demonstrates the gap, it does not close it.
+//! Picking is a selection-side substrate consumer of the
+//! D-projection-α/β/γ/δ face-ID propagation plus ADR-120's chamfer
+//! `FilletOp` label propagation. For a Cuboid -> Fillet output, inherited
+//! upstream triangles resolve to stable face IDs and chamfer-cap triangles
+//! labeled `TopologyFaceId::DEGENERATE` remain transparent.
 //!
 //! [`FILLET_OUTPUT_IDENTITY.md`]: ../../../../docs/architecture/FILLET_OUTPUT_IDENTITY.md
 //! [`TopologyChangingOperator`]: rge_cad_core::BRepResolveError::TopologyChangingOperator

@@ -15,21 +15,16 @@
 //!    ID resolved at a different parameter set with the same owner. This is
 //!    the cad-projection consumer-pressure test for the D-7.2-α
 //!    rebuild-stability contract.
-//! 6. **THE LOAD-BEARING PRESSURE TEST**: Cuboid → Fillet output is
-//!    identity-opaque. Every triangle returns `None` because `FilletOp`
-//!    emits an unlabeled `Tessellation` AND the resolver classifies Fillet
-//!    as a topology-changing operator. This test makes the
-//!    [`docs/architecture/FILLET_OUTPUT_IDENTITY.md`](../../../../docs/architecture/FILLET_OUTPUT_IDENTITY.md)
-//!    parked design note's gap concrete in code. When output-side identity
-//!    for `FilletOp` is designed, this test will need to be updated to
-//!    reflect the new behaviour — that's the substrate's contract until
-//!    then.
+//! 6. **LOAD-BEARING: Cuboid -> Fillet face lookup.** Inherited upstream
+//!    triangles resolve to the upstream Cuboid face IDs, while appended
+//!    chamfer-cap triangles labeled `TopologyFaceId::DEGENERATE` resolve
+//!    to `None`.
 //! 7. Distinct owners produce disjoint face IDs even through the same
 //!    projected entity.
 
 use rge_cad_core::{
     BRepEdgeProvider, BRepFaceId, BRepOwnerId, BRepProvider, CadGraph, CuboidOp, FilletOp,
-    OperatorNode, Tolerance,
+    OperatorNode, Tolerance, TopologyFaceId,
 };
 use rge_cad_projection::{BRepHandle, CadProjection};
 use rge_kernel_ecs::{EntityId, World};
@@ -244,30 +239,11 @@ fn cuboid_face_ids_stable_across_parameter_rebuilds() {
     );
 }
 
-/// **THE LOAD-BEARING PRESSURE TEST** — Cuboid → Fillet output is
-/// identity-opaque.
-///
-/// This test EXISTS to make the
-/// [`docs/architecture/FILLET_OUTPUT_IDENTITY.md`](../../../../docs/architecture/FILLET_OUTPUT_IDENTITY.md)
-/// parked design note's gap concrete in code. Project a Cuboid → Fillet
-/// chain; every triangle returns `None` because:
-///
-/// 1. `FilletOp::evaluate` uses `Tessellation::new` (unlabeled output),
-///    so `face_labels` is `None` on the projected mesh.
-/// 2. Even if `face_labels` were `Some`, the resolver returns
-///    `TopologyChangingOperator` for `FilletOp`.
-///
-/// Both gaps are visible in this test. When output-side identity for
-/// `FilletOp` is designed (per `FILLET_OUTPUT_IDENTITY.md`'s trigger
-/// conditions — `cad-projection` integration is listed as the most likely
-/// first trigger, and **THIS DISPATCH is that integration**), this test
-/// will need updating to reflect the new behaviour.
-///
-/// Substrate-validation contract: this dispatch supplies the
-/// pressure-on-the-parked-question, NOT the answer. The parked question
-/// stays parked.
+/// Cuboid -> Fillet output resolves inherited upstream face labels through
+/// the Fillet root, while appended chamfer-cap triangles remain nameless
+/// `DEGENERATE` geometry and resolve to `None`.
 #[test]
-fn cuboid_through_fillet_returns_none_for_all_triangles_pressure_test() {
+fn cuboid_through_fillet_resolves_upstream_faces_and_degenerate_caps() {
     let mut graph = CadGraph::new();
     graph.begin_operation().expect("begin");
     let cuboid = CuboidOp {
@@ -314,19 +290,67 @@ fn cuboid_through_fillet_returns_none_for_all_triangles_pressure_test() {
     projection.tick(&mut world, &graph, tol()).expect("tick");
 
     let mesh = projection.projected_mesh(entity).expect("mesh");
-    // The mesh has 12 (cuboid) + 2 (chamfer) = 14 triangles, but
-    // `face_labels` should be `None` because FilletOp::evaluate uses
-    // Tessellation::new (unlabeled). All triangles return None.
-    assert!(
-        mesh.face_labels.is_none(),
-        "FilletOp output must be unlabeled (substrate honesty: face identity is opaque)"
+    let face_labels = mesh
+        .face_labels
+        .as_ref()
+        .expect("FilletOp should preserve labels from labeled Cuboid input");
+    assert_eq!(
+        mesh.triangle_count(),
+        14,
+        "Cuboid + one chamfer edge emits 12 upstream triangles + 2 chamfer caps"
     );
-    for tri in 0..mesh.triangle_count() {
-        assert_eq!(
-            projection.brep_face_id_for_triangle(entity, tri, &world, graph.graph()),
-            None,
-            "triangle {tri}: filleted output is identity-opaque per FILLET_OUTPUT_IDENTITY.md"
+    assert_eq!(
+        face_labels.len(),
+        mesh.triangle_count(),
+        "one face label per projected triangle"
+    );
+
+    let direct_pairs = cuboid.brep_face_ids(TEST_OWNER);
+    assert_eq!(direct_pairs.len(), 6);
+    let non_degenerate: Vec<TopologyFaceId> = face_labels
+        .iter()
+        .copied()
+        .filter(|label| *label != TopologyFaceId::DEGENERATE)
+        .collect();
+    assert_eq!(
+        non_degenerate.len(),
+        12,
+        "the original 12 Cuboid triangles keep their labels"
+    );
+    assert!(
+        face_labels
+            .iter()
+            .any(|label| *label == TopologyFaceId::DEGENERATE),
+        "the appended chamfer caps must be marked DEGENERATE"
+    );
+
+    for (topo, _) in &direct_pairs {
+        assert!(
+            non_degenerate.contains(topo),
+            "Cuboid face {topo:?} must survive as an inherited Fillet label"
         );
+    }
+
+    for tri in 0..mesh.triangle_count() {
+        let label = face_labels[tri];
+        let resolved = projection.brep_face_id_for_triangle(entity, tri, &world, graph.graph());
+        if label == TopologyFaceId::DEGENERATE {
+            assert_eq!(
+                resolved, None,
+                "triangle {tri}: chamfer-cap geometry has no stable BRepFaceId"
+            );
+        } else {
+            let expected = direct_pairs
+                .iter()
+                .find(|(topo, _)| *topo == label)
+                .map(|(_, id)| *id)
+                .unwrap_or_else(|| panic!("triangle {tri}: unknown inherited label {label:?}"));
+            assert_eq!(
+                resolved,
+                Some(expected),
+                "triangle {tri}: inherited Fillet label must resolve to upstream Cuboid face id"
+            );
+        }
     }
 }
 

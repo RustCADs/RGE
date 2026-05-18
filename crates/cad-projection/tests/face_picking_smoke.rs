@@ -25,20 +25,14 @@
 //!    with `brep_owner == None` (mutated post-spawn). Even though the
 //!    geometry intersects, the picker filters such entities out at iteration
 //!    time and returns `None`.
-//! 4. `pick_returns_none_for_filleted_only_geometry` — `Cuboid → Fillet`
-//!    chain bound to a single entity. The fillet emits unlabeled
-//!    tessellation AND the resolver classifies `FilletOp` as
-//!    `TopologyChangingOperator` — so every triangle's
-//!    `brep_face_id_for_triangle` is `None`, and the picker returns `None`.
-//!    See `docs/architecture/FILLET_OUTPUT_IDENTITY.md` for the parked
-//!    design note that documents this gap. The note STAYS PARKED — this
-//!    test demonstrates the gap, it does not close it.
+//! 4. `pick_resolves_filleted_geometry_top_face` — `Cuboid -> Fillet`
+//!    chain bound to a single entity. Inherited Cuboid labels resolve
+//!    through the Fillet root, so the picker returns the inherited +Z face.
 //! 5. `pick_punches_through_unresolvable_to_resolvable_behind` ← LOAD-BEARING
-//!    for the closest-resolvable rule. Two entities: a fillet-output entity
-//!    (front in `t`-order, unresolvable) and a plain cuboid entity (deeper
-//!    in `t`-order, resolvable). Ray from above. The picker MUST return the
-//!    cuboid hit, NOT `None` — the unresolvable fillet hits are walked past
-//!    transparently.
+//!    for the closest-resolvable rule. Two entities: a front entity with no
+//!    `brep_owner` (unresolvable) and a plain cuboid entity deeper in
+//!    `t`-order (resolvable). Ray from above. The picker MUST return the
+//!    cuboid hit; unresolvable front hits are walked past transparently.
 //! 6. `pick_returns_none_when_ray_misses_all_geometry` — ray pointing into
 //!    empty space → `None`.
 //!
@@ -252,18 +246,10 @@ fn pick_returns_none_when_owner_missing() {
     );
 }
 
-/// **Test 4** — `Cuboid → Fillet` output: every triangle's
-/// `brep_face_id_for_triangle` returns `None` (FilletOp emits unlabeled
-/// tessellation AND the resolver classifies `FilletOp` as
-/// `TopologyChangingOperator`). The picker walks every hit, finds no
-/// resolution, and returns `None`.
-///
-/// See `docs/architecture/FILLET_OUTPUT_IDENTITY.md` for the parked design
-/// note that documents this gap. **The design note STAYS PARKED** — this
-/// test demonstrates the substrate-honest "no identity" path; it does NOT
-/// close the parked question.
+/// **Test 4** — `Cuboid -> Fillet` output: inherited Cuboid labels resolve
+/// through the Fillet root, so a ray from +Z picks the inherited +Z face.
 #[test]
-fn pick_returns_none_for_filleted_only_geometry() {
+fn pick_resolves_filleted_geometry_top_face() {
     let mut graph = CadGraph::new();
     graph.begin_operation().expect("begin");
     let cuboid = CuboidOp {
@@ -313,13 +299,15 @@ fn pick_returns_none_for_filleted_only_geometry() {
         origin: [0.0, 0.0, 5.0],
         direction: [0.0, 0.0, -1.0],
     };
-    let pick = projection.pick_face(&ray, &world, graph.graph());
-    assert!(
-        pick.is_none(),
-        "fillet output is identity-opaque per FILLET_OUTPUT_IDENTITY.md \
-         (FilletOp emits unlabeled output AND resolver returns \
-         TopologyChangingOperator); picker must return None even though \
-         geometry hits"
+    let pick = projection
+        .pick_face(&ray, &world, graph.graph())
+        .expect("filleted Cuboid should resolve inherited face identity");
+    assert_eq!(pick.entity, entity);
+    assert_eq!(pick.owner, ENTITY_OWNER);
+    assert_eq!(
+        pick.face_id,
+        BRepFaceId::for_cuboid_face(ENTITY_OWNER, CuboidFaceTag::PosZ),
+        "ray from +Z should resolve the inherited Cuboid +Z face through FilletOp"
     );
 }
 
@@ -390,13 +378,14 @@ fn pick_punches_through_unresolvable_to_resolvable_behind() {
     let mut world = World::new();
     world.register_snapshot_component::<BRepHandle>();
 
-    // Spawn front (fillet) entity bound to the fillet root node.
+    // Spawn front (fillet) entity bound to the fillet root node, then
+    // leave its owner empty so its geometric hits stay unresolvable.
     let front_entity = projection
         .spawn_brep_entity(&mut world, front_fillet_node)
         .expect("spawn front");
     if let Some(mut em) = world.entity_mut(front_entity) {
         if let Some(mut handle) = em.get_mut::<BRepHandle>() {
-            handle.brep_owner = Some(ENTITY_OWNER);
+            handle.brep_owner = None;
         }
     }
     // Spawn behind (plain cuboid) entity.

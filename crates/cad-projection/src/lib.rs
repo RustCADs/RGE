@@ -160,13 +160,12 @@ impl CadProjection {
     /// * `entity` has no [`BRepHandle`] component, OR
     /// * the entity's `BRepHandle.brep_owner` is `None`, OR
     /// * the entity has no projected mesh in the cache, OR
-    /// * the projected mesh has no `face_labels` (the upstream
-    ///   `Tessellation` was unlabeled — e.g. `FilletOp` output, or any
-    ///   operator other than `CuboidOp` as of D-projection-α), OR
+    /// * the projected mesh has no `face_labels` because the evaluated
+    ///   tessellation was unlabeled, OR
     /// * `triangle_idx` is out of bounds for the projected mesh, OR
     /// * the resolver cannot resolve the source node's face IDs (e.g. the
     ///   source operator is `TopologyChangingOperator` from the resolver's
-    ///   perspective — `FilletOp`, `BooleanOp`, `SweepOp`).
+    ///   perspective, such as `BooleanOp`).
     ///
     /// Resolution is **lazy**: each call invokes
     /// [`rge_cad_core::brep_face_ids_for_node`] and matches the projected
@@ -179,12 +178,9 @@ impl CadProjection {
     ///
     /// This is the first cad-projection consumer of B-Rep face identity.
     /// For Cuboid roots, the answer is `Some(stable_brep_face_id)` for
-    /// every triangle. For Cuboid → Fillet roots, the answer is `None`
-    /// for every triangle — Fillet emits an unlabeled output AND the
-    /// resolver classifies Fillet as a topology-changing operator.
-    /// That double-`None` is the visible substrate-pressure on the
-    /// `FILLET_OUTPUT_IDENTITY.md` parked design note (NOT an answer to
-    /// it; the parked question stays parked).
+    /// every triangle. For Cuboid -> Fillet roots, inherited upstream
+    /// triangles resolve to `Some(stable_brep_face_id)` and chamfer-cap
+    /// triangles labeled `TopologyFaceId::DEGENERATE` resolve to `None`.
     #[must_use]
     pub fn brep_face_id_for_triangle(
         &self,
@@ -643,7 +639,7 @@ impl SnapshotParticipate for CadProjection {
 mod tests {
     use rge_cad_core::{
         BRepEdgeProvider, BRepFaceId, BRepOwnerId, BRepProvider, CuboidFaceTag, CuboidOp, FilletOp,
-        OperatorNode,
+        OperatorNode, TopologyFaceId,
     };
     use rge_kernel_ecs::World;
 
@@ -882,13 +878,12 @@ mod tests {
         );
     }
 
-    /// Cuboid → Fillet output: the cached `ProjectedMesh.face_labels` is
-    /// `None` (FilletOp emits unlabeled tessellation per
-    /// `FILLET_OUTPUT_IDENTITY.md`), so `face_triangle_indices` returns an
-    /// empty `Vec` for any face_id queried. Mirrors
-    /// `render_adapter::tests::render_mesh_face_labels_none_for_unlabeled_filleted_output`.
+    /// Cuboid -> Fillet output: inherited Cuboid face labels remain
+    /// resolvable while chamfer-cap triangles are labeled
+    /// `TopologyFaceId::DEGENERATE` and do not resolve to a stable
+    /// `BRepFaceId`.
     #[test]
-    fn face_triangle_indices_unlabeled_mesh_returns_empty() {
+    fn face_triangle_indices_resolves_inherited_faces_through_fillet() {
         let mut graph = CadGraph::new();
         graph.begin_operation().expect("begin");
         let cuboid = CuboidOp {
@@ -934,20 +929,29 @@ mod tests {
         }
         projection.tick(&mut world, &graph, tol()).expect("tick");
 
-        // Sanity: ProjectedMesh has face_labels = None for the filleted output.
+        // Sanity: ProjectedMesh preserves the Cuboid labels through Fillet,
+        // with the appended chamfer caps marked DEGENERATE.
         let mesh = projection.projected_mesh(entity).expect("mesh");
+        let labels = mesh
+            .face_labels
+            .as_ref()
+            .expect("FilletOp should preserve labels from labeled Cuboid input");
+        assert_eq!(labels.len(), mesh.triangle_count());
         assert!(
-            mesh.face_labels.is_none(),
-            "precondition: FilletOp output has face_labels = None"
+            labels
+                .iter()
+                .any(|label| *label == TopologyFaceId::DEGENERATE),
+            "FilletOp chamfer caps should be marked DEGENERATE"
         );
 
-        // Query with any of the upstream cuboid's face IDs — all yield empty.
+        // Query with any of the upstream cuboid's face IDs; every face
+        // still has its two original triangles in the filleted output.
         for (_, face_id) in cuboid.brep_face_ids(TEST_OWNER) {
             let indices = projection.face_triangle_indices(entity, &world, graph.graph(), face_id);
-            assert!(
-                indices.is_empty(),
-                "filleted output is identity-opaque; all face_triangle_indices queries return empty Vec; got {} indices",
-                indices.len()
+            assert_eq!(
+                indices.len(),
+                6,
+                "inherited Cuboid face should resolve to two dense triangles"
             );
         }
     }

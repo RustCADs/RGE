@@ -193,12 +193,17 @@ Per D7, sub-α targets `Cuboid` with **single-edge fillets only** (no corner ble
 
 ### What this ADR DOES NOT change
 
-- **Chamfer `FilletOp`**: byte-identical to its current state (post-sub-ε.α/β). All existing tests + behavior preserved.
+- **Chamfer `FilletOp`**: ADR-119 did not change it. Later ADR-120
+  changed only tessellation face-label propagation for labeled input; the
+  chamfer operator remains separate from `RoundFilletOp` and still does not
+  mint stable B-Rep IDs for chamfer caps.
 - **PLAN §5.6 / §7.1 targets**: unchanged; PLAN already commits to `Fillet` in Months 7-12.
 - **`BRepEdgeId::for_face_pair` derivation**: unchanged; shape-agnostic identity derivation already supports curved-edge inheritance per D2.
 - **`BRepFaceId` derivation**: unchanged; identity = semantic surface already supported per D4.
 - **Topology lineage substrate (ADR-098)**: `TopologyEvolution` enum + the `topo_lineage` module — unchanged; `RoundFilletOp`'s topology-preserving nature fits the `Preserved` variant verbatim.
-- **`docs/architecture/FILLET_OUTPUT_IDENTITY.md`**: stays PARKED as historical context. Its open-questions section is partially superseded by sub-ε.α/β (for chamfer) and this ADR (for round fillet); a future docs-only dispatch could either retire it or annotate it with the supersession trail — not this ADR's scope.
+- **`docs/architecture/FILLET_OUTPUT_IDENTITY.md`**: was parked when this ADR
+  landed. ADR-120 later updated it to record chamfer `FilletOp` face-label
+  propagation and the still-deferred cap-face stable-ID question.
 
 ### Workspace + test-count impact projection (subsequent dispatches; not this ADR)
 

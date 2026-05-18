@@ -114,6 +114,7 @@ impl CadProjection {
 mod tests {
     use rge_cad_core::{
         BRepEdgeProvider, BRepOwnerId, CadGraph, CuboidOp, FilletOp, OperatorNode, Tolerance,
+        TopologyFaceId,
     };
     use rge_kernel_ecs::World;
 
@@ -289,10 +290,10 @@ mod tests {
         }
     }
 
-    /// Test 5 — Cuboid → Fillet entity → `RenderMesh.face_labels.is_none()`.
-    /// FilletOp emits unlabeled tessellation per existing chapter contract.
+    /// Test 5 — Cuboid -> Fillet entity -> `RenderMesh.face_labels.is_some()`.
+    /// Inherited Cuboid labels propagate and chamfer caps are DEGENERATE.
     #[test]
-    fn render_mesh_face_labels_none_for_unlabeled_filleted_output() {
+    fn render_mesh_face_labels_some_for_labeled_filleted_output() {
         let mut graph = CadGraph::new();
         graph.begin_operation().expect("begin");
         let cuboid = CuboidOp {
@@ -340,9 +341,20 @@ mod tests {
         let mesh = projection
             .render_mesh_for(entity, &world)
             .expect("Fillet output still produces a RenderMesh — geometry is valid, only identity is opaque");
+        let labels = mesh
+            .face_labels
+            .as_ref()
+            .expect("FilletOp should preserve labels from labeled Cuboid input");
+        assert_eq!(
+            labels.len(),
+            14,
+            "FilletOp emits 12 inherited Cuboid triangles + 2 chamfer caps"
+        );
         assert!(
-            mesh.face_labels.is_none(),
-            "FilletOp emits unlabeled tessellation per existing chapter contract; face_labels must be None"
+            labels
+                .iter()
+                .any(|label| *label == TopologyFaceId::DEGENERATE.0),
+            "chamfer-cap triangles should be marked DEGENERATE"
         );
         // Sanity: positions / indices / normals still populate.
         assert!(!mesh.positions.is_empty());
