@@ -76,7 +76,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::operators::{OpError, OpKind, Operator, Polygon2D};
-use crate::tessellation::Tessellation;
+use crate::tessellation::{Tessellation, TopologyFaceId};
 
 // ---------------------------------------------------------------------------
 // Polyline3DError
@@ -404,9 +404,53 @@ impl Operator for SweepOp {
             }
         }
 
-        Tessellation::new(positions, indices).map_err(|e| {
+        // Per-triangle face labels in the canonical emission order that
+        // mirrors the index-buffer construction above:
+        //
+        //   * First cap  — `n - 2` triangles, all `TopologyFaceId(0)`.
+        //   * Last cap   — `n - 2` triangles, all `TopologyFaceId(1)`.
+        //   * Side(k, i) — for emitted path segment `k in 0..m-1` and
+        //     profile edge `i in 0..n`, the 2 triangles of that side quad
+        //     are both labeled `TopologyFaceId(2 + (k * n + i))`.
+        //
+        // Total `face_labels.len() == 2 * (n - 2) + 2 * n * (m - 1)`,
+        // matching `triangle_count`. This follows the `ExtrudeOp` /
+        // `LoftOp` cap-`0` / cap-`1` / side substrate pattern, extended so
+        // side identity advances by emitted path segment before profile
+        // edge (segment-major, edge-major) across the `m - 1` segments.
+        let mut face_labels: Vec<TopologyFaceId> = Vec::with_capacity(cap_tris + side_tris);
+        // First cap: n-2 triangles all labeled TopologyFaceId(0).
+        for _ in 0..(n - 2) {
+            face_labels.push(TopologyFaceId(0));
+        }
+        // Last cap: n-2 triangles all labeled TopologyFaceId(1).
+        for _ in 0..(n - 2) {
+            face_labels.push(TopologyFaceId(1));
+        }
+        // Side walls: 2 triangles per side quad, in the same segment-major
+        // / edge-major order the side index buffer was emitted.
+        for k in 0..(m - 1) {
+            for i in 0..n {
+                let side_label = TopologyFaceId(2 + (k * n + i) as u64);
+                face_labels.push(side_label);
+                face_labels.push(side_label);
+            }
+        }
+
+        Tessellation::with_labels(positions, indices, face_labels).map_err(|e| {
             OpError::InvalidParameter(format!("sweep produced invalid tessellation: {e}"))
         })
+    }
+
+    /// Override the default `inputs_labeled.iter().any(...)` because
+    /// [`Self::evaluate`] ALWAYS emits a labeled `Tessellation` — irrespective
+    /// of input labeling (`SweepOp` has arity 0, so the input slice is always
+    /// empty anyway). The cache-key contract is "`output_is_labeled` MUST
+    /// match the actual `evaluate` output's [`Tessellation::is_labeled`]";
+    /// `evaluate` now emits canonical per-triangle `TopologyFaceId` labels,
+    /// so this override returns `true` unconditionally to match.
+    fn output_is_labeled(&self, _inputs_labeled: &[bool]) -> bool {
+        true
     }
 }
 
@@ -651,10 +695,106 @@ mod tests {
     }
 
     #[test]
-    fn sweep_output_is_labeled_returns_false() {
-        // Arity 0 — no inputs to be labeled. Default trait method correctly
-        // returns false (`.any` on empty slice is false).
+    fn sweep_output_is_labeled_returns_true() {
+        // `SweepOp::evaluate` ALWAYS emits a labeled `Tessellation`, so the
+        // `output_is_labeled` override returns `true` unconditionally to
+        // keep the cache-key contract consistent with `is_labeled()`.
         let op = SweepOp::new(unit_square(), z_path(&[0.0, 1.0]));
-        assert!(!op.output_is_labeled(&[]));
+        assert!(op.output_is_labeled(&[]));
+    }
+
+    // ----- SweepOp face labels -----
+
+    /// `SweepOp::evaluate` emits a labeled `Tessellation` for a 2-point
+    /// path: first-cap triangles are `TopologyFaceId(0)`, last-cap
+    /// triangles `TopologyFaceId(1)`, then side quads in profile-edge
+    /// order labeled `TopologyFaceId(2 + i)`. For a square profile
+    /// (`n = 4`, `m = 2`) the canonical order is two `0` triangles, two
+    /// `1` triangles, then four side quads `2, 3, 4, 5` (2 triangles
+    /// each), totalling 12 labels = `triangle_count`.
+    #[test]
+    fn sweep_emits_canonical_face_labels_for_2_point_path() {
+        let op = SweepOp::new(unit_square(), z_path(&[0.0, 1.0]));
+        let mesh = op.evaluate(&[]).expect("evaluate");
+        assert!(mesh.is_labeled(), "sweep output is labeled");
+        let labels = mesh.face_labels().expect("labeled");
+        assert_eq!(
+            labels.len(),
+            mesh.triangle_count(),
+            "one label per triangle"
+        );
+        assert_eq!(labels.len(), 12, "n=4, m=2 → 4n-4 = 12 triangles");
+
+        // First cap: 2 triangles all TopologyFaceId(0).
+        assert_eq!(labels[0], TopologyFaceId(0), "tri 0 is first cap");
+        assert_eq!(labels[1], TopologyFaceId(0), "tri 1 is first cap");
+        // Last cap: 2 triangles all TopologyFaceId(1).
+        assert_eq!(labels[2], TopologyFaceId(1), "tri 2 is last cap");
+        assert_eq!(labels[3], TopologyFaceId(1), "tri 3 is last cap");
+        // Side quads: 2 triangles each, edge i → TopologyFaceId(2 + i).
+        for i in 0..4u64 {
+            let tri_a = 4 + (i as usize) * 2;
+            let tri_b = tri_a + 1;
+            assert_eq!(
+                labels[tri_a],
+                TopologyFaceId(2 + i),
+                "side tri {tri_a} is face {}",
+                2 + i
+            );
+            assert_eq!(
+                labels[tri_b],
+                TopologyFaceId(2 + i),
+                "side tri {tri_b} is face {}",
+                2 + i
+            );
+        }
+    }
+
+    /// For a multi-segment path the side labels advance by emitted path
+    /// segment before profile edge (segment-major, edge-major). With a
+    /// triangle profile (`n = 3`) and a 3-point path (`m = 3`, two
+    /// segments), the side quads of segment 0 are `2, 3, 4` and of
+    /// segment 1 are `5, 6, 7`, each with 2 triangles, following the
+    /// `2 + (k * n + i)` rule. Caps remain `0` and `1`.
+    #[test]
+    fn sweep_emits_canonical_face_labels_for_multi_segment_path() {
+        let op = SweepOp::new(unit_triangle(), z_path(&[0.0, 1.0, 2.0]));
+        let mesh = op.evaluate(&[]).expect("evaluate");
+        assert!(mesh.is_labeled(), "sweep output is labeled");
+        let labels = mesh.face_labels().expect("labeled");
+        assert_eq!(
+            labels.len(),
+            mesh.triangle_count(),
+            "one label per triangle"
+        );
+        // n=3, m=3 → 2*(n-2) + 2*n*(m-1) = 2 + 12 = 14 triangles.
+        assert_eq!(labels.len(), 14, "n=3, m=3 → 14 triangles");
+
+        // First cap: n-2 = 1 triangle TopologyFaceId(0).
+        assert_eq!(labels[0], TopologyFaceId(0), "tri 0 is first cap");
+        // Last cap: n-2 = 1 triangle TopologyFaceId(1).
+        assert_eq!(labels[1], TopologyFaceId(1), "tri 1 is last cap");
+
+        // Side quads: segment-major, edge-major. For segment k and edge i,
+        // label is TopologyFaceId(2 + (k * 3 + i)). Two triangles each.
+        let n = 3u64;
+        for k in 0..2u64 {
+            for i in 0..n {
+                let quad_ordinal = (k * n + i) as usize;
+                let tri_a = 2 + quad_ordinal * 2;
+                let tri_b = tri_a + 1;
+                let expected = TopologyFaceId(2 + k * n + i);
+                assert_eq!(labels[tri_a], expected, "segment {k} edge {i} tri {tri_a}");
+                assert_eq!(labels[tri_b], expected, "segment {k} edge {i} tri {tri_b}");
+            }
+        }
+        // Spot-check the segment-before-edge ordering explicitly: segment 0
+        // is faces 2,3,4 and segment 1 is faces 5,6,7.
+        assert_eq!(labels[2], TopologyFaceId(2), "seg0 edge0");
+        assert_eq!(labels[4], TopologyFaceId(3), "seg0 edge1");
+        assert_eq!(labels[6], TopologyFaceId(4), "seg0 edge2");
+        assert_eq!(labels[8], TopologyFaceId(5), "seg1 edge0");
+        assert_eq!(labels[10], TopologyFaceId(6), "seg1 edge1");
+        assert_eq!(labels[12], TopologyFaceId(7), "seg1 edge2");
     }
 }
