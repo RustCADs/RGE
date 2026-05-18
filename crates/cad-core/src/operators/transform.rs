@@ -148,6 +148,14 @@ mod tests {
         .expect("quad ok")
     }
 
+    /// Build a 4-vertex / 2-triangle mesh from caller-supplied positions.
+    /// Unlike [`quad`], positions may carry non-zero Z so all three axes
+    /// are observable under rotation and non-uniform scale.
+    fn mesh(positions: Vec<[f32; 3]>) -> Tessellation {
+        assert_eq!(positions.len(), 4, "mesh() expects exactly 4 vertices");
+        Tessellation::new(positions, vec![0, 1, 2, 0, 2, 3]).expect("mesh ok")
+    }
+
     #[test]
     fn identity_transform_preserves_vertices_bit_identical() {
         let upstream = quad();
@@ -190,6 +198,73 @@ mod tests {
     }
 
     #[test]
+    fn rotation_y_90_deg_maps_xyz_to_z_y_neg_x() {
+        // +90 deg positive Y-axis rotation. Quaternion for a half-angle of
+        // 45 deg about +Y: [x, y, z, w] = [0, sin(45 deg), 0, cos(45 deg)]
+        // = [0, sqrt(0.5), 0, sqrt(0.5)].
+        let h = 0.5_f32.sqrt();
+        let upstream = mesh(vec![
+            [1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [2.0, 3.0, -1.0],
+            [-1.0, -2.0, 4.0],
+        ]);
+        let op = TransformOp {
+            rotation_quat_xyzw: [0.0, h, 0.0, h],
+            ..TransformOp::default()
+        };
+        let out = op.evaluate(&[&upstream]).expect("evaluate");
+
+        // Expected positions are hard-coded from the standard right-handed
+        // +90 deg Y rotation formula (x, y, z) -> (z, y, -x), NOT derived
+        // from TransformOp::evaluate.
+        let expected: [[f32; 3]; 4] = [
+            [0.0, 0.0, -1.0],
+            [1.0, 0.0, 0.0],
+            [-1.0, 3.0, -2.0],
+            [4.0, -2.0, 1.0],
+        ];
+        for (i, ([ex, ey, ez], [x, y, z])) in expected.iter().zip(out.positions.iter()).enumerate()
+        {
+            assert!((x - ex).abs() < 1e-5, "x mismatch at idx {i}: {x} vs {ex}");
+            assert!((y - ey).abs() < 1e-5, "y mismatch at idx {i}: {y} vs {ey}");
+            assert!((z - ez).abs() < 1e-5, "z mismatch at idx {i}: {z} vs {ez}");
+        }
+    }
+
+    #[test]
+    fn non_uniform_scale_multiplies_each_axis_independently() {
+        // Distinct per-axis scale factors so X, Y, and Z are each observable.
+        let (sx, sy, sz) = (2.0_f32, 3.0_f32, 4.0_f32);
+        let upstream = mesh(vec![
+            [1.0, 1.0, 1.0],
+            [2.0, 0.0, 1.0],
+            [0.0, 2.0, 3.0],
+            [1.0, 1.0, 2.0],
+        ]);
+        let op = TransformOp {
+            scale: [sx, sy, sz],
+            ..TransformOp::default()
+        };
+        let out = op.evaluate(&[&upstream]).expect("evaluate");
+
+        // Hard-coded expected positions = per-axis multiplication
+        // (x * sx, y * sy, z * sz).
+        let expected: [[f32; 3]; 4] = [
+            [2.0, 3.0, 4.0],
+            [4.0, 0.0, 4.0],
+            [0.0, 6.0, 12.0],
+            [2.0, 3.0, 8.0],
+        ];
+        for (i, ([ex, ey, ez], [x, y, z])) in expected.iter().zip(out.positions.iter()).enumerate()
+        {
+            assert!((x - ex).abs() < 1e-5, "x mismatch at idx {i}: {x} vs {ex}");
+            assert!((y - ey).abs() < 1e-5, "y mismatch at idx {i}: {y} vs {ey}");
+            assert!((z - ez).abs() < 1e-5, "z mismatch at idx {i}: {z} vs {ez}");
+        }
+    }
+
+    #[test]
     fn structural_hash_is_deterministic() {
         let a = TransformOp {
             translation: [1.0, 2.0, 3.0],
@@ -203,6 +278,43 @@ mod tests {
         };
         assert_eq!(a.structural_hash(), b.structural_hash());
         assert_ne!(a.structural_hash(), c.structural_hash());
+    }
+
+    #[test]
+    fn structural_hash_distinguishes_rotation_only_and_scale_only_changes() {
+        let h = 0.5_f32.sqrt();
+        let base = TransformOp {
+            translation: [1.0, 2.0, 3.0],
+            rotation_quat_xyzw: [0.0, 0.0, 0.0, 1.0],
+            scale: [1.0, 1.0, 1.0],
+        };
+        // Rotation-only variant: only rotation_quat_xyzw differs from base.
+        let rotation_only = TransformOp {
+            rotation_quat_xyzw: [0.0, h, 0.0, h],
+            ..base.clone()
+        };
+        // Scale-only variant: only scale differs from base.
+        let scale_only = TransformOp {
+            scale: [2.0, 3.0, 4.0],
+            ..base.clone()
+        };
+
+        let base_hash = base.structural_hash();
+        let rotation_hash = rotation_only.structural_hash();
+        let scale_hash = scale_only.structural_hash();
+
+        assert_ne!(
+            base_hash, rotation_hash,
+            "rotation-only change must not collapse to the base hash"
+        );
+        assert_ne!(
+            base_hash, scale_hash,
+            "scale-only change must not collapse to the base hash"
+        );
+        assert_ne!(
+            rotation_hash, scale_hash,
+            "rotation-only and scale-only variants must not share a hash"
+        );
     }
 
     /// `TransformOp::evaluate` strips labels (calls `Tessellation::new`,

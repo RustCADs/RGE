@@ -1,0 +1,14 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-12",
+    "packet_type": "EXEC",
+    "author": "Executor / Claude",
+    "timestamp": "2026-05-18_07-44-46+0300",
+    "related_files": [
+                          "crates/cad-core/src/operators/transform.rs — added test-only rotation, non-uniform scale, and structural-hash coverage inside `#[cfg(test)] mod tests`"
+                      ],
+    "status": "AWAITING_REVIEW",
+    "handoff_status": "COMPLETE",
+    "next_role": "REVIEWER_AI",
+    "exit_code": 0
+}
