@@ -41,42 +41,25 @@ prefer Style A until the loop has proven itself.
 
 ## Tasks
 
-Documentation batch 2 — small, bounded, documentation-only tasks. Each names
-the single file it may touch and has a clear done-criterion. The tasks are
-independent; any order is fine.
+Code batch 1 — a single low-risk, test-coverage-only task: a deliberate
+controlled first-code run. It adds tests to one file's `#[cfg(test)] mod tests`
+block and changes no runtime behavior, so any mistake fails the verification
+gate and publishes nothing.
 
-1. Documentation sync, `AI_DISPATCH_AUTOMATION.md` only. The section 4
-   "Files & components" table predates several scripts. Add one table row for
-   each missing entry, with a concise Role and a sensible Port? value matching
-   the table's existing columns: `Invoke-AiDispatchAuto.ps1` (autonomous
-   driver — Codex selects the next task from `.ai/dispatch.tasks.md`),
-   `Register-AiDispatchSchedule.ps1` (registers the unattended Scheduled
-   Task), `.ai/dispatch.verify.ps1` (the canonical verification gate),
-   `.ai/dispatch.tasks.md` (the autonomous task brief), and
-   `Get-AiDispatchHealth.ps1` (the dispatch-health readout). Edit only the
-   section 4 table in `AI_DISPATCH_AUTOMATION.md`.
-
-2. Documentation sync, `AI_DISPATCH_AUTOMATION.md` only. Add a new subsection
-   "7.1 Unattended operation" under section 7 (Modes). In roughly 20-30 lines,
-   describe the three layers that run on top of the loop: the queue runner
-   (`Invoke-AiDispatchQueue.ps1`, consumes `ai-dispatch` GitHub issues), the
-   autonomous driver (`Invoke-AiDispatchAuto.ps1`, Codex selects tasks from
-   `.ai/dispatch.tasks.md`), and the scheduler
-   (`Register-AiDispatchSchedule.ps1`, runs the automation on a recurring
-   Scheduled Task). Cross-reference the scripts by name; do not duplicate
-   their full parameter tables. Edit only `AI_DISPATCH_AUTOMATION.md`.
-
-3. Documentation touch-up, `AGENTS.md` only. Extend the "Pointers" list with
-   one concise bullet for `Get-AiDispatchHealth.ps1`: the dispatch-health
-   readout — pass rate, correction rounds, and retries across the recorded
-   `.ai/dispatch-*/` runs. Match the brevity of the existing pointer bullets.
-   Edit only `AGENTS.md`.
-
-4. Documentation sync, `AI_DISPATCH_AUTOMATION.md` only. Section 8 lists the
-   `Invoke-AiDispatchLoop.ps1` parameter defaults (`-MaxPlanRevisions` 1,
-   `-MaxCorrectionRounds` 1). Add a short note below the section 8 parameter
-   table explaining that `Invoke-AiDispatchQueue.ps1` and
-   `Invoke-AiDispatchAuto.ps1` default `-MaxCorrectionRounds` to 2 — coding
-   tasks reach `needs_changes` more often than documentation tasks — and that
-   both scripts pass `-MaxPlanRevisions` and `-MaxCorrectionRounds` through to
-   the loop. Edit only `AI_DISPATCH_AUTOMATION.md`.
+1. Test coverage, `crates/cad-core/src/operators/transform.rs` only.
+   `TransformOp` applies a full translate / rotate / scale transform, but its
+   existing tests exercise only the identity and translation-only cases —
+   rotation and scale are untested, and the `structural_hash` test varies only
+   the `translation` field. Add tests to the in-file `#[cfg(test)] mod tests`
+   block:
+   (a) a 90-degree rotation about the Y axis maps a known input vertex to its
+       expected rotated position, asserted within a 1e-5 tolerance;
+   (b) a non-uniform scale maps a known input vertex to its expected scaled
+       position;
+   (c) `structural_hash` returns different values when only
+       `rotation_quat_xyzw` differs, and when only `scale` differs.
+   Derive each expected result independently of `TransformOp`'s own evaluate
+   path, so a test cannot pass merely by re-running the code under test. Match
+   the style of the existing operator test modules (for example
+   `crates/cad-core/src/operators/cuboid.rs`). Edit only
+   `crates/cad-core/src/operators/transform.rs`.
