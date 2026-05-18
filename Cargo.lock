@@ -4174,6 +4174,7 @@ dependencies = [
  "blake3",
  "bytemuck",
  "glam 0.30.10",
+ "naga",
  "pollster",
  "rge-brep-render",
  "rge-kernel-diagnostics",

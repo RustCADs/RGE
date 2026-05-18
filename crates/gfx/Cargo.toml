@@ -51,7 +51,11 @@ thiserror                     = { workspace = true }
 tracing                       = { workspace = true }
 
 [dev-dependencies]
-# No extra dev deps needed; wgpu is already a dependency.
+# Direct test-only dependency for `tests/wgsl_parse_smoke.rs`, which parses the
+# embedded WGSL shader constants with `naga::front::wgsl::parse_str`. Uses the
+# workspace-pinned Naga version (matches wgpu 29); `wgsl-in` enables the WGSL
+# frontend module.
+naga = { workspace = true, features = ["wgsl-in"] }
 
 [lints]
 workspace = true
