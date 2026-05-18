@@ -49,6 +49,8 @@ a committed change, not a packet.
   from `.ai/dispatch.tasks.md` and runs it through the dispatch queue.
 - `Register-AiDispatchSchedule.ps1` — registers the unattended Windows
   Scheduled Task that triggers the dispatch automation on a recurring interval.
+- `Get-AiDispatchHealth.ps1` — dispatch-health readout covering pass rate,
+  correction rounds, and retries across recorded `.ai/dispatch-*/` runs.
 - `HANDOFF.md` / `Status.md` / `change.md` — engine state, next-job options,
   chronological history.
 - `OLD/` and `.ai/dispatch-*/` are gitignored local scratch — ignore them when
