@@ -20,17 +20,25 @@
 //!    `TopologyFaceId::DEGENERATE`, so FaceSelections built from pre-fillet
 //!    cuboid IDs remain in survivors when partitioned against the filleted
 //!    projection.
-//! 5. Owner mismatch invalidates everything (the entity's
+//! 5. **LOAD-BEARING — round-filleted output preserves upstream face
+//!    selections.** `RoundFilletOp` is identity-preserving at the face
+//!    resolver (ADR-119 D4): it clones upstream Cuboid positions verbatim
+//!    and only substitutes filleted-edge endpoint indices, so every
+//!    upstream Cuboid face still exists in the output. FaceSelections
+//!    built from pre-fillet cuboid IDs remain in survivors when
+//!    partitioned against a projection bound to the
+//!    `CuboidOp -> RoundFilletOp` root.
+//! 6. Owner mismatch invalidates everything (the entity's
 //!    `BRepHandle.brep_owner` is set to a different owner than the
 //!    selections were minted under).
-//! 6. Empty sets partition into two empty sets.
-//! 7. Selections referencing an unknown entity all land in invalidated.
-//! 8. Round-tripping a `FaceSelectionSet` through RON preserves the
+//! 7. Empty sets partition into two empty sets.
+//! 8. Selections referencing an unknown entity all land in invalidated.
+//! 9. Round-tripping a `FaceSelectionSet` through RON preserves the
 //!    partition outcome — serde correctness extends to partition correctness.
 
 use rge_cad_core::{
     BRepEdgeProvider, BRepOwnerId, BRepProvider, CadGraph, CuboidOp, ExtrudeOp, FilletOp,
-    OperatorNode, Polygon2D, Tolerance,
+    OperatorNode, Polygon2D, RoundFilletOp, Tolerance,
 };
 use rge_cad_projection::{BRepHandle, CadProjection};
 use rge_editor_state::{FaceSelection, FaceSelectionSet};
@@ -386,6 +394,106 @@ fn face_selection_partition_preserves_upstream_faces_on_filleted_output() {
         invalidated.len(),
         0,
         "no upstream Cuboid face selection should invalidate through FilletOp"
+    );
+}
+
+/// **LOAD-BEARING — round-filleted output preserves upstream face
+/// selections.**
+///
+/// Build a `Cuboid → RoundFillet` graph and bind the entity to the
+/// ROUND-FILLET node. Capture the 6 cuboid face IDs as a FaceSelectionSet
+/// (built from the upstream cuboid's `BRepProvider` impl, so each
+/// selection holds a well-formed `BRepFaceId`). Partition the set against
+/// the round-filleted projection.
+///
+/// Per ADR-119 D4, `RoundFilletOp` is identity-preserving at the face
+/// resolver: `RoundFilletOp::evaluate` clones the upstream Cuboid's
+/// positions verbatim and only substitutes filleted-edge endpoint
+/// indices, so every upstream Cuboid face still exists in the output mesh
+/// with the same semantic identity. `brep_face_ids_for_node` recurses
+/// through `OperatorNode::RoundFillet` to the unique upstream and returns
+/// the Cuboid's face IDs unchanged; only nameless cylinder-cap /
+/// corner-patch triangles are `TopologyFaceId::DEGENERATE`. The pre-fillet
+/// face selections therefore all remain resolvable.
+///
+/// This is distinct from the `FilletOp` partition smoke above — it
+/// specifically exercises `OperatorNode::RoundFillet`.
+#[test]
+fn face_selection_partition_preserves_upstream_faces_on_round_filleted_output() {
+    // Build a Cuboid → RoundFillet graph, with the entity bound to the
+    // ROUND-FILLET root (so the projected mesh is the round-filleted
+    // output).
+    let cuboid = CuboidOp {
+        width: 1.0,
+        height: 1.0,
+        depth: 1.0,
+    };
+    // Every edge passed into `RoundFilletOp::new` comes from the upstream
+    // Cuboid's `BRepEdgeProvider` surface — no `BRepEdgeId` is synthesized
+    // by hand.
+    let edges = cuboid.brep_edge_ids(TEST_OWNER);
+    let round = RoundFilletOp::new(&cuboid, TEST_OWNER, vec![edges[0]], 0.1)
+        .expect("round fillet construction");
+
+    let mut graph = CadGraph::new();
+    graph.begin_operation().expect("begin");
+    let cuboid_node = graph
+        .graph_mut()
+        .expect("mut")
+        .add_operator(OperatorNode::Cuboid(cuboid.clone()))
+        .expect("cuboid");
+    let round_node = graph
+        .graph_mut()
+        .expect("mut")
+        .add_operator(OperatorNode::RoundFillet(round))
+        .expect("round fillet node");
+    graph
+        .graph_mut()
+        .expect("mut")
+        .connect(cuboid_node, round_node, 0)
+        .expect("connect");
+    graph
+        .graph_mut()
+        .expect("mut")
+        .set_root(round_node)
+        .expect("set root");
+    graph.commit("cuboid -> round fillet").expect("commit");
+
+    let mut projection = CadProjection::new();
+    let mut world = World::new();
+    world.register_snapshot_component::<BRepHandle>();
+    let entity = projection
+        .spawn_brep_entity(&mut world, round_node)
+        .expect("spawn");
+    if let Some(mut em) = world.entity_mut(entity) {
+        if let Some(mut handle) = em.get_mut::<BRepHandle>() {
+            handle.brep_owner = Some(TEST_OWNER);
+        }
+    }
+    projection.tick(&mut world, &graph, tol()).expect("tick");
+
+    // Build the FaceSelectionSet from the upstream cuboid's face IDs.
+    let set = build_face_selection_set(&cuboid, TEST_OWNER, entity);
+    assert_eq!(set.len(), 6);
+
+    let (survivors, invalidated) = set.partition(|fs| {
+        projection.face_resolves_in_projection(
+            fs.entity,
+            fs.owner,
+            fs.face_id,
+            &world,
+            graph.graph(),
+        )
+    });
+    assert_eq!(
+        survivors.len(),
+        6,
+        "RoundFilletOp should preserve all upstream Cuboid face selections"
+    );
+    assert_eq!(
+        invalidated.len(),
+        0,
+        "no upstream Cuboid face selection should invalidate through RoundFilletOp"
     );
 }
 

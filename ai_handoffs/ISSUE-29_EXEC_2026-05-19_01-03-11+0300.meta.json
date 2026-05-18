@@ -1,0 +1,14 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-29",
+    "packet_type": "EXEC",
+    "author": "Executor / Claude",
+    "timestamp": "2026-05-19_01-03-11+0300",
+    "related_files": [
+                          "crates/cad-core/tests/fillet_brep_chain_resolution_smoke.rs — newline-style normalization (CRLF → LF) so the workspace fmt gate accepts the file"
+                      ],
+    "status": "AWAITING_REVIEW",
+    "handoff_status": "COMPLETE",
+    "next_role": "REVIEWER_AI",
+    "exit_code": 0
+}
