@@ -1,0 +1,16 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-45",
+    "packet_type": "EXEC",
+    "author": "Executor / Claude",
+    "timestamp": "2026-05-19_13-20-12+0300",
+    "related_files": [
+                          "crates/material-graph/Cargo.toml — added workspace dep on `rge-kernel-graph-foundation`; corrected package description",
+                          "crates/material-graph/src/lib.rs — implemented the `MaterialGraph` foundation wrapper + inline unit tests",
+                          "tools/architecture-lints/exemptions.toml — removed the now-cleared `failure-class` exemption for `crates/material-graph/Cargo.toml`"
+                      ],
+    "status": "AWAITING_REVIEW",
+    "handoff_status": "COMPLETE",
+    "next_role": "REVIEWER_AI",
+    "exit_code": 0
+}

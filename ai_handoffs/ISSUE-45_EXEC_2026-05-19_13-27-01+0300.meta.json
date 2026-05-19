@@ -1,0 +1,15 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-45",
+    "packet_type": "EXEC",
+    "author": "Executor / Claude",
+    "timestamp": "2026-05-19_13-27-01+0300",
+    "related_files": [
+                          "crates/cad-projection/tests/face_picking_smoke.rs — normalized line endings CRLF -\u003e LF (rustfmt newline-style fix; no semantic change)",
+                          "crates/material-graph/src/lib.rs — applied rustfmt mechanical formatting in the `#[cfg(test)]` module (import ordering + blank line, multi-line `assert_eq!` wrapping)"
+                      ],
+    "status": "AWAITING_REVIEW",
+    "handoff_status": "COMPLETE",
+    "next_role": "REVIEWER_AI",
+    "exit_code": 0
+}
