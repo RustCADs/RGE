@@ -1,0 +1,14 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-37",
+    "packet_type": "EXEC",
+    "author": "Executor / Claude",
+    "timestamp": "2026-05-19_05-32-02+0300",
+    "related_files": [
+                          "crates/cad-projection/tests/render_adapter_smoke.rs — added the BooleanOp render-adapter face-label smoke (`boolean_render_mesh_face_labels_align_with_projection_lookup`) plus the `BooleanOp` import and in-file doc/inventory updates"
+                      ],
+    "status": "AWAITING_REVIEW",
+    "handoff_status": "COMPLETE",
+    "next_role": "REVIEWER_AI",
+    "exit_code": 0
+}

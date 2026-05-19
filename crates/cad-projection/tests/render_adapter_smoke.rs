@@ -2,10 +2,11 @@
 // this file exercises the one adapter chain `CadProjection::render_mesh_for`
 // (ProjectedMesh `TopologyFaceId` -> `RenderMesh` opaque `u64` labels) and
 // shares the same fixtures, imports, and chain-consistency invariant across
-// the Cuboid, Extrude, RoundFillet, Fillet, Transform, Sweep, Loft, and
-// Revolve operator cases. The GitHub issues driving this coverage (incl. #36)
-// explicitly require each per-operator smoke to live in this single file and
-// forbid adding another integration test file, so splitting is not an option.
+// the Cuboid, Extrude, RoundFillet, Fillet, Transform, Sweep, Loft, Revolve,
+// and Boolean operator cases. The GitHub issues driving this coverage (incl.
+// #37) explicitly require each per-operator smoke to live in this single file
+// and forbid adding another integration test file, so splitting is not an
+// option.
 
 //! Render-backed face-selection sub-γ end-to-end smoke for
 //! [`CadProjection::render_mesh_for`].
@@ -63,6 +64,15 @@
 //!   `BRepFaceId` as picker-side lookup. Distinct from
 //!   `revolve_brep_face_id_lookup_smoke.rs`, which covers picker-side
 //!   lookup only.
+//! * **BooleanOp renderer-label alignment (GitHub issue #37)**: a
+//!   `BooleanOp::union`-root entity, built from two labeled
+//!   Cuboid-derived inputs on Boolean ports 0 and 1, preserves the
+//!   projected `TopologyFaceId` labels into `RenderMesh.face_labels` in
+//!   projection-lookup triangle order. Boolean is topology-changing for
+//!   B-Rep resolution: `brep_face_id_for_triangle` returns `None` for
+//!   every Boolean-root triangle, so this case asserts label
+//!   value/order preservation through the adapter without any
+//!   Boolean-root `BRepFaceId` mapping.
 //!
 //! Test inventory:
 //! * `render_mesh_face_labels_resolve_consistently_with_picker` — Cuboid
@@ -83,13 +93,15 @@
 //!   — LoftOp renderer-label alignment (GitHub issue #35).
 //! * `revolve_render_mesh_face_labels_align_with_projection_lookup`
 //!   — RevolveOp renderer-label alignment (GitHub issue #36).
+//! * `boolean_render_mesh_face_labels_align_with_projection_lookup`
+//!   — BooleanOp renderer-label alignment (GitHub issue #37).
 
 use std::f32::consts::PI;
 
 use rge_cad_core::{
-    brep_face_ids_for_node, BRepEdgeProvider, BRepFaceId, BRepOwnerId, BRepProvider, CadGraph,
-    CuboidOp, ExtrudeOp, FilletOp, LoftOp, OperatorNode, Polygon2D, Polyline3D, RevolveOp,
-    RoundFilletOp, SweepOp, Tolerance, TopologyFaceId, TransformOp,
+    brep_face_ids_for_node, BRepEdgeProvider, BRepFaceId, BRepOwnerId, BRepProvider, BooleanOp,
+    CadGraph, CuboidOp, ExtrudeOp, FilletOp, LoftOp, OperatorNode, Polygon2D, Polyline3D,
+    RevolveOp, RoundFilletOp, SweepOp, Tolerance, TopologyFaceId, TransformOp,
 };
 use rge_cad_projection::{BRepHandle, CadProjection};
 use rge_kernel_ecs::World;
@@ -1318,4 +1330,164 @@ fn revolve_render_mesh_face_labels_align_with_projection_lookup() {
         saw_label,
         "every renderer label must be a non-degenerate Revolve face label"
     );
+}
+
+/// **Test 10 — BooleanOp renderer-label alignment for GitHub issue #37.**
+///
+/// Build a graph whose root is a `BooleanOp::union` node fed by two
+/// labeled Cuboid-derived inputs — a 1×1×1 Cuboid on Boolean port 0 and a
+/// dimensionally-perturbed Cuboid translated into the overlap zone (via a
+/// `TransformOp`) on Boolean port 1 — project the Boolean root entity, and
+/// prove `CadProjection::render_mesh_for` preserves the projected
+/// `TopologyFaceId` labels into the renderer-side opaque `u64`
+/// `RenderMesh.face_labels` buffer in the SAME triangle order used by
+/// projection lookup:
+///
+/// 1. `RenderMesh.face_labels` is `Some`, non-empty, and exactly as long
+///    as both the projected mesh's `triangle_count()` and its
+///    `face_labels` buffer — one opaque `u64` per projected Boolean
+///    triangle.
+/// 2. Every renderer-side `u64` equals the projected mesh's
+///    `TopologyFaceId.0` carried at the same triangle index — the adapter
+///    must not drop, reorder, or mis-convert labels. This is checked in
+///    triangle order, not by sorting or set comparison.
+/// 3. Boolean is topology-changing for B-Rep resolution: the graph-level
+///    resolver intentionally has no Boolean arm, so
+///    `brep_face_id_for_triangle` returns `None` for every Boolean-root
+///    triangle. This smoke asserts that posture rather than fabricating
+///    or inheriting a Boolean-root `BRepFaceId`.
+///
+/// This smoke is distinct from the Cuboid, Extrude, RoundFillet, Fillet,
+/// Transform, Sweep, Loft, and Revolve render-adapter smokes above — it
+/// specifically exercises `OperatorNode::Boolean` and binds the projected
+/// entity to the Boolean root, not an upstream Cuboid node. Unlike the
+/// recent Sweep, Loft, and Revolve cases, no Boolean-root `BRepFaceId`
+/// mapping is asserted: Boolean remains topology-changing in this
+/// dispatch.
+#[test]
+fn boolean_render_mesh_face_labels_align_with_projection_lookup() {
+    // --- Build CuboidOp + Cuboid->Transform -> BooleanOp(Union) root. -----
+    // Two Cuboid-derived inputs: a 1×1×1 Cuboid on port 0, and a
+    // dimensionally-perturbed Cuboid (distinct content => distinct NodeId,
+    // no `DuplicateNode` dedupe) translated into the overlap zone on
+    // port 1. Both inputs are labeled by the current Cuboid tessellation
+    // path — no face label is synthesized by hand.
+    let mut graph = CadGraph::new();
+    graph.begin_operation().expect("begin");
+    let g = graph.graph_mut().expect("mut");
+    let cuboid_a = g
+        .add_operator(OperatorNode::Cuboid(CuboidOp {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        }))
+        .expect("add cuboid a");
+    let cuboid_b = g
+        .add_operator(OperatorNode::Cuboid(CuboidOp {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0001, // tiny perturbation so the NodeId differs from cuboid_a
+        }))
+        .expect("add cuboid b");
+    let transform_b = g
+        .add_operator(OperatorNode::Transform(TransformOp {
+            // Translate the second Cuboid into the overlap zone so the
+            // Boolean has a non-trivial overlapping rhs input.
+            translation: [0.5, 0.5, 0.5],
+            ..TransformOp::default()
+        }))
+        .expect("add transform");
+    g.connect(cuboid_b, transform_b, 0)
+        .expect("connect cuboid b -> transform");
+    let boolean_node = g
+        .add_operator(OperatorNode::Boolean(BooleanOp::union()))
+        .expect("add boolean union");
+    g.connect(cuboid_a, boolean_node, 0)
+        .expect("connect cuboid a -> boolean port 0");
+    g.connect(transform_b, boolean_node, 1)
+        .expect("connect transform -> boolean port 1");
+    g.set_root(boolean_node).expect("set boolean root");
+    graph
+        .commit("cuboid + cuboid -> boolean union")
+        .expect("commit");
+
+    // --- Spawn + project the Boolean root (NOT an upstream Cuboid). ------
+    let mut projection = CadProjection::new();
+    let mut world = World::new();
+    world.register_snapshot_component::<BRepHandle>();
+    let entity = projection
+        .spawn_brep_entity(&mut world, boolean_node)
+        .expect("spawn");
+    if let Some(mut em) = world.entity_mut(entity) {
+        if let Some(mut handle) = em.get_mut::<BRepHandle>() {
+            handle.brep_owner = Some(ENTITY_OWNER);
+        }
+    }
+    projection.tick(&mut world, &graph, tol()).expect("tick");
+
+    // --- Projected vs. renderer-side label buffers. ----------------------
+    let projected = projection
+        .projected_mesh(entity)
+        .expect("Boolean root must have a projected mesh after tick");
+    // CSG triangulation details are not the contract here — only that the
+    // labeled Boolean output is non-empty.
+    assert!(
+        projected.triangle_count() > 0,
+        "the union of two overlapping Cuboids must project to a non-empty mesh"
+    );
+    let projected_labels = projected
+        .face_labels
+        .as_ref()
+        .expect("BooleanOp threads labeled Cuboid tessellations through the BSP");
+
+    let render = projection
+        .render_mesh_for(entity, &world)
+        .expect("must render for the projected Boolean entity");
+    let render_labels = render
+        .face_labels
+        .as_ref()
+        .expect("labeled projected mesh must yield Some(face_labels) through the adapter");
+
+    assert!(
+        !render_labels.is_empty(),
+        "the Boolean union fixture must yield a non-empty renderer label buffer"
+    );
+    assert_eq!(
+        render_labels.len(),
+        projected.triangle_count(),
+        "one opaque u64 renderer label per projected Boolean triangle"
+    );
+    assert_eq!(
+        render_labels.len(),
+        projected_labels.len(),
+        "renderer-side and projected label buffers must have equal length"
+    );
+    // Renderer label N is exactly the projected `TopologyFaceId.0` at N —
+    // proves the adapter preserves order and value, not just `Some(_)`.
+    // Checked in triangle order, never by sorting or set comparison.
+    for (tri, (&render_label, &topo_label)) in render_labels
+        .iter()
+        .zip(projected_labels.iter())
+        .enumerate()
+    {
+        assert_eq!(
+            render_label, topo_label.0,
+            "triangle {tri}: renderer-side u64 label must equal the projected \
+             TopologyFaceId.0 carried at the same triangle index"
+        );
+    }
+
+    // --- Boolean is topology-changing for B-Rep resolution. --------------
+    // The graph-level resolver has no Boolean arm by design, so picker-side
+    // lookup returns `None` for every Boolean-root triangle. This smoke
+    // asserts that posture; it does not fabricate or inherit a
+    // Boolean-root `BRepFaceId`.
+    for tri in 0..render_labels.len() {
+        assert_eq!(
+            projection.brep_face_id_for_triangle(entity, tri, &world, graph.graph()),
+            None,
+            "triangle {tri}: Boolean is topology-changing — no Boolean-root \
+             BRepFaceId is resolved for any triangle"
+        );
+    }
 }
