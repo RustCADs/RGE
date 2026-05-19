@@ -266,7 +266,7 @@ impl VizAdapter for MaterialGraph {
 
 #[cfg(test)]
 mod tests {
-    use rge_kernel_graph_foundation::{EdgeRecord, GraphError, GraphSnapshot};
+    use rge_kernel_graph_foundation::{EdgeRecord, GraphDiff, GraphError, GraphSnapshot};
 
     use super::*;
 
@@ -578,5 +578,76 @@ mod tests {
                 "edge view label is the deterministic port-pair string"
             );
         }
+    }
+
+    #[test]
+    fn structural_diff_reports_added_material_node_and_edge() {
+        // Build an initial material graph: two nodes joined by one typed-port
+        // connection, then snapshot it as the "old" state.
+        let mut g = MaterialGraph::new();
+        let albedo = g.add_node("albedo").unwrap();
+        let output = g.add_node("output").unwrap();
+        g.connect(albedo, output, edge(PortType::Color, PortType::Color))
+            .unwrap();
+        let old_snapshot = GraphSnapshot::from_graph(&g.graph);
+
+        // Mutate the same graph: add exactly one new material node and exactly
+        // one new material edge connected to that node.
+        let normal = g.add_node("normal").unwrap();
+        let new_edge_id = g
+            .connect(normal, output, edge(PortType::Vector, PortType::Texture))
+            .unwrap();
+        let new_snapshot = GraphSnapshot::from_graph(&g.graph);
+
+        // The graph-foundation structural diff over the old → new snapshots.
+        let diff = GraphDiff::between(&old_snapshot, &new_snapshot);
+
+        // Exactly the one new node is reported as added, with its payload.
+        assert_eq!(
+            diff.added_nodes.len(),
+            1,
+            "exactly one material node was added"
+        );
+        assert_eq!(
+            diff.added_nodes.get(&normal),
+            Some(&MaterialNode {
+                key: "normal".to_owned(),
+            }),
+            "the added node is the new 'normal' material node, by id and payload"
+        );
+
+        // Exactly the one new edge is reported as added, with its full record.
+        assert_eq!(
+            diff.added_edges.len(),
+            1,
+            "exactly one material edge was added"
+        );
+        assert_eq!(
+            diff.added_edges.get(&new_edge_id),
+            Some(&EdgeRecord {
+                src: normal,
+                dst: output,
+                data: edge(PortType::Vector, PortType::Texture),
+            }),
+            "the added edge record carries the new node, destination, and typed ports"
+        );
+
+        // Nothing was removed and no pre-existing node or edge record changed.
+        assert!(
+            diff.removed_nodes.is_empty(),
+            "no material node was removed"
+        );
+        assert!(
+            diff.removed_edges.is_empty(),
+            "no material edge was removed"
+        );
+        assert!(
+            diff.changed_nodes.is_empty(),
+            "no existing material node record changed"
+        );
+        assert!(
+            diff.changed_edges.is_empty(),
+            "no existing material edge record changed"
+        );
     }
 }
