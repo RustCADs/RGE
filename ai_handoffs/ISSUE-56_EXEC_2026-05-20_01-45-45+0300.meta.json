@@ -1,0 +1,14 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-56",
+    "packet_type": "EXEC",
+    "author": "Executor / Claude",
+    "timestamp": "2026-05-20_01-45-45+0300",
+    "related_files": [
+                          "crates/cad-core/tests/operator_graph_structural_diff_smoke.rs — rewrote on-disk line endings from CRLF to LF; no content/semantic change."
+                      ],
+    "status": "AWAITING_REVIEW",
+    "handoff_status": "COMPLETE",
+    "next_role": "REVIEWER_AI",
+    "exit_code": 0
+}

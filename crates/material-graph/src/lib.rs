@@ -266,7 +266,9 @@ impl VizAdapter for MaterialGraph {
 
 #[cfg(test)]
 mod tests {
-    use rge_kernel_graph_foundation::{EdgeRecord, GraphDiff, GraphError, GraphSnapshot};
+    use rge_kernel_graph_foundation::{
+        EdgeRecord, GraphDiff, GraphError, GraphSnapshot, Invalidation, InvalidationListener,
+    };
 
     use super::*;
 
@@ -648,6 +650,66 @@ mod tests {
         assert!(
             diff.changed_edges.is_empty(),
             "no existing material edge record changed"
+        );
+    }
+
+    #[test]
+    fn invalidation_propagates_through_material_outgoing_edges() {
+        use std::sync::{Arc, Mutex};
+
+        // Diamond: a -> b, a -> c, b -> d, c -> d. The shared sink `d`
+        // exercises the router's per-call visited-set dedup; the two
+        // outgoing edges from `a` exercise BFS scheduling order.
+        let mut g = MaterialGraph::new();
+        let a = g.add_node("a").unwrap();
+        let b = g.add_node("b").unwrap();
+        let c = g.add_node("c").unwrap();
+        let d = g.add_node("d").unwrap();
+
+        let port = edge(PortType::Color, PortType::Color);
+        let ab = g.connect(a, b, port).unwrap();
+        let ac = g.connect(a, c, port).unwrap();
+        g.connect(b, d, port).unwrap();
+        g.connect(c, d, port).unwrap();
+
+        // The substrate iterates `outgoing(a)` in EdgeId-sorted order
+        // (BTreeSet<EdgeId>), which fixes whether `b` or `c` is enqueued
+        // first. Derive the expected BFS sequence from those concrete ids
+        // rather than guessing from declaration order.
+        let (first_child, second_child) = if ab < ac { (b, c) } else { (c, b) };
+        let expected = vec![a, first_child, second_child, d];
+
+        struct Recorder(Arc<Mutex<Vec<NodeId>>>);
+        impl InvalidationListener for Recorder {
+            fn on_invalidated(&mut self, node: NodeId) {
+                self.0.lock().unwrap().push(node);
+            }
+        }
+
+        let log = Arc::new(Mutex::new(Vec::<NodeId>::new()));
+        let mut inv = Invalidation::new();
+        inv.register(Box::new(Recorder(Arc::clone(&log))));
+
+        // The dependents closure reads downstream nodes straight off the
+        // material graph's substrate via outgoing edges + edge-record dst,
+        // proving the wrapper's substrate is sufficient to drive
+        // graph-foundation invalidation without any ad hoc side table.
+        inv.mark_dirty(a, |node| {
+            g.graph
+                .outgoing(node)
+                .filter_map(|eid| g.graph.edge(eid).map(|record| record.dst))
+                .collect()
+        });
+
+        let calls = log.lock().unwrap().clone();
+        assert_eq!(
+            calls, expected,
+            "listener log is the dirty root followed by every downstream material node exactly once in BFS order"
+        );
+        assert_eq!(
+            calls.iter().filter(|&&n| n == d).count(),
+            1,
+            "diamond convergence node is deduplicated to a single delivery"
         );
     }
 }
