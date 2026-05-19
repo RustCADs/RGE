@@ -1,3 +1,12 @@
+// SPLIT-EXEMPTION: cohesive render-adapter smoke aggregation — every test in
+// this file exercises the one adapter chain `CadProjection::render_mesh_for`
+// (ProjectedMesh `TopologyFaceId` -> `RenderMesh` opaque `u64` labels) and
+// shares the same fixtures, imports, and chain-consistency invariant across
+// the Cuboid, Extrude, RoundFillet, Fillet, Transform, Sweep, and Loft
+// operator cases. The GitHub issues driving this coverage (incl. #35)
+// explicitly require each per-operator smoke to live in this single file and
+// forbid adding another integration test file, so splitting is not an option.
+
 //! Render-backed face-selection sub-γ end-to-end smoke for
 //! [`CadProjection::render_mesh_for`].
 //!
@@ -35,6 +44,15 @@
 //!   `SweepOp` mints stable cap/side face labels, so every renderer
 //!   label is non-degenerate and resolves to the same `BRepFaceId` as
 //!   picker-side lookup.
+//! * **LoftOp renderer-label alignment (GitHub issue #35)**: a
+//!   `LoftOp`-root entity (square profile → larger-square profile)
+//!   preserves the projected `TopologyFaceId` labels into
+//!   `RenderMesh.face_labels` in projection-lookup triangle order.
+//!   `LoftOp` mints stable bottom-cap, top-cap, and side face labels,
+//!   so every renderer label is non-degenerate and resolves through the
+//!   Loft-root graph resolver to the same `BRepFaceId` as picker-side
+//!   lookup. Distinct from `loft_brep_face_id_lookup_smoke.rs`, which
+//!   covers picker-side lookup only.
 //!
 //! Test inventory:
 //! * `render_mesh_face_labels_resolve_consistently_with_picker` — Cuboid
@@ -51,11 +69,13 @@
 //!   — TransformOp renderer-label alignment (GitHub issue #33).
 //! * `sweep_render_mesh_face_labels_align_with_projection_lookup`
 //!   — SweepOp renderer-label alignment (GitHub issue #34).
+//! * `loft_render_mesh_face_labels_align_with_projection_lookup`
+//!   — LoftOp renderer-label alignment (GitHub issue #35).
 
 use rge_cad_core::{
     brep_face_ids_for_node, BRepEdgeProvider, BRepFaceId, BRepOwnerId, BRepProvider, CadGraph,
-    CuboidOp, ExtrudeOp, FilletOp, OperatorNode, Polygon2D, Polyline3D, RoundFilletOp, SweepOp,
-    Tolerance, TopologyFaceId, TransformOp,
+    CuboidOp, ExtrudeOp, FilletOp, LoftOp, OperatorNode, Polygon2D, Polyline3D, RoundFilletOp,
+    SweepOp, Tolerance, TopologyFaceId, TransformOp,
 };
 use rge_cad_projection::{BRepHandle, CadProjection};
 use rge_kernel_ecs::World;
@@ -951,5 +971,171 @@ fn sweep_render_mesh_face_labels_align_with_projection_lookup() {
     assert!(
         saw_label,
         "every renderer label must be a non-degenerate Sweep face label"
+    );
+}
+
+/// **Test 8 — LoftOp renderer-label alignment for GitHub issue #35.**
+///
+/// Build a graph whose root is a `LoftOp` node — the canonical
+/// square-profile → larger-square-profile fixture mirrored from
+/// `loft_brep_face_id_lookup_smoke.rs` — project the Loft root entity,
+/// and prove `CadProjection::render_mesh_for` preserves the projected
+/// `TopologyFaceId` labels into the renderer-side opaque `u64`
+/// `RenderMesh.face_labels` buffer in the SAME triangle order used by
+/// projection lookup:
+///
+/// 1. `RenderMesh.face_labels` is `Some`, with exactly one opaque `u64`
+///    per projected Loft triangle (12 for this n=4 fixture), and every
+///    renderer-side `u64` equals the projected mesh's `TopologyFaceId.0`
+///    carried at the same triangle index — the adapter must not drop,
+///    reorder, or mis-convert labels.
+/// 2. `LoftOp` mints stable face labels for the bottom cap, top cap, and
+///    side faces, so every renderer label is non-degenerate. Each label
+///    resolves — through the Loft-root graph resolver
+///    (`brep_face_ids_for_node` for `loft_node`) — to the exact
+///    `BRepFaceId` returned by `brep_face_id_for_triangle` for that same
+///    triangle.
+///
+/// This smoke is distinct from the Cuboid, Extrude, RoundFillet, Fillet,
+/// Transform, and Sweep render-adapter smokes above — it specifically
+/// exercises `OperatorNode::Loft` and binds the projected entity to the
+/// Loft root. It is also distinct from
+/// `loft_brep_face_id_lookup_smoke.rs`, which covers picker-side lookup
+/// only; this smoke covers the renderer adapter's opaque
+/// `RenderMesh.face_labels` buffer.
+#[test]
+fn loft_render_mesh_face_labels_align_with_projection_lookup() {
+    // --- Build a LoftOp root: square profile → larger-square profile. -----
+    // The canonical fixture mirrored from loft_brep_face_id_lookup_smoke.rs:
+    // a unit-square profile (n = 4, CCW) lofted to a larger square profile.
+    let profile_a =
+        Polygon2D::new(vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]).expect("square");
+    let profile_b = Polygon2D::new(vec![[0.0, 0.0], [3.0, 0.0], [3.0, 3.0], [0.0, 3.0]])
+        .expect("larger square");
+    let loft = LoftOp::new(profile_a, profile_b, 1.0).expect("loft construction");
+
+    let mut graph = CadGraph::new();
+    graph.begin_operation().expect("begin");
+    let loft_node = graph
+        .graph_mut()
+        .expect("mut")
+        .add_operator(OperatorNode::Loft(loft))
+        .expect("add loft");
+    graph
+        .graph_mut()
+        .expect("mut")
+        .set_root(loft_node)
+        .expect("set loft root");
+    graph.commit("loft").expect("commit");
+
+    // --- Spawn + project the Loft root. ----------------------------------
+    let mut projection = CadProjection::new();
+    let mut world = World::new();
+    world.register_snapshot_component::<BRepHandle>();
+    let entity = projection
+        .spawn_brep_entity(&mut world, loft_node)
+        .expect("spawn");
+    if let Some(mut em) = world.entity_mut(entity) {
+        if let Some(mut handle) = em.get_mut::<BRepHandle>() {
+            handle.brep_owner = Some(ENTITY_OWNER);
+        }
+    }
+    projection.tick(&mut world, &graph, tol()).expect("tick");
+
+    // --- Projected vs. renderer-side label buffers. ----------------------
+    let projected = projection
+        .projected_mesh(entity)
+        .expect("Loft root must have a projected mesh after tick");
+    // n=4 ⇒ 4n - 4 = 12 triangles (bottom 2 + top 2 + sides 8).
+    assert_eq!(
+        projected.triangle_count(),
+        12,
+        "square-profile → larger-square-profile Loft projects to exactly 12 triangles"
+    );
+    let projected_labels = projected
+        .face_labels
+        .as_ref()
+        .expect("LoftOp emits a labeled tessellation for caps and side faces");
+
+    let render = projection
+        .render_mesh_for(entity, &world)
+        .expect("must render for the projected Loft entity");
+    let render_labels = render
+        .face_labels
+        .as_ref()
+        .expect("labeled projected mesh must yield Some(face_labels) through the adapter");
+
+    assert_eq!(
+        render_labels.len(),
+        12,
+        "the square-profile → larger-square-profile Loft fixture yields exactly 12 renderer labels"
+    );
+    assert_eq!(
+        render_labels.len(),
+        projected.triangle_count(),
+        "one opaque u64 renderer label per projected Loft triangle"
+    );
+    assert_eq!(
+        render_labels.len(),
+        projected_labels.len(),
+        "renderer-side and projected label buffers must have equal length"
+    );
+    // Renderer label N is exactly the projected `TopologyFaceId.0` at N —
+    // proves the adapter preserves order and value, not just `Some(_)`.
+    for (tri, (&render_label, &topo_label)) in render_labels
+        .iter()
+        .zip(projected_labels.iter())
+        .enumerate()
+    {
+        assert_eq!(
+            render_label, topo_label.0,
+            "triangle {tri}: renderer-side u64 label must equal the projected \
+             TopologyFaceId.0 carried at the same triangle index"
+        );
+    }
+
+    // --- Loft-root resolver pairs — the same identity path the picker
+    // uses internally for `brep_face_id_for_triangle`. -------------------
+    let pairs: Vec<(TopologyFaceId, BRepFaceId)> =
+        brep_face_ids_for_node(graph.graph(), loft_node, ENTITY_OWNER)
+            .expect("Loft-root resolver must succeed");
+
+    let mut saw_label = false;
+    for (tri, &render_label) in render_labels.iter().enumerate() {
+        let topo = TopologyFaceId(render_label);
+        // LoftOp mints stable face labels for the bottom cap, top cap, and
+        // side faces, so no DEGENERATE renderer label is expected for this
+        // valid square-profile Loft fixture.
+        assert_ne!(
+            topo,
+            TopologyFaceId::DEGENERATE,
+            "triangle {tri}: LoftOp emits stable bottom-cap, top-cap, and \
+             side face labels — no DEGENERATE renderer label is expected for \
+             the square-profile → larger-square-profile Loft fixture"
+        );
+        saw_label = true;
+        // Resolve the renderer label through the Loft-root graph resolver.
+        let resolved = pairs
+            .iter()
+            .find(|(t, _)| *t == topo)
+            .map(|(_, id)| *id)
+            .unwrap_or_else(|| {
+                panic!("triangle {tri}: renderer label {topo:?} has no Loft-root face id")
+            });
+        // ... and it must match the picker's answer for the exact same
+        // triangle — not merely "some BRepFaceId".
+        let picker_resolved = projection
+            .brep_face_id_for_triangle(entity, tri, &world, graph.graph())
+            .expect("picker-side resolution must succeed for a Loft triangle");
+        assert_eq!(
+            picker_resolved, resolved,
+            "triangle {tri}: renderer label {topo:?} resolved through the \
+             Loft-root resolver MUST match brep_face_id_for_triangle"
+        );
+    }
+
+    assert!(
+        saw_label,
+        "every renderer label must be a non-degenerate Loft face label"
     );
 }
