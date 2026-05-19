@@ -1,3 +1,6 @@
+// SPLIT-EXEMPTION: cohesive face-picking smoke aggregation with shared
+// picker fixtures and invariants; ISSUE-43 explicitly extends this existing
+// integration test file instead of adding or splitting test files.
 //! Headless face-picking sub-α end-to-end smoke for
 //! [`CadProjection::pick_face`].
 //!
@@ -75,13 +78,24 @@
 //! `SweepFaceTag::LastCap` cap identity. The projection crate already has
 //! Sweep face-ID lookup coverage (`sweep_brep_face_id_lookup_smoke.rs`); this
 //! test extends that to the ray-driven `pick_face` integration surface.
+//!
+//! Test 13 (`pick_resolves_transformed_cuboid_top_face`) is the
+//! transform-rebased sibling of test 1: it projects a `CuboidOp ->
+//! TransformOp` graph with `OperatorNode::Transform` as the root and a
+//! non-identity translation, and proves `pick_face` flows the
+//! topology-preserving `TransformOp` consumer through the same picker path,
+//! returning the upstream Cuboid `CuboidFaceTag::PosZ` identity for a ray
+//! aimed at the transformed top face. The projection crate already has
+//! Transform face-ID *lookup* coverage
+//! (`transform_brep_face_lookup_smoke.rs`); this test extends that to the
+//! ray-driven `pick_face` integration surface.
 
 use std::f32::consts::PI;
 
 use rge_cad_core::{
     BRepEdgeProvider, BRepFaceId, BRepOwnerId, CadGraph, CuboidFaceTag, CuboidOp, ExtrudeFaceTag,
     ExtrudeOp, FilletOp, LoftFaceTag, LoftOp, OperatorNode, Polygon2D, Polyline3D, RevolveFaceTag,
-    RevolveOp, RoundFilletOp, SweepFaceTag, SweepOp, Tolerance,
+    RevolveOp, RoundFilletOp, SweepFaceTag, SweepOp, Tolerance, TransformOp,
 };
 use rge_cad_projection::{BRepHandle, CadProjection, FacePick, Ray};
 use rge_kernel_ecs::World;
@@ -929,6 +943,110 @@ fn pick_resolves_sweep_last_cap_face() {
     assert!(
         (pick.t - 3.0).abs() < 1e-4,
         "ray-t at the LastCap (z=2.0) is expected at 3.0, got {}",
+        pick.t
+    );
+}
+
+/// **Test 13** — direct non-identity `TransformOp` root: a ray aimed at the
+/// transformed Cuboid top face picks the upstream Cuboid's stable +Z
+/// `BRepFaceId` under the entity owner.
+///
+/// Tests 1-12 pick fixed- or variable-topology geometry through Cuboid,
+/// Cuboid-rooted, or directly rooted variable-N consumers. This smoke is the
+/// transform-rebased sibling of test 1: it projects a `CuboidOp ->
+/// TransformOp` graph with `OperatorNode::Transform` as the graph root and a
+/// non-identity translation, then proves `CadProjection::pick_face` flows the
+/// topology-preserving `TransformOp` consumer through the same picker path.
+/// `TransformOp` transforms vertex positions, clones triangle indices
+/// unchanged, and passes upstream `face_labels` through one-for-one, so the
+/// picked face_id is the upstream Cuboid +Z face minted under `ENTITY_OWNER`.
+///
+/// The companion `transform_brep_face_lookup_smoke.rs` covers direct
+/// triangle-to-face-ID lookup through the Transform root; this dispatch adds
+/// the missing ray-driven `pick_face` coverage.
+///
+/// The 1×1×1 Cuboid is translated by `[3.0, -2.0, 1.0]`, so its transformed
+/// center sits at `[3, -2, 1]` and its top (+Z) face at `z = +1.5`. The ray
+/// is aimed at the *transformed* geometry — origin `[3.0, -2.0, 5.0]` along
+/// `-Z`, NOT the untransformed origin position — hitting the top face at
+/// `t = 3.5`.
+#[test]
+fn pick_resolves_transformed_cuboid_top_face() {
+    let mut graph = CadGraph::new();
+    graph.begin_operation().expect("begin");
+    let cuboid_node = graph
+        .graph_mut()
+        .expect("mut")
+        .add_operator(OperatorNode::Cuboid(CuboidOp {
+            width: 1.0,
+            height: 1.0,
+            depth: 1.0,
+        }))
+        .expect("add cuboid");
+    // Non-identity translation, default (identity) rotation + unit scale.
+    let transform_node = graph
+        .graph_mut()
+        .expect("mut")
+        .add_operator(OperatorNode::Transform(TransformOp {
+            translation: [3.0, -2.0, 1.0],
+            ..TransformOp::default()
+        }))
+        .expect("add transform");
+    graph
+        .graph_mut()
+        .expect("mut")
+        .connect(cuboid_node, transform_node, 0)
+        .expect("connect cuboid -> transform");
+    graph
+        .graph_mut()
+        .expect("mut")
+        .set_root(transform_node)
+        .expect("set transform root");
+    graph.commit("cuboid -> transform").expect("commit");
+
+    let mut projection = CadProjection::new();
+    let mut world = World::new();
+    world.register_snapshot_component::<BRepHandle>();
+    // Bind the projected entity to the Transform root node, NOT the upstream
+    // Cuboid node, so the picker must resolve through the Transform output.
+    let entity = projection
+        .spawn_brep_entity(&mut world, transform_node)
+        .expect("spawn");
+    if let Some(mut em) = world.entity_mut(entity) {
+        if let Some(mut handle) = em.get_mut::<BRepHandle>() {
+            handle.brep_owner = Some(ENTITY_OWNER);
+        }
+    }
+    projection.tick(&mut world, &graph, tol()).expect("tick");
+
+    // Ray straight down through the transformed Cuboid top face. The 1×1×1
+    // Cuboid translated by [3, -2, 1] has its +Z face at z=+1.5; XY [3, -2]
+    // is the transformed face center.
+    let ray = Ray {
+        origin: [3.0, -2.0, 5.0],
+        direction: [0.0, 0.0, -1.0],
+    };
+    let pick = projection
+        .pick_face(&ray, &world, graph.graph())
+        .expect("ray must hit the transformed Cuboid top face");
+
+    assert_eq!(
+        pick.entity, entity,
+        "the directly projected Transform-root entity must be picked"
+    );
+    assert_eq!(pick.owner, ENTITY_OWNER);
+    assert_eq!(
+        pick.face_id,
+        BRepFaceId::for_cuboid_face(ENTITY_OWNER, CuboidFaceTag::PosZ),
+        "the picked face_id must be the upstream Cuboid +Z face under \
+         ENTITY_OWNER, proving Transform face labels survive the picker path"
+    );
+    assert!(pick.t > 0.0, "ray-t must be strictly positive");
+    // Transformed top face at z=+1.5; ray origin at z=+5 along -Z hits at
+    // t = 3.5.
+    assert!(
+        (pick.t - 3.5).abs() < 1e-4,
+        "ray-t at the transformed +Z face (z=1.5) is expected at 3.5, got {}",
         pick.t
     );
 }
