@@ -11,7 +11,7 @@
 //! * Hits whose triangle DOES resolve are sorted by ray-`t`, and the first
 //!   one in that sorted order wins.
 //!
-//! The 6 integration tests cover, in order:
+//! The integration tests cover, in order:
 //!
 //! 1. `pick_hits_cuboid_top_face` — baseline. Synthetic ray pointing -Z
 //!    from above a 1×1×1 cuboid centered at origin → returns the cuboid's
@@ -67,13 +67,21 @@
 //! cap identity. The projection crate already has Loft face-ID *lookup*
 //! coverage (`loft_brep_face_id_lookup_smoke.rs`); this test extends that to
 //! the ray-driven `pick_face` integration surface.
+//!
+//! Test 12 (`pick_resolves_sweep_last_cap_face`) is the path-topology
+//! sibling of tests 9-11: it projects a directly rooted square-profile,
+//! monotonic-Z `OperatorNode::Sweep` and proves `pick_face` flows the Sweep
+//! consumer through the same picker path, returning the stable
+//! `SweepFaceTag::LastCap` cap identity. The projection crate already has
+//! Sweep face-ID lookup coverage (`sweep_brep_face_id_lookup_smoke.rs`); this
+//! test extends that to the ray-driven `pick_face` integration surface.
 
 use std::f32::consts::PI;
 
 use rge_cad_core::{
     BRepEdgeProvider, BRepFaceId, BRepOwnerId, CadGraph, CuboidFaceTag, CuboidOp, ExtrudeFaceTag,
-    ExtrudeOp, FilletOp, LoftFaceTag, LoftOp, OperatorNode, Polygon2D, RevolveFaceTag, RevolveOp,
-    RoundFilletOp, Tolerance,
+    ExtrudeOp, FilletOp, LoftFaceTag, LoftOp, OperatorNode, Polygon2D, Polyline3D, RevolveFaceTag,
+    RevolveOp, RoundFilletOp, SweepFaceTag, SweepOp, Tolerance,
 };
 use rge_cad_projection::{BRepHandle, CadProjection, FacePick, Ray};
 use rge_kernel_ecs::World;
@@ -843,6 +851,84 @@ fn pick_resolves_loft_top_cap_face() {
     assert!(
         (pick.t - 4.0).abs() < 1e-4,
         "ray-t at the Top cap (z=1.0) is expected at 4.0, got {}",
+        pick.t
+    );
+}
+
+/// **Test 12** — direct square-profile monotonic-Z `SweepOp` root: a ray
+/// from above the last cap interior picks the Sweep's stable `LastCap`
+/// `BRepFaceId`.
+///
+/// This is the path-topology sibling of the direct Extrude/Revolve/Loft
+/// picker smokes. The fixture mirrors `sweep_brep_face_id_lookup_smoke.rs`: a
+/// CCW unit-square profile swept along a 3-point monotonic-Z path
+/// (`z = 0 -> 1 -> 2`). `SweepOp` labels its caps categorically:
+/// `FirstCap` for the first path ring and `LastCap` for the final path ring.
+///
+/// The ray targets `[0.75, 0.25]` in XY: interior to the square profile and
+/// strictly inside the lower-right cap fan triangle. It starts above the
+/// final path ring and points downward, so the first resolvable cap hit is
+/// the LastCap at `z = +2.0`.
+#[test]
+fn pick_resolves_sweep_last_cap_face() {
+    let mut graph = CadGraph::new();
+    graph.begin_operation().expect("begin");
+    let profile = Polygon2D::new(vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]])
+        .expect("square profile");
+    let path = Polyline3D::new(vec![[0.0, 0.0, 0.0], [0.0, 0.0, 1.0], [0.0, 0.0, 2.0]])
+        .expect("monotonic-z path");
+    let sweep = SweepOp::new(profile, path);
+    let sweep_node = graph
+        .graph_mut()
+        .expect("mut")
+        .add_operator(OperatorNode::Sweep(sweep))
+        .expect("add sweep");
+    graph
+        .graph_mut()
+        .expect("mut2")
+        .set_root(sweep_node)
+        .expect("set root");
+    graph.commit("square-profile sweep").expect("commit");
+
+    let mut projection = CadProjection::new();
+    let mut world = World::new();
+    world.register_snapshot_component::<BRepHandle>();
+    let entity = projection
+        .spawn_brep_entity(&mut world, sweep_node)
+        .expect("spawn");
+    if let Some(mut em) = world.entity_mut(entity) {
+        if let Some(mut handle) = em.get_mut::<BRepHandle>() {
+            handle.brep_owner = Some(ENTITY_OWNER);
+        }
+    }
+    projection.tick(&mut world, &graph, tol()).expect("tick");
+
+    // Ray straight down through the final cap interior. The final ring of
+    // this 3-point monotonic-Z Sweep sits at z=+2.0; [0.75, 0.25] is inside
+    // the square and away from cap fan boundaries.
+    let ray = Ray {
+        origin: [0.75, 0.25, 5.0],
+        direction: [0.0, 0.0, -1.0],
+    };
+    let pick = projection
+        .pick_face(&ray, &world, graph.graph())
+        .expect("ray must hit the Sweep last cap");
+
+    assert_eq!(
+        pick.entity, entity,
+        "the directly projected Sweep-root entity must be picked"
+    );
+    assert_eq!(pick.owner, ENTITY_OWNER);
+    assert_eq!(
+        pick.face_id,
+        BRepFaceId::for_sweep_face(ENTITY_OWNER, SweepFaceTag::LastCap),
+        "the picked face_id must be the Sweep LastCap's stable identity"
+    );
+    assert!(pick.t > 0.0, "ray-t must be strictly positive");
+    // Last cap at z=+2.0; ray origin at z=+5 along -Z hits at t = 3.0.
+    assert!(
+        (pick.t - 3.0).abs() < 1e-4,
+        "ray-t at the LastCap (z=2.0) is expected at 3.0, got {}",
         pick.t
     );
 }
