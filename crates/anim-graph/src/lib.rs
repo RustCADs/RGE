@@ -20,6 +20,7 @@
 use rge_kernel_graph_foundation::{
     EdgeId, EdgeView, Graph, GraphError, NodeId, NodeView, VizAdapter,
 };
+use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
 // Error type
@@ -61,7 +62,7 @@ impl From<GraphError> for AnimGraphError {
 /// substrate [`NodeId`] is derived deterministically from its bytes. The
 /// payload carries no playback, blending, sampling, runtime scheduling,
 /// editor, renderer, ECS, or asset-loading behavior.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AnimState {
     /// Uninterpreted, deterministic key identifying the state.
     pub key: String,
@@ -88,7 +89,7 @@ impl AnimState {
 /// transitions between the same states that use different triggers are
 /// distinct edges. The payload carries no conditions, guards, weights,
 /// timing, or runtime behavior.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AnimTransition {
     /// Uninterpreted, deterministic trigger key identifying the transition.
     pub trigger: String,
@@ -238,7 +239,7 @@ impl VizAdapter for AnimGraph {
 
 #[cfg(test)]
 mod tests {
-    use rge_kernel_graph_foundation::GraphError;
+    use rge_kernel_graph_foundation::{EdgeRecord, GraphError, GraphSnapshot};
 
     use super::*;
 
@@ -423,6 +424,89 @@ mod tests {
                 "every animation node view has the static kind string"
             );
         }
+    }
+
+    #[test]
+    fn snapshot_ron_round_trip_preserves_anim_payloads() {
+        // Build a populated animation graph: three states joined by two
+        // transitions carrying distinct trigger payloads.
+        let mut g = AnimGraph::new();
+        let idle = g.add_state("idle").unwrap();
+        let run = g.add_state("run").unwrap();
+        let jump = g.add_state("jump").unwrap();
+        let e_run = g
+            .add_transition(idle, run, AnimTransition::new("start_run"))
+            .unwrap();
+        let e_jump = g
+            .add_transition(run, jump, AnimTransition::new("leap"))
+            .unwrap();
+
+        // Capture the private substrate graph and round-trip it through the
+        // full path: Graph -> GraphSnapshot -> RON text -> GraphSnapshot -> Graph.
+        let snapshot = GraphSnapshot::from_graph(&g.graph);
+        let ron = snapshot.to_ron().expect("snapshot serializes to RON");
+        let restored_snapshot: GraphSnapshot<AnimState, AnimTransition> =
+            GraphSnapshot::from_ron(&ron).expect("snapshot deserializes from RON");
+        let restored = restored_snapshot.to_graph();
+
+        // Structure survives the round trip.
+        assert_eq!(
+            restored.node_count(),
+            g.graph.node_count(),
+            "node count survives the snapshot RON round trip"
+        );
+        assert_eq!(
+            restored.edge_count(),
+            g.graph.edge_count(),
+            "edge count survives the snapshot RON round trip"
+        );
+
+        // Node identity: every NodeId paired with its stored AnimState payload
+        // (the uninterpreted key) is preserved, in the same deterministic order.
+        let original_nodes: Vec<(NodeId, AnimState)> =
+            g.graph.nodes().map(|(id, n)| (id, n.clone())).collect();
+        let restored_nodes: Vec<(NodeId, AnimState)> =
+            restored.nodes().map(|(id, n)| (id, n.clone())).collect();
+        assert_eq!(
+            restored_nodes, original_nodes,
+            "every NodeId and AnimState payload is restored unchanged"
+        );
+
+        // Edge identity: every EdgeId paired with its full record — source
+        // node, destination node, and AnimTransition trigger payload — is
+        // preserved, in the same deterministic order.
+        let original_edges: Vec<(EdgeId, EdgeRecord<AnimTransition>)> =
+            g.graph.edges().map(|(id, r)| (id, r.clone())).collect();
+        let restored_edges: Vec<(EdgeId, EdgeRecord<AnimTransition>)> =
+            restored.edges().map(|(id, r)| (id, r.clone())).collect();
+        assert_eq!(
+            restored_edges, original_edges,
+            "every EdgeId, endpoint pair, and AnimTransition payload is restored unchanged"
+        );
+
+        // Spot-check the concrete transitions built above, addressed by the
+        // EdgeId returned at construction time.
+        let restored_run = restored
+            .edge(e_run)
+            .expect("the idle->run transition is present after restore");
+        assert_eq!(restored_run.src, idle, "run transition source restored");
+        assert_eq!(restored_run.dst, run, "run transition destination restored");
+        assert_eq!(
+            restored_run.data.trigger, "start_run",
+            "run transition trigger payload restored"
+        );
+        let restored_jump = restored
+            .edge(e_jump)
+            .expect("the run->jump transition is present after restore");
+        assert_eq!(restored_jump.src, run, "jump transition source restored");
+        assert_eq!(
+            restored_jump.dst, jump,
+            "jump transition destination restored"
+        );
+        assert_eq!(
+            restored_jump.data.trigger, "leap",
+            "jump transition trigger payload restored"
+        );
     }
 
     #[test]

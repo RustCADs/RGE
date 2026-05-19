@@ -3881,6 +3881,7 @@ name = "rge-anim-graph"
 version = "0.0.1"
 dependencies = [
  "rge-kernel-graph-foundation",
+ "serde",
 ]
 
 [[package]]
