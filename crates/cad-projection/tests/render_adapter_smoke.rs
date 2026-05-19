@@ -23,6 +23,11 @@
 //!   labels into `RenderMesh.face_labels` in projection-lookup triangle
 //!   order, while `TopologyFaceId::DEGENERATE` chamfer-cap labels survive
 //!   the adapter but are not resolved as upstream Cuboid faces.
+//! * **TransformOp renderer-label alignment (GitHub issue #33)**: a
+//!   `CuboidOp -> TransformOp` root preserves inherited non-degenerate
+//!   Cuboid labels into `RenderMesh.face_labels` in projection-lookup
+//!   triangle order. `TransformOp` is topology-preserving, so no
+//!   `TopologyFaceId::DEGENERATE` label is expected.
 //!
 //! Test inventory:
 //! * `render_mesh_face_labels_resolve_consistently_with_picker` — Cuboid
@@ -35,11 +40,13 @@
 //!   — RoundFillet renderer-label alignment (GitHub issue #31).
 //! * `fillet_render_mesh_face_labels_align_with_projection_lookup`
 //!   — FilletOp renderer-label alignment (GitHub issue #32).
+//! * `transform_render_mesh_face_labels_align_with_projection_lookup`
+//!   — TransformOp renderer-label alignment (GitHub issue #33).
 
 use rge_cad_core::{
     brep_face_ids_for_node, BRepEdgeProvider, BRepFaceId, BRepOwnerId, BRepProvider, CadGraph,
     CuboidOp, ExtrudeOp, FilletOp, OperatorNode, Polygon2D, RoundFilletOp, Tolerance,
-    TopologyFaceId,
+    TopologyFaceId, TransformOp,
 };
 use rge_cad_projection::{BRepHandle, CadProjection};
 use rge_kernel_ecs::World;
@@ -585,5 +592,192 @@ fn fillet_render_mesh_face_labels_align_with_projection_lookup() {
     assert!(
         saw_degenerate,
         "at least one DEGENERATE chamfer-cap label must be observed as a fixture sanity check"
+    );
+}
+
+/// **Test 6 — TransformOp renderer-label alignment for GitHub issue #33.**
+///
+/// Build a `CuboidOp -> TransformOp` graph with a non-identity Transform
+/// node as root, project the Transform root entity, and prove
+/// `CadProjection::render_mesh_for` preserves the projected
+/// `TopologyFaceId` labels into the renderer-side opaque `u64`
+/// `RenderMesh.face_labels` buffer in the SAME triangle order used by
+/// projection lookup:
+///
+/// 1. Every renderer-side `u64` equals the projected mesh's
+///    `TopologyFaceId.0` carried at the same triangle index — the adapter
+///    must not drop, reorder, or mis-convert labels.
+/// 2. `TransformOp` is topology-preserving — it transforms vertex
+///    positions, clones triangle indices unchanged, and passes upstream
+///    `face_labels` through one-for-one — so every renderer label is an
+///    inherited non-degenerate Cuboid label. No `TopologyFaceId::DEGENERATE`
+///    entry is expected for this Cuboid-through-Transform fixture.
+/// 3. Every renderer label resolves — through the Transform-root graph
+///    resolver (`brep_face_ids_for_node` for `transform_node`) — to the
+///    upstream Cuboid `BRepFaceId` minted under `ENTITY_OWNER`, and that
+///    identity equals the `BRepFaceId` returned by
+///    `brep_face_id_for_triangle` for the exact same triangle.
+///
+/// This smoke is distinct from the Cuboid, Extrude, RoundFillet, and Fillet
+/// render-adapter smokes above — it specifically exercises
+/// `OperatorNode::Transform` and binds the projected entity to the
+/// Transform root, not the upstream Cuboid node. It is also distinct from
+/// `transform_brep_face_lookup_smoke.rs`, which covers picker-side lookup
+/// only; this smoke covers the renderer adapter's opaque
+/// `RenderMesh.face_labels` buffer.
+#[test]
+fn transform_render_mesh_face_labels_align_with_projection_lookup() {
+    // --- Build CuboidOp -> TransformOp, Transform as root. ---------------
+    let cuboid = CuboidOp {
+        width: 1.0,
+        height: 1.0,
+        depth: 1.0,
+    };
+
+    let mut graph = CadGraph::new();
+    graph.begin_operation().expect("begin");
+    let cuboid_node = graph
+        .graph_mut()
+        .expect("mut")
+        .add_operator(OperatorNode::Cuboid(cuboid.clone()))
+        .expect("add cuboid");
+    // Non-identity translation, default (identity) rotation + unit scale.
+    let transform_node = graph
+        .graph_mut()
+        .expect("mut")
+        .add_operator(OperatorNode::Transform(TransformOp {
+            translation: [3.0, -2.0, 1.0],
+            ..TransformOp::default()
+        }))
+        .expect("add transform");
+    graph
+        .graph_mut()
+        .expect("mut")
+        .connect(cuboid_node, transform_node, 0)
+        .expect("connect cuboid -> transform");
+    graph
+        .graph_mut()
+        .expect("mut")
+        .set_root(transform_node)
+        .expect("set transform root");
+    graph.commit("cuboid -> transform").expect("commit");
+
+    // --- Spawn + project the Transform root (NOT the Cuboid node). -------
+    let mut projection = CadProjection::new();
+    let mut world = World::new();
+    world.register_snapshot_component::<BRepHandle>();
+    let entity = projection
+        .spawn_brep_entity(&mut world, transform_node)
+        .expect("spawn");
+    if let Some(mut em) = world.entity_mut(entity) {
+        if let Some(mut handle) = em.get_mut::<BRepHandle>() {
+            handle.brep_owner = Some(ENTITY_OWNER);
+        }
+    }
+    projection.tick(&mut world, &graph, tol()).expect("tick");
+
+    // --- Projected vs. renderer-side label buffers. ----------------------
+    let projected = projection
+        .projected_mesh(entity)
+        .expect("Transform root must have a projected mesh after tick");
+    let projected_labels = projected
+        .face_labels
+        .as_ref()
+        .expect("TransformOp inherits the Cuboid's labeled tessellation");
+
+    let render = projection
+        .render_mesh_for(entity, &world)
+        .expect("must render for the projected Transform entity");
+    let render_labels = render
+        .face_labels
+        .as_ref()
+        .expect("labeled projected mesh must yield Some(face_labels) through the adapter");
+
+    assert_eq!(
+        render_labels.len(),
+        projected.triangle_count(),
+        "one opaque u64 renderer label per projected Transform triangle"
+    );
+    assert_eq!(
+        render_labels.len(),
+        projected_labels.len(),
+        "renderer-side and projected label buffers must have equal length"
+    );
+    // Renderer label N is exactly the projected `TopologyFaceId.0` at N —
+    // proves the adapter preserves order and value, not just `Some(_)`.
+    for (tri, (&render_label, &topo_label)) in render_labels
+        .iter()
+        .zip(projected_labels.iter())
+        .enumerate()
+    {
+        assert_eq!(
+            render_label, topo_label.0,
+            "triangle {tri}: renderer-side u64 label must equal the projected \
+             TopologyFaceId.0 carried at the same triangle index"
+        );
+    }
+
+    // --- Transform-root resolver pairs — the same identity path the picker
+    // uses internally for `brep_face_id_for_triangle`. -------------------
+    let pairs: Vec<(TopologyFaceId, BRepFaceId)> =
+        brep_face_ids_for_node(graph.graph(), transform_node, ENTITY_OWNER)
+            .expect("Transform-root resolver must succeed");
+
+    // Upstream Cuboid face mapping, minted under the SAME owner — the
+    // identities the topology-preserving Transform root must inherit
+    // unchanged.
+    let direct_pairs: Vec<(TopologyFaceId, BRepFaceId)> = cuboid.brep_face_ids(ENTITY_OWNER);
+    assert_eq!(direct_pairs.len(), 6, "Cuboid emits exactly 6 face IDs");
+
+    let mut saw_inherited = false;
+    for (tri, &render_label) in render_labels.iter().enumerate() {
+        let topo = TopologyFaceId(render_label);
+        // TransformOp adds no nameless cap or corner geometry, so every
+        // renderer label is a non-degenerate inherited Cuboid label.
+        assert_ne!(
+            topo,
+            TopologyFaceId::DEGENERATE,
+            "triangle {tri}: TransformOp preserves topology — no DEGENERATE \
+             renderer label is expected for the Cuboid-through-Transform fixture"
+        );
+        saw_inherited = true;
+        // The label must be one of the upstream Cuboid's 6 face identities,
+        // minted under `ENTITY_OWNER`.
+        let upstream = direct_pairs
+            .iter()
+            .find(|(t, _)| *t == topo)
+            .map(|(_, id)| *id)
+            .unwrap_or_else(|| {
+                panic!("triangle {tri}: renderer label {topo:?} has no upstream Cuboid face id")
+            });
+        // Resolving the label through the Transform-root graph resolver must
+        // yield the SAME upstream Cuboid identity — Transform inherits, it
+        // does not re-mint.
+        let resolved = pairs
+            .iter()
+            .find(|(t, _)| *t == topo)
+            .map(|(_, id)| *id)
+            .unwrap_or_else(|| {
+                panic!("triangle {tri}: renderer label {topo:?} has no Transform-root face id")
+            });
+        assert_eq!(
+            resolved, upstream,
+            "triangle {tri}: Transform-root resolver MUST inherit the upstream \
+             Cuboid BRepFaceId for renderer label {topo:?}"
+        );
+        // ... and it must match the picker's answer for the same triangle.
+        let picker_resolved = projection
+            .brep_face_id_for_triangle(entity, tri, &world, graph.graph())
+            .expect("picker-side resolution must succeed for an inherited triangle");
+        assert_eq!(
+            picker_resolved, resolved,
+            "triangle {tri}: renderer label {topo:?} resolved through the \
+             Transform-root resolver MUST match brep_face_id_for_triangle"
+        );
+    }
+
+    assert!(
+        saw_inherited,
+        "every renderer label must be an inherited non-degenerate Cuboid label"
     );
 }

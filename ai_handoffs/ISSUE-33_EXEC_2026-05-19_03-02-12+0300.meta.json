@@ -1,0 +1,14 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-33",
+    "packet_type": "EXEC",
+    "author": "Executor / Claude",
+    "timestamp": "2026-05-19_03-02-12+0300",
+    "related_files": [
+                          "crates/cad-projection/tests/render_adapter_smoke.rs — added the TransformOp render-adapter face-label smoke `transform_render_mesh_face_labels_align_with_projection_lookup`, updated file-level smoke/inventory comments, and added the `TransformOp` import"
+                      ],
+    "status": "AWAITING_REVIEW",
+    "handoff_status": "COMPLETE",
+    "next_role": "REVIEWER_AI",
+    "exit_code": 0
+}
