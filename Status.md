@@ -303,7 +303,7 @@ Multiple unblocked threads after the 2026-05-06 second deep reaudit:
 
 **~~D-7.4. topology lineage prototype~~ DONE 2026-05-07.** `topo_lineage/` substrate; 21 tests; cad-core 116 → 137.
 
-**~~C. kernel/plugin-host~~ DONE 2026-05-07.** Closes §10.4 dogfood-rule carry-over. `Plugin` trait + `PluginContext` + `PluginHost` lifecycle + plugin-fatal isolation; 23 tests including dogfood-smoke integration. **kernel/plugin-host promoted EMPTY-STUB → IMPLEMENTED**. Current Tier-1 kernel state after the later `io-scheduler` + `job-system` + `asset-view` v0 cavities: 10 of 15 implemented + 3 PARTIAL, with 2 empty stubs remaining (`shared`, `asset-streaming`).
+**~~C. kernel/plugin-host~~ DONE 2026-05-07.** Closes §10.4 dogfood-rule carry-over. `Plugin` trait + `PluginContext` + `PluginHost` lifecycle + plugin-fatal isolation; 23 tests including dogfood-smoke integration. **kernel/plugin-host promoted EMPTY-STUB → IMPLEMENTED**. Current Tier-1 kernel state after the later `io-scheduler` + `job-system` + `asset-view` + `asset-streaming` + `shared` v0-cavity dispatches: 10 of 15 implemented + 5 PARTIAL v0 cavities, with 0 empty Tier-1 kernel stubs remaining.
 
 **~~D-7.4-followup. csgrs metadata-passthrough~~ DONE 2026-05-07.** `BooleanOp::evaluate_labeled` carries `TopologyFaceId` through csgrs's `Mesh<S>` polygon metadata; `infer_lineage_labeled` for high-confidence per-face classification (fixes v0 plane-only false-positive of Merged-vs-Split for partial Difference). Existing Tessellation path kept bit-identical; both coexist. 11 new tests including labeled-Difference integration smoke. cad-core 137 → 148.
 
