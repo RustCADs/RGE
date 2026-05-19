@@ -53,10 +53,19 @@
 //! square-profile `OperatorNode::Extrude` and proves `pick_face` flows that
 //! variable-N consumer through the same picker path, returning the stable
 //! `ExtrudeFaceTag::Top` cap identity.
+//!
+//! Test 10 (`pick_resolves_revolve_start_cap_face`) is the mode-driven
+//! topology sibling of test 9: it projects a directly rooted partial-mode
+//! square-ring `OperatorNode::Revolve` and proves `pick_face` flows the
+//! Revolve consumer through the same picker path, returning the stable
+//! `RevolveFaceTag::StartCap { profile_count: 4 }` cap identity.
+
+use std::f32::consts::PI;
 
 use rge_cad_core::{
     BRepEdgeProvider, BRepFaceId, BRepOwnerId, CadGraph, CuboidFaceTag, CuboidOp, ExtrudeFaceTag,
-    ExtrudeOp, FilletOp, OperatorNode, Polygon2D, RoundFilletOp, Tolerance,
+    ExtrudeOp, FilletOp, OperatorNode, Polygon2D, RevolveFaceTag, RevolveOp, RoundFilletOp,
+    Tolerance,
 };
 use rge_cad_projection::{BRepHandle, CadProjection, FacePick, Ray};
 use rge_kernel_ecs::World;
@@ -644,6 +653,104 @@ fn pick_resolves_extrude_top_cap_face() {
     assert!(
         (pick.t - 4.0).abs() < 1e-4,
         "ray-t at the Top cap (z=1.0) is expected at 4.0, got {}",
+        pick.t
+    );
+}
+
+/// **Test 10** — direct partial-mode square-ring `RevolveOp` root: a ray
+/// through the interior of the start cap picks the Revolve's stable
+/// `StartCap` `BRepFaceId`.
+///
+/// Test 9 proves `pick_face` flows the variable-N `ExtrudeOp` consumer
+/// through the picker. This smoke is the mode-driven-topology sibling:
+/// `RevolveOp` is the only operator whose face count and label repetition
+/// both change with a Full/Partial mode flip. The fixture is the labeled
+/// partial-mode square-ring Revolve used by the Revolve projection smokes —
+/// `Polygon2D::new([[1,0],[2,0],[2,1],[1,1]])`, `segments = 8`, `angle = π`
+/// — projecting to 68 triangles (`2*n*segments + 2*(n-2) = 64 + 4`).
+///
+/// In Partial mode the start cap is a fan-triangulated copy of the profile
+/// lying in the `z = 0` plane. The ray origin `[1.25, 0.5, -5.0]` along
+/// `+Z` targets `[1.25, 0.5]` in XY: interior to the `[1,2]×[0,1]` square
+/// profile, off the cap boundary, off every cap vertex, and above the fan
+/// diagonal from `[1,0]` to `[2,1]` (`y = x - 1` ⇒ `0.5 > 0.25`). The
+/// picker may see farther intersections deeper in the swept solid; the
+/// assertion is that the closest resolvable face is the start cap, hit at
+/// `z = 0` ⇒ `t = 5.0`.
+#[test]
+fn pick_resolves_revolve_start_cap_face() {
+    let mut graph = CadGraph::new();
+    graph.begin_operation().expect("begin");
+    // Square-ring profile + segments=8 + angle=π — the labeled partial-mode
+    // square-ring fixture shared with the Revolve projection smokes.
+    let profile = Polygon2D::new(vec![[1.0, 0.0], [2.0, 0.0], [2.0, 1.0], [1.0, 1.0]])
+        .expect("square-ring profile");
+    let revolve = RevolveOp::partial(profile, 8, PI).expect("revolve partial");
+    let revolve_node = graph
+        .graph_mut()
+        .expect("mut")
+        .add_operator(OperatorNode::Revolve(revolve))
+        .expect("add revolve");
+    graph
+        .graph_mut()
+        .expect("mut2")
+        .set_root(revolve_node)
+        .expect("set root");
+    graph.commit("partial square-ring revolve").expect("commit");
+
+    let mut projection = CadProjection::new();
+    let mut world = World::new();
+    world.register_snapshot_component::<BRepHandle>();
+    let entity = projection
+        .spawn_brep_entity(&mut world, revolve_node)
+        .expect("spawn");
+    if let Some(mut em) = world.entity_mut(entity) {
+        if let Some(mut handle) = em.get_mut::<BRepHandle>() {
+            handle.brep_owner = Some(ENTITY_OWNER);
+        }
+    }
+    projection.tick(&mut world, &graph, tol()).expect("tick");
+
+    // Sanity-check the fixture is the labeled partial-mode square-ring case:
+    // 2*n*segments + 2*(n-2) = 2*4*8 + 2*2 = 68 triangles, all labeled.
+    let mesh = projection.projected_mesh(entity).expect("mesh");
+    assert_eq!(
+        mesh.triangle_count(),
+        68,
+        "partial-mode square-ring Revolve (n=4, segments=8) projects to 68 triangles"
+    );
+    assert!(
+        mesh.face_labels.is_some(),
+        "the partial-mode Revolve projection must carry face_labels"
+    );
+
+    // Ray along +Z through the start-cap interior at z=0. [1.25, 0.5] is
+    // interior to the [1,2]×[0,1] square profile, off the cap boundary,
+    // cap vertices, and the fan diagonal y = x - 1.
+    let ray = Ray {
+        origin: [1.25, 0.5, -5.0],
+        direction: [0.0, 0.0, 1.0],
+    };
+    let pick = projection
+        .pick_face(&ray, &world, graph.graph())
+        .expect("ray must hit the Revolve start cap");
+
+    assert_eq!(
+        pick.entity, entity,
+        "the directly projected Revolve-root entity must be picked"
+    );
+    assert_eq!(pick.owner, ENTITY_OWNER);
+    assert_eq!(
+        pick.face_id,
+        BRepFaceId::for_revolve_face(ENTITY_OWNER, RevolveFaceTag::StartCap { profile_count: 4 }),
+        "the picked face_id must be the Revolve StartCap's stable identity"
+    );
+    assert!(pick.t > 0.0, "ray-t must be strictly positive");
+    // Start cap lies in the z=0 plane; ray origin at z=-5 along +Z hits it
+    // at t = 5.0.
+    assert!(
+        (pick.t - 5.0).abs() < 1e-4,
+        "ray-t at the start cap (z=0) is expected at 5.0, got {}",
         pick.t
     );
 }

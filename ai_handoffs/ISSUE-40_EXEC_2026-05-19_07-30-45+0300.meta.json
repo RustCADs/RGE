@@ -1,0 +1,14 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-40",
+    "packet_type": "EXEC",
+    "author": "Executor / Claude",
+    "timestamp": "2026-05-19_07-30-45+0300",
+    "related_files": [
+                          "crates/cad-projection/tests/face_picking_smoke.rs — added Test 10 (`pick_resolves_revolve_start_cap_face`), file-level inventory comment, and `RevolveOp`/`RevolveFaceTag`/`PI` imports"
+                      ],
+    "status": "AWAITING_REVIEW",
+    "handoff_status": "COMPLETE",
+    "next_role": "REVIEWER_AI",
+    "exit_code": 0
+}
