@@ -46,10 +46,17 @@
 //! face-identity resolution rule, but through `OperatorNode::RoundFillet`
 //! (the topology-preserving rounded-edge operator) instead of
 //! `OperatorNode::Fillet`.
+//!
+//! Test 9 (`pick_resolves_extrude_top_cap_face`) is the variable-N topology
+//! sibling of tests 1-8: those all pick fixed-topology Cuboid (or
+//! Cuboid-rooted) geometry, while this one projects a directly rooted
+//! square-profile `OperatorNode::Extrude` and proves `pick_face` flows that
+//! variable-N consumer through the same picker path, returning the stable
+//! `ExtrudeFaceTag::Top` cap identity.
 
 use rge_cad_core::{
-    BRepEdgeProvider, BRepFaceId, BRepOwnerId, CadGraph, CuboidFaceTag, CuboidOp, FilletOp,
-    OperatorNode, RoundFilletOp, Tolerance,
+    BRepEdgeProvider, BRepFaceId, BRepOwnerId, CadGraph, CuboidFaceTag, CuboidOp, ExtrudeFaceTag,
+    ExtrudeOp, FilletOp, OperatorNode, Polygon2D, RoundFilletOp, Tolerance,
 };
 use rge_cad_projection::{BRepHandle, CadProjection, FacePick, Ray};
 use rge_kernel_ecs::World;
@@ -563,5 +570,80 @@ fn pick_resolves_round_filleted_geometry_top_face() {
         pick.face_id,
         BRepFaceId::for_cuboid_face(ENTITY_OWNER, CuboidFaceTag::PosZ),
         "ray from +Z should resolve the inherited Cuboid +Z face through RoundFilletOp"
+    );
+}
+
+/// **Test 9** — direct square-profile `ExtrudeOp` root: a ray from above the
+/// center of the top cap picks the Extrude's stable Top-cap `BRepFaceId`.
+///
+/// Tests 1-8 all exercise fixed-topology Cuboid (or Cuboid-rooted) geometry.
+/// This smoke proves `CadProjection::pick_face` flows the variable-N
+/// `ExtrudeOp` topology consumer through the same picker path: a directly
+/// projected `OperatorNode::Extrude` root, a `BRepHandle` owner, and the
+/// closest-resolvable selection rule. The ray targets `[0.5, 0.5]` in XY,
+/// which is interior to both top-cap fan triangles of the CCW unit-square
+/// profile — no cap edge, cap vertex, side wall, or triangle-boundary
+/// ambiguity.
+#[test]
+fn pick_resolves_extrude_top_cap_face() {
+    let mut graph = CadGraph::new();
+    graph.begin_operation().expect("begin");
+    // CCW unit-square profile, matching the existing Extrude projection
+    // smokes' convention.
+    let profile = Polygon2D::new(vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]])
+        .expect("square profile");
+    let extrude = ExtrudeOp::new(profile, 1.0).expect("extrude");
+    let extrude_node = graph
+        .graph_mut()
+        .expect("mut")
+        .add_operator(OperatorNode::Extrude(extrude))
+        .expect("add extrude");
+    graph
+        .graph_mut()
+        .expect("mut2")
+        .set_root(extrude_node)
+        .expect("set root");
+    graph.commit("square extrude").expect("commit");
+
+    let mut projection = CadProjection::new();
+    let mut world = World::new();
+    world.register_snapshot_component::<BRepHandle>();
+    let entity = projection
+        .spawn_brep_entity(&mut world, extrude_node)
+        .expect("spawn");
+    if let Some(mut em) = world.entity_mut(entity) {
+        if let Some(mut handle) = em.get_mut::<BRepHandle>() {
+            handle.brep_owner = Some(ENTITY_OWNER);
+        }
+    }
+    projection.tick(&mut world, &graph, tol()).expect("tick");
+
+    // Ray straight down through the center of the top cap. The top ring of
+    // a length-1.0 extrude sits at z=+1.0; [0.5, 0.5] in XY is interior to
+    // both top-cap fan triangles of the CCW unit square.
+    let ray = Ray {
+        origin: [0.5, 0.5, 5.0],
+        direction: [0.0, 0.0, -1.0],
+    };
+    let pick = projection
+        .pick_face(&ray, &world, graph.graph())
+        .expect("ray must hit the Extrude top cap");
+
+    assert_eq!(
+        pick.entity, entity,
+        "the directly projected Extrude-root entity must be picked"
+    );
+    assert_eq!(pick.owner, ENTITY_OWNER);
+    assert_eq!(
+        pick.face_id,
+        BRepFaceId::for_extrude_face(ENTITY_OWNER, ExtrudeFaceTag::Top),
+        "the picked face_id must be the Extrude Top-cap's stable identity"
+    );
+    assert!(pick.t > 0.0, "ray-t must be strictly positive");
+    // Top cap at z=+1.0; ray origin at z=+5 along -Z hits at t = 4.0.
+    assert!(
+        (pick.t - 4.0).abs() < 1e-4,
+        "ray-t at the Top cap (z=1.0) is expected at 4.0, got {}",
+        pick.t
     );
 }
