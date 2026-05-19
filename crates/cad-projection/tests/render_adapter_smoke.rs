@@ -28,6 +28,13 @@
 //!   Cuboid labels into `RenderMesh.face_labels` in projection-lookup
 //!   triangle order. `TransformOp` is topology-preserving, so no
 //!   `TopologyFaceId::DEGENERATE` label is expected.
+//! * **SweepOp renderer-label alignment (GitHub issue #34)**: a
+//!   `SweepOp`-root entity (square profile, 3-point monotonic-Z path)
+//!   preserves the projected `TopologyFaceId` labels into
+//!   `RenderMesh.face_labels` in projection-lookup triangle order.
+//!   `SweepOp` mints stable cap/side face labels, so every renderer
+//!   label is non-degenerate and resolves to the same `BRepFaceId` as
+//!   picker-side lookup.
 //!
 //! Test inventory:
 //! * `render_mesh_face_labels_resolve_consistently_with_picker` — Cuboid
@@ -42,11 +49,13 @@
 //!   — FilletOp renderer-label alignment (GitHub issue #32).
 //! * `transform_render_mesh_face_labels_align_with_projection_lookup`
 //!   — TransformOp renderer-label alignment (GitHub issue #33).
+//! * `sweep_render_mesh_face_labels_align_with_projection_lookup`
+//!   — SweepOp renderer-label alignment (GitHub issue #34).
 
 use rge_cad_core::{
     brep_face_ids_for_node, BRepEdgeProvider, BRepFaceId, BRepOwnerId, BRepProvider, CadGraph,
-    CuboidOp, ExtrudeOp, FilletOp, OperatorNode, Polygon2D, RoundFilletOp, Tolerance,
-    TopologyFaceId, TransformOp,
+    CuboidOp, ExtrudeOp, FilletOp, OperatorNode, Polygon2D, Polyline3D, RoundFilletOp, SweepOp,
+    Tolerance, TopologyFaceId, TransformOp,
 };
 use rge_cad_projection::{BRepHandle, CadProjection};
 use rge_kernel_ecs::World;
@@ -779,5 +788,168 @@ fn transform_render_mesh_face_labels_align_with_projection_lookup() {
     assert!(
         saw_inherited,
         "every renderer label must be an inherited non-degenerate Cuboid label"
+    );
+}
+
+/// **Test 7 — SweepOp renderer-label alignment for GitHub issue #34.**
+///
+/// Build a graph whose root is a `SweepOp` node — the canonical
+/// square-profile, 3-point monotonic-Z fixture from
+/// `sweep_brep_face_id_lookup_smoke.rs` — project the Sweep root entity,
+/// and prove `CadProjection::render_mesh_for` preserves the projected
+/// `TopologyFaceId` labels into the renderer-side opaque `u64`
+/// `RenderMesh.face_labels` buffer in the SAME triangle order used by
+/// projection lookup:
+///
+/// 1. `RenderMesh.face_labels` is `Some`, with exactly one opaque `u64`
+///    per projected Sweep triangle (20 for this fixture), and every
+///    renderer-side `u64` equals the projected mesh's `TopologyFaceId.0`
+///    carried at the same triangle index — the adapter must not drop,
+///    reorder, or mis-convert labels.
+/// 2. `SweepOp` mints stable face labels for both caps and side faces,
+///    so every renderer label is non-degenerate. Each label resolves —
+///    through the Sweep-root graph resolver (`brep_face_ids_for_node`
+///    for `sweep_node`) — to the exact `BRepFaceId` returned by
+///    `brep_face_id_for_triangle` for that same triangle.
+///
+/// This smoke is distinct from the Cuboid, Extrude, RoundFillet, Fillet,
+/// and Transform render-adapter smokes above — it specifically exercises
+/// `OperatorNode::Sweep` and binds the projected entity to the Sweep
+/// root. It is also distinct from `sweep_brep_face_id_lookup_smoke.rs`,
+/// which covers picker-side lookup only; this smoke covers the renderer
+/// adapter's opaque `RenderMesh.face_labels` buffer.
+#[test]
+fn sweep_render_mesh_face_labels_align_with_projection_lookup() {
+    // --- Build a SweepOp root: square profile, 3-point monotonic-Z path. --
+    // The canonical fixture mirrored from sweep_brep_face_id_lookup_smoke.rs:
+    // a unit-square profile (n = 4, CCW) swept along a +Z path (m = 3).
+    let profile =
+        Polygon2D::new(vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]).expect("square");
+    let path = Polyline3D::new(vec![[0.0, 0.0, 0.0], [0.0, 0.0, 1.0], [0.0, 0.0, 2.0]])
+        .expect("z-axis path");
+    let sweep = SweepOp::new(profile, path);
+
+    let mut graph = CadGraph::new();
+    graph.begin_operation().expect("begin");
+    let sweep_node = graph
+        .graph_mut()
+        .expect("mut")
+        .add_operator(OperatorNode::Sweep(sweep))
+        .expect("add sweep");
+    graph
+        .graph_mut()
+        .expect("mut")
+        .set_root(sweep_node)
+        .expect("set sweep root");
+    graph.commit("sweep").expect("commit");
+
+    // --- Spawn + project the Sweep root. ---------------------------------
+    let mut projection = CadProjection::new();
+    let mut world = World::new();
+    world.register_snapshot_component::<BRepHandle>();
+    let entity = projection
+        .spawn_brep_entity(&mut world, sweep_node)
+        .expect("spawn");
+    if let Some(mut em) = world.entity_mut(entity) {
+        if let Some(mut handle) = em.get_mut::<BRepHandle>() {
+            handle.brep_owner = Some(ENTITY_OWNER);
+        }
+    }
+    projection.tick(&mut world, &graph, tol()).expect("tick");
+
+    // --- Projected vs. renderer-side label buffers. ----------------------
+    let projected = projection
+        .projected_mesh(entity)
+        .expect("Sweep root must have a projected mesh after tick");
+    // n=4, m=3 → 2 * n * (m - 1) + 2 * (n - 2) = 2*4*2 + 2*2 = 20 triangles.
+    assert_eq!(
+        projected.triangle_count(),
+        20,
+        "square-profile, 3-point monotonic-Z Sweep projects to exactly 20 triangles"
+    );
+    let projected_labels = projected
+        .face_labels
+        .as_ref()
+        .expect("SweepOp emits a labeled tessellation for caps and side faces");
+
+    let render = projection
+        .render_mesh_for(entity, &world)
+        .expect("must render for the projected Sweep entity");
+    let render_labels = render
+        .face_labels
+        .as_ref()
+        .expect("labeled projected mesh must yield Some(face_labels) through the adapter");
+
+    assert_eq!(
+        render_labels.len(),
+        20,
+        "the square-profile, monotonic-Z Sweep fixture yields exactly 20 renderer labels"
+    );
+    assert_eq!(
+        render_labels.len(),
+        projected.triangle_count(),
+        "one opaque u64 renderer label per projected Sweep triangle"
+    );
+    assert_eq!(
+        render_labels.len(),
+        projected_labels.len(),
+        "renderer-side and projected label buffers must have equal length"
+    );
+    // Renderer label N is exactly the projected `TopologyFaceId.0` at N —
+    // proves the adapter preserves order and value, not just `Some(_)`.
+    for (tri, (&render_label, &topo_label)) in render_labels
+        .iter()
+        .zip(projected_labels.iter())
+        .enumerate()
+    {
+        assert_eq!(
+            render_label, topo_label.0,
+            "triangle {tri}: renderer-side u64 label must equal the projected \
+             TopologyFaceId.0 carried at the same triangle index"
+        );
+    }
+
+    // --- Sweep-root resolver pairs — the same identity path the picker
+    // uses internally for `brep_face_id_for_triangle`. -------------------
+    let pairs: Vec<(TopologyFaceId, BRepFaceId)> =
+        brep_face_ids_for_node(graph.graph(), sweep_node, ENTITY_OWNER)
+            .expect("Sweep-root resolver must succeed");
+
+    let mut saw_label = false;
+    for (tri, &render_label) in render_labels.iter().enumerate() {
+        let topo = TopologyFaceId(render_label);
+        // SweepOp mints stable face labels for caps and side faces, so no
+        // DEGENERATE renderer label is expected for this valid fixture.
+        assert_ne!(
+            topo,
+            TopologyFaceId::DEGENERATE,
+            "triangle {tri}: SweepOp emits stable cap/side face labels — no \
+             DEGENERATE renderer label is expected for the square-profile, \
+             monotonic-Z Sweep fixture"
+        );
+        saw_label = true;
+        // Resolve the renderer label through the Sweep-root graph resolver.
+        let resolved = pairs
+            .iter()
+            .find(|(t, _)| *t == topo)
+            .map(|(_, id)| *id)
+            .unwrap_or_else(|| {
+                panic!("triangle {tri}: renderer label {topo:?} has no Sweep-root face id")
+            });
+        // ... and it must match the picker's answer for the exact same
+        // triangle — not merely "some BRepFaceId".
+        let picker_resolved = projection
+            .brep_face_id_for_triangle(entity, tri, &world, graph.graph())
+            .expect("picker-side resolution must succeed for a Sweep triangle");
+        assert_eq!(
+            picker_resolved, resolved,
+            "triangle {tri}: renderer label {topo:?} resolved through the \
+             Sweep-root resolver MUST match brep_face_id_for_triangle"
+        );
+    }
+
+    assert!(
+        saw_label,
+        "every renderer label must be a non-degenerate Sweep face label"
     );
 }
