@@ -239,7 +239,7 @@ impl VizAdapter for AnimGraph {
 
 #[cfg(test)]
 mod tests {
-    use rge_kernel_graph_foundation::{EdgeRecord, GraphError, GraphSnapshot};
+    use rge_kernel_graph_foundation::{EdgeRecord, GraphDiff, GraphError, GraphSnapshot};
 
     use super::*;
 
@@ -545,5 +545,78 @@ mod tests {
                 "edge view label is the transition trigger string"
             );
         }
+    }
+
+    #[test]
+    fn structural_diff_reports_added_anim_state_and_transition() {
+        // Build an initial animation graph: two states joined by one
+        // transition, then snapshot it as the "old" state.
+        let mut g = AnimGraph::new();
+        let idle = g.add_state("idle").unwrap();
+        let run = g.add_state("run").unwrap();
+        g.add_transition(idle, run, AnimTransition::new("start_run"))
+            .unwrap();
+        let old_snapshot = GraphSnapshot::from_graph(&g.graph);
+
+        // Mutate the same graph: add exactly one new animation state and
+        // exactly one new transition connected to that new state.
+        let jump = g.add_state("jump").unwrap();
+        let new_edge_id = g
+            .add_transition(run, jump, AnimTransition::new("leap"))
+            .unwrap();
+        let new_snapshot = GraphSnapshot::from_graph(&g.graph);
+
+        // The graph-foundation structural diff over the old → new snapshots.
+        let diff = GraphDiff::between(&old_snapshot, &new_snapshot);
+
+        // Exactly the one new state is reported as added, with its payload.
+        assert_eq!(
+            diff.added_nodes.len(),
+            1,
+            "exactly one animation state was added"
+        );
+        assert_eq!(
+            diff.added_nodes.get(&jump),
+            Some(&AnimState {
+                key: "jump".to_owned(),
+            }),
+            "the added node is the new 'jump' animation state, by id and payload"
+        );
+
+        // Exactly the one new transition is reported as added, with its
+        // full record.
+        assert_eq!(
+            diff.added_edges.len(),
+            1,
+            "exactly one animation transition was added"
+        );
+        assert_eq!(
+            diff.added_edges.get(&new_edge_id),
+            Some(&EdgeRecord {
+                src: run,
+                dst: jump,
+                data: AnimTransition::new("leap"),
+            }),
+            "the added edge record carries the source, new node, and trigger payload"
+        );
+
+        // Nothing was removed and no pre-existing state or transition record
+        // changed.
+        assert!(
+            diff.removed_nodes.is_empty(),
+            "no animation state was removed"
+        );
+        assert!(
+            diff.removed_edges.is_empty(),
+            "no animation transition was removed"
+        );
+        assert!(
+            diff.changed_nodes.is_empty(),
+            "no existing animation state record changed"
+        );
+        assert!(
+            diff.changed_edges.is_empty(),
+            "no existing animation transition record changed"
+        );
     }
 }

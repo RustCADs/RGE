@@ -1,0 +1,15 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-52",
+    "packet_type": "EXEC",
+    "author": "Executor / Claude",
+    "timestamp": "2026-05-19_18-27-59+0300",
+    "related_files": [
+                          "crates/material-graph/src/lib.rs — normalized working-tree newline style from CRLF to LF (no code change)",
+                          "crates/anim-graph/src/lib.rs — unchanged this round; carries the prior EXEC\u0027s test-module work"
+                      ],
+    "status": "AWAITING_REVIEW",
+    "handoff_status": "COMPLETE",
+    "next_role": "REVIEWER_AI",
+    "exit_code": 0
+}

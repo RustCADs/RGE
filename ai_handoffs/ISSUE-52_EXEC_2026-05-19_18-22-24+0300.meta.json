@@ -1,0 +1,14 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-52",
+    "packet_type": "EXEC",
+    "author": "Executor / Claude",
+    "timestamp": "2026-05-19_18-22-24+0300",
+    "related_files": [
+                          "crates/anim-graph/src/lib.rs — added `GraphDiff` to the test-module import; added one unit test `structural_diff_reports_added_anim_state_and_transition`"
+                      ],
+    "status": "AWAITING_REVIEW",
+    "handoff_status": "COMPLETE",
+    "next_role": "REVIEWER_AI",
+    "exit_code": 0
+}
