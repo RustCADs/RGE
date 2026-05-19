@@ -23,6 +23,16 @@
 //!   `u64` label resolves to the SAME identity as the picker-side
 //!   `BRepFaceId`. Without this, sub-α's opaque-buffer deviation could
 //!   silently desync the two paths.
+//! * **ExtrudeOp renderer-label alignment (GitHub issue #38)**: a
+//!   direct `ExtrudeOp`-root entity (unit-square profile, n = 4,
+//!   depth 1.0) preserves the projected `TopologyFaceId` labels into
+//!   `RenderMesh.face_labels` in projection-lookup triangle order.
+//!   `ExtrudeOp` mints stable cap and side face labels, so every
+//!   renderer label is non-degenerate and resolves through the
+//!   Extrude-root graph resolver to the same `BRepFaceId` as
+//!   picker-side lookup. Distinct from the Extrude triangle-count
+//!   smoke, which pins only mesh/label counts rather than renderer
+//!   face-label value/order preservation and B-Rep identity.
 //! * **RoundFillet renderer-label alignment (GitHub issue #31)**: a
 //!   `CuboidOp -> RoundFilletOp` root preserves inherited non-degenerate
 //!   labels — and RoundFillet-added degenerate cap/corner labels — into
@@ -81,6 +91,8 @@
 //!   — Cuboid triangle-count contract.
 //! * `extrude_square_render_mesh_triangle_count_matches_d_projection_beta_contract`
 //!   — Extrude triangle-count contract.
+//! * `extrude_render_mesh_face_labels_align_with_projection_lookup`
+//!   — ExtrudeOp renderer-label alignment (GitHub issue #38).
 //! * `round_fillet_render_mesh_face_labels_align_with_projection_lookup`
 //!   — RoundFillet renderer-label alignment (GitHub issue #31).
 //! * `fillet_render_mesh_face_labels_align_with_projection_lookup`
@@ -1490,4 +1502,171 @@ fn boolean_render_mesh_face_labels_align_with_projection_lookup() {
              BRepFaceId is resolved for any triangle"
         );
     }
+}
+
+/// **Test 10 — ExtrudeOp renderer-label alignment for GitHub issue #38.**
+///
+/// Build a graph whose root is a direct `ExtrudeOp` node — the canonical
+/// unit-square profile (n = 4, CCW) extruded to depth 1.0, the same
+/// fixture used by
+/// `extrude_square_render_mesh_triangle_count_matches_d_projection_beta_contract`
+/// — project the Extrude root entity, and prove
+/// `CadProjection::render_mesh_for` preserves the projected
+/// `TopologyFaceId` labels into the renderer-side opaque `u64`
+/// `RenderMesh.face_labels` buffer in the SAME triangle order used by
+/// projection lookup:
+///
+/// 1. `RenderMesh.face_labels` is `Some`, with exactly one opaque `u64`
+///    per projected Extrude triangle (12 for this n=4, depth-1.0 fixture
+///    per the D-projection-β contract), equal in length to
+///    `ProjectedMesh.face_labels`, and every renderer-side `u64` equals
+///    the projected mesh's `TopologyFaceId.0` carried at the same
+///    triangle index — the adapter must not drop, reorder, or
+///    mis-convert labels.
+/// 2. `ExtrudeOp` mints stable face labels for both caps and side faces,
+///    so every renderer label is non-degenerate. Each label resolves —
+///    through the Extrude-root graph resolver (`brep_face_ids_for_node`
+///    for `extrude_node`) — to the exact `BRepFaceId` returned by
+///    `brep_face_id_for_triangle` for that same triangle.
+///
+/// This smoke is distinct from the Extrude triangle-count smoke above:
+/// that test pins only mesh/label counts, while this one pins renderer
+/// face-label value/order preservation and B-Rep identity consistency.
+/// It specifically exercises `OperatorNode::Extrude` as the graph root
+/// and binds the projected entity to the Extrude root.
+#[test]
+fn extrude_render_mesh_face_labels_align_with_projection_lookup() {
+    // --- Build a direct ExtrudeOp root: unit-square profile, depth 1.0. ---
+    // The canonical n=4 unit-square, depth-1.0 fixture mirrored from
+    // extrude_square_render_mesh_triangle_count_matches_d_projection_beta_contract.
+    let profile =
+        Polygon2D::new(vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]).expect("square");
+    let extrude = ExtrudeOp::new(profile, 1.0).expect("extrude construction");
+
+    let mut graph = CadGraph::new();
+    graph.begin_operation().expect("begin");
+    let extrude_node = graph
+        .graph_mut()
+        .expect("mut")
+        .add_operator(OperatorNode::Extrude(extrude))
+        .expect("add extrude");
+    graph
+        .graph_mut()
+        .expect("mut")
+        .set_root(extrude_node)
+        .expect("set extrude root");
+    graph.commit("extrude square").expect("commit");
+
+    // --- Spawn + project the Extrude root. -------------------------------
+    let mut projection = CadProjection::new();
+    let mut world = World::new();
+    world.register_snapshot_component::<BRepHandle>();
+    let entity = projection
+        .spawn_brep_entity(&mut world, extrude_node)
+        .expect("spawn");
+    if let Some(mut em) = world.entity_mut(entity) {
+        if let Some(mut handle) = em.get_mut::<BRepHandle>() {
+            handle.brep_owner = Some(ENTITY_OWNER);
+        }
+    }
+    projection.tick(&mut world, &graph, tol()).expect("tick");
+
+    // --- Projected vs. renderer-side label buffers. ----------------------
+    let projected = projection
+        .projected_mesh(entity)
+        .expect("Extrude root must have a projected mesh after tick");
+    // 4n-4 = 12 triangles for n=4 per the D-projection-β contract.
+    assert_eq!(
+        projected.triangle_count(),
+        12,
+        "the unit-square, depth-1.0 Extrude fixture projects to exactly 12 \
+         triangles per the D-projection-β contract"
+    );
+    let projected_labels = projected
+        .face_labels
+        .as_ref()
+        .expect("ExtrudeOp emits a labeled tessellation for caps and side faces");
+
+    let render = projection
+        .render_mesh_for(entity, &world)
+        .expect("must render for the projected Extrude entity");
+    let render_labels = render
+        .face_labels
+        .as_ref()
+        .expect("labeled projected mesh must yield Some(face_labels) through the adapter");
+
+    assert_eq!(
+        render_labels.len(),
+        12,
+        "the unit-square, depth-1.0 Extrude fixture yields exactly 12 \
+         renderer labels per the D-projection-β contract"
+    );
+    assert_eq!(
+        render_labels.len(),
+        projected.triangle_count(),
+        "one opaque u64 renderer label per projected Extrude triangle"
+    );
+    assert_eq!(
+        render_labels.len(),
+        projected_labels.len(),
+        "renderer-side and projected label buffers must have equal length"
+    );
+    // Renderer label N is exactly the projected `TopologyFaceId.0` at N —
+    // proves the adapter preserves order and value, not just `Some(_)`.
+    // Checked in triangle order, never by sorting or set comparison.
+    for (tri, (&render_label, &topo_label)) in render_labels
+        .iter()
+        .zip(projected_labels.iter())
+        .enumerate()
+    {
+        assert_eq!(
+            render_label, topo_label.0,
+            "triangle {tri}: renderer-side u64 label must equal the projected \
+             TopologyFaceId.0 carried at the same triangle index"
+        );
+    }
+
+    // --- Extrude-root resolver pairs — the same identity path the picker
+    // uses internally for `brep_face_id_for_triangle`. -------------------
+    let pairs: Vec<(TopologyFaceId, BRepFaceId)> =
+        brep_face_ids_for_node(graph.graph(), extrude_node, ENTITY_OWNER)
+            .expect("Extrude-root resolver must succeed");
+
+    let mut saw_label = false;
+    for (tri, &render_label) in render_labels.iter().enumerate() {
+        let topo = TopologyFaceId(render_label);
+        // ExtrudeOp mints stable cap/side face labels, so no DEGENERATE
+        // renderer label is expected for this valid square-profile fixture.
+        assert_ne!(
+            topo,
+            TopologyFaceId::DEGENERATE,
+            "triangle {tri}: ExtrudeOp emits stable cap/side face labels — no \
+             DEGENERATE renderer label is expected for the unit-square, \
+             depth-1.0 Extrude fixture"
+        );
+        saw_label = true;
+        // Resolve the renderer label through the Extrude-root graph resolver.
+        let resolved = pairs
+            .iter()
+            .find(|(t, _)| *t == topo)
+            .map(|(_, id)| *id)
+            .unwrap_or_else(|| {
+                panic!("triangle {tri}: renderer label {topo:?} has no Extrude-root face id")
+            });
+        // ... and it must match the picker's answer for the exact same
+        // triangle — not merely "some BRepFaceId".
+        let picker_resolved = projection
+            .brep_face_id_for_triangle(entity, tri, &world, graph.graph())
+            .expect("picker-side resolution must succeed for an Extrude triangle");
+        assert_eq!(
+            picker_resolved, resolved,
+            "triangle {tri}: renderer label {topo:?} resolved through the \
+             Extrude-root resolver MUST match brep_face_id_for_triangle"
+        );
+    }
+
+    assert!(
+        saw_label,
+        "every renderer label must be a non-degenerate Extrude face label"
+    );
 }
