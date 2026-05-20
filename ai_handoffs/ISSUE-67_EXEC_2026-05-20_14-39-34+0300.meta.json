@@ -1,0 +1,17 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-67",
+    "packet_type": "EXEC",
+    "author": "Executor / Claude",
+    "timestamp": "2026-05-20_14-39-34+0300",
+    "related_files": [
+                          "crates/script-graph/src/lib.rs — replaced stub with data-only `ScriptGraph` wrapper, payload types, and `#[cfg(test)]` unit tests",
+                          "crates/script-graph/Cargo.toml — added the two workspace deps required by the wrapper (`rge-kernel-graph-foundation`, `serde`); refreshed description",
+                          "tools/architecture-lints/exemptions.toml — deleted the `failure-class` exemption entry for `crates/script-graph/Cargo.toml`",
+                          "Cargo.lock — single-package diff: two edges added under the existing `rge-script-graph` entry (`rge-kernel-graph-foundation`, `serde`); no new third-party packages and no version drift"
+                      ],
+    "status": "AWAITING_REVIEW",
+    "handoff_status": "COMPLETE",
+    "next_role": "REVIEWER_AI",
+    "exit_code": 0
+}

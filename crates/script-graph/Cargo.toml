@@ -1,6 +1,6 @@
 [package]
 name        = "rge-script-graph"
-description = "visual scripting graph"
+description = "script graph foundation: data-only node/edge wrapper over the graph substrate"
 version.workspace      = true
 edition.workspace      = true
 rust-version.workspace = true
@@ -10,6 +10,8 @@ authors.workspace      = true
 publish                = false
 
 [dependencies]
+rge-kernel-graph-foundation = { workspace = true }
+serde                       = { workspace = true }
 
 [lints]
 workspace = true
