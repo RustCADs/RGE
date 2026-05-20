@@ -1,0 +1,18 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-66",
+    "packet_type": "EXEC",
+    "author": "Executor / Claude",
+    "timestamp": "2026-05-20_14-05-51+0300",
+    "related_files": [
+                          "Cargo.toml — added `\"crates/io-3mf\",` to the Tier 2 Importers / exporters group",
+                          "crates/io-3mf/Cargo.toml — new stub manifest for `rge-io-3mf`",
+                          "crates/io-3mf/src/lib.rs — new crate-level docs-only stub",
+                          "tools/architecture-lints/exemptions.toml — one `failure-class` exemption for `crates/io-3mf/Cargo.toml`",
+                          "Cargo.lock — auto-updated by `cargo test` with the new (empty) workspace-member entry (see Deviations)"
+                      ],
+    "status": "AWAITING_REVIEW",
+    "handoff_status": "COMPLETE",
+    "next_role": "REVIEWER_AI",
+    "exit_code": 0
+}

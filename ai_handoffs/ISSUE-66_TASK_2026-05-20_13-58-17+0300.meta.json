@@ -1,0 +1,20 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-66",
+    "packet_type": "TASK",
+    "author": "Planner / OpenAI Codex",
+    "timestamp": "2026-05-20_13-58-17+0300",
+    "related_files": [
+                          "Cargo.toml",
+                          "crates/io-3mf/Cargo.toml",
+                          "crates/io-3mf/src/lib.rs",
+                          "tools/architecture-lints/exemptions.toml",
+                          "plans/PLAN.md",
+                          "HANDOFF.md",
+                          "Status.md"
+                      ],
+    "status": "OPEN",
+    "handoff_status": "COMPLETE",
+    "next_role": "EXECUTOR_AI",
+    "exit_code": 0
+}

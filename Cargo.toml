@@ -99,6 +99,7 @@ members = [
     "crates/io-obj",
     "crates/io-image",
     "crates/io-audio",
+    "crates/io-3mf",
 
     # Tier 2 — Marketplace
     "crates/marketplace",

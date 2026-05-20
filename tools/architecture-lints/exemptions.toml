@@ -100,6 +100,11 @@ reason = "Phase 1.x rollout debt - declaration added when crate gets first real 
 
 [[exemption]]
 lint = "failure-class"
+file = "crates/io-3mf/Cargo.toml"
+reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
+
+[[exemption]]
+lint = "failure-class"
 file = "crates/io-audio/Cargo.toml"
 reason = "Phase 1.x rollout debt - declaration added when crate gets first real implementation per IMPLEMENTATION.md."
 
