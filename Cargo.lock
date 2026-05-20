@@ -4147,6 +4147,7 @@ dependencies = [
  "egui_dock",
  "notify",
  "rge-anim-graph",
+ "rge-cad-core",
  "rge-editor-state",
  "rge-kernel-diagnostics",
  "rge-kernel-ecs",

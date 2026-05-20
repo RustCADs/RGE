@@ -1,0 +1,19 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-62",
+    "packet_type": "TASK",
+    "author": "Planner / OpenAI Codex",
+    "timestamp": "2026-05-20_09-13-30+0300",
+    "related_files": [
+                          "crates/editor-ui/tests/node_graph_operator_smoke.rs",
+                          "crates/editor-ui/Cargo.toml",
+                          "Cargo.lock",
+                          "crates/editor-ui/src/widgets/node_graph.rs",
+                          "crates/cad-core/src/graph/operator_graph.rs",
+                          "crates/cad-core/src/operators/mod.rs"
+                      ],
+    "status": "OPEN",
+    "handoff_status": "COMPLETE",
+    "next_role": "EXECUTOR_AI",
+    "exit_code": 0
+}
