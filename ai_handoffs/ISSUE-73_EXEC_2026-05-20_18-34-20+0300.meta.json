@@ -1,0 +1,14 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-73",
+    "packet_type": "EXEC",
+    "author": "Executor / Claude",
+    "timestamp": "2026-05-20_18-34-20+0300",
+    "related_files": [
+                          "crates/editor-ui/tests/node_graph_phase8_three_domain_smoke.rs — folded ScriptGraph coverage into the combined Phase 8 smoke alongside MaterialGraph, AnimGraph, and OperatorGraph."
+                      ],
+    "status": "AWAITING_REVIEW",
+    "handoff_status": "COMPLETE",
+    "next_role": "REVIEWER_AI",
+    "exit_code": 0
+}

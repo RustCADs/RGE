@@ -1,31 +1,36 @@
-//! ISSUE-63: integration smoke proving the one generic `NodeGraphWidget` path
-//! can model all three Phase 8 graph domains — `rge_material_graph::MaterialGraph`,
-//! `rge_anim_graph::AnimGraph`, and `rge_cad_core::OperatorGraph` — through the
-//! existing `rge_kernel_graph_foundation::VizAdapter` bridge.
+//! ISSUE-63 / ISSUE-73: integration smoke proving the one generic
+//! `NodeGraphWidget` path can model all four Phase 8 graph domains —
+//! `rge_material_graph::MaterialGraph`, `rge_anim_graph::AnimGraph`,
+//! `rge_cad_core::OperatorGraph`, and `rge_script_graph::ScriptGraph` —
+//! through the existing `rge_kernel_graph_foundation::VizAdapter` bridge.
 //!
 //! This test deliberately lives outside `crates/editor-ui/src/**`: the
 //! production editor-ui surface stays domain-agnostic (knows nothing about
 //! materials, animation, CAD, scripts, operators) and must NOT name
-//! `rge-material-graph`, `rge-anim-graph`, or `rge-cad-core`. Only this
-//! integration test target consumes those crates, via the editor-ui
-//! `[dev-dependencies]` edges added for ISSUE-60, ISSUE-61, and ISSUE-62.
+//! `rge-material-graph`, `rge-anim-graph`, `rge-cad-core`, or
+//! `rge-script-graph`. Only this integration test target consumes those
+//! crates, via the editor-ui `[dev-dependencies]` edges added for ISSUE-60,
+//! ISSUE-61, ISSUE-62, and ISSUE-69.
 //!
-//! Consolidation smoke: the three single-domain smokes (`node_graph_material_smoke`,
-//! `node_graph_anim_graph_smoke`, `node_graph_operator_smoke`) already prove each
-//! adapter individually. This test proves the same `NodeGraphWidget` model path
-//! handles all three domains within one test target — no domain-specific editor
-//! code, no production API change.
+//! Consolidation smoke: the four single-domain smokes (`node_graph_material_smoke`,
+//! `node_graph_anim_graph_smoke`, `node_graph_operator_smoke`,
+//! `node_graph_script_graph_smoke`) already prove each adapter individually.
+//! This test proves the same `NodeGraphWidget` model path handles all four
+//! domains within one test target — no domain-specific editor code, no
+//! production API change.
 
 use rge_anim_graph::{AnimGraph, AnimTransition};
 use rge_cad_core::{BooleanOp, CuboidOp, OperatorGraph, OperatorNode};
 use rge_editor_ui::widgets::node_graph::NodeGraphWidget;
 use rge_material_graph::{MaterialEdge, MaterialGraph, PortType};
+use rge_script_graph::{ScriptEdge, ScriptGraph};
 
 #[test]
-fn node_graph_widget_consumes_all_three_phase8_domains_through_viz_adapter() {
+fn node_graph_widget_consumes_all_phase8_domains_through_viz_adapter() {
     assert_material_domain();
     assert_anim_domain();
     assert_operator_domain();
+    assert_script_domain();
 }
 
 fn assert_material_domain() {
@@ -224,4 +229,66 @@ fn assert_operator_domain() {
     assert_eq!(edge_right_record.src, cuboid_right);
     assert_eq!(edge_right_record.dst, boolean);
     assert_eq!(edge_right_record.label, "input[1]");
+}
+
+fn assert_script_domain() {
+    // Real script graph: three script nodes joined by two script edges with
+    // distinct key payloads, mirroring the setup proved by the single-domain
+    // `node_graph_script_graph_smoke` (ISSUE-69).
+    let mut graph = ScriptGraph::new();
+    let entry = graph.add_node("entry").expect("add entry node");
+    let body = graph.add_node("body").expect("add body node");
+    let exit = graph.add_node("exit").expect("add exit node");
+
+    let flow_edge = graph
+        .connect(entry, body, ScriptEdge::new("flow"))
+        .expect("connect entry -> body");
+    let done_edge = graph
+        .connect(body, exit, ScriptEdge::new("done"))
+        .expect("connect body -> exit");
+
+    let widget = NodeGraphWidget::new();
+    let model = widget.model_from(&graph);
+
+    assert_eq!(model.node_count(), 3, "three script nodes are exposed");
+    assert_eq!(model.edge_count(), 2, "two script edges are exposed");
+
+    let node_by_id = |id| {
+        model
+            .nodes()
+            .iter()
+            .copied()
+            .find(|n| n.id == id)
+            .unwrap_or_else(|| panic!("script node {id:?} missing from NodeGraphModel"))
+    };
+    let edge_by_id = |id| {
+        model
+            .edges()
+            .iter()
+            .copied()
+            .find(|e| e.id == id)
+            .unwrap_or_else(|| panic!("script edge {id:?} missing from NodeGraphModel"))
+    };
+
+    let entry_node = node_by_id(entry);
+    let body_node = node_by_id(body);
+    let exit_node = node_by_id(exit);
+
+    assert_eq!(entry_node.display_name, "entry");
+    assert_eq!(body_node.display_name, "body");
+    assert_eq!(exit_node.display_name, "exit");
+
+    assert_eq!(entry_node.kind, "ScriptNode");
+    assert_eq!(body_node.kind, "ScriptNode");
+    assert_eq!(exit_node.kind, "ScriptNode");
+
+    let flow_record = edge_by_id(flow_edge);
+    assert_eq!(flow_record.src, entry);
+    assert_eq!(flow_record.dst, body);
+    assert_eq!(flow_record.label, "flow");
+
+    let done_record = edge_by_id(done_edge);
+    assert_eq!(done_record.src, body);
+    assert_eq!(done_record.dst, exit);
+    assert_eq!(done_record.label, "done");
 }
