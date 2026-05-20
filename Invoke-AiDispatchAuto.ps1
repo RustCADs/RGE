@@ -278,11 +278,15 @@ $openQueue = Get-IssuesJson @(
     'issue', 'list', '--repo', $repoSlug, '--label', $queueLabel,
     '--state', 'open', '--limit', '100', '--json', 'number,title')
 
+$queueStateAmbiguous = $false
 if ($openQueue.Count -eq 0) {
     # GitHub label search can occasionally report an empty queue even when the
     # queue runner can see an already-filed dispatch issue. Retry the primary
     # query, then cross-check through the queue runner's own dry-run path so a
-    # filed issue is not stranded behind the autonomous task cap.
+    # filed issue is not stranded behind the autonomous task cap. If the
+    # cross-check itself fails, treat queue state as ambiguous and skip this
+    # tick instead of selecting fresh work or cap-halting on a possibly stale
+    # empty result.
     for ($poll = 1; $poll -le 2 -and $openQueue.Count -eq 0; $poll++) {
         Start-Sleep -Seconds 5
         $openQueue = Get-IssuesJson @(
@@ -304,14 +308,25 @@ if ($openQueue.Count -eq 0) {
                 number = 0
                 title  = 'queue-runner dry-run cross-check'
             })
+        } elseif ($queueDryRun.Code -eq 0 -and $queueDryRun.Text -match "(?m)^\s*No queued '$([regex]::Escape($queueLabel))' issues") {
+            Write-Output "Queue runner dry-run confirms no queued '$queueLabel' issues."
         } elseif ($queueDryRun.Code -ne 0) {
-            Write-Output "WARNING: queue runner dry-run cross-check failed (exit $($queueDryRun.Code)); continuing with primary queue result."
+            Write-Output "WARNING: queue runner dry-run cross-check failed (exit $($queueDryRun.Code)); queue state is ambiguous, so this tick will not select new work or cap-halt."
+            $queueStateAmbiguous = $true
+        } else {
+            Write-Output "WARNING: queue runner dry-run cross-check returned unrecognized output; queue state is ambiguous, so this tick will not select new work or cap-halt."
+            $queueStateAmbiguous = $true
         }
     }
 }
 
 if ($openQueue.Count -gt 0) {
     Write-Output "Queue already has $($openQueue.Count) pending '$queueLabel' issue(s); draining it, selecting nothing this tick."
+} elseif ($queueStateAmbiguous) {
+    Write-Output ''
+    Write-Output "Queue state ambiguous after primary check and cross-check; skipping this autonomous tick without filing new work."
+    Write-Output "A later tick will retry, or run Invoke-AiDispatchQueue.ps1 directly if a queued issue is visible."
+    exit 0
 } else {
     # --- 3. Cap check (gates NEW task selection only) ----------------------
 
