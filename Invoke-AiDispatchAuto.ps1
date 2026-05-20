@@ -130,6 +130,32 @@ function Get-IssuesJson {
     return $items
 }
 
+function Get-OpenQueueIssuesRest {
+    # Independent fallback for the queue-presence check. gh issue list can
+    # intermittently report an empty label search while the REST issues
+    # endpoint still sees the queued issue. Return Code/Text so callers can
+    # fail closed instead of selecting fresh work on an ambiguous queue state.
+    param([string]$RepoSlug, [string]$QueueLabel)
+    $encodedLabel = [System.Uri]::EscapeDataString($QueueLabel)
+    $endpoint = "repos/$RepoSlug/issues?state=open&labels=$encodedLabel&per_page=100"
+    $r = Invoke-Tool -Exe 'gh' -CmdArgs @('api', $endpoint)
+    $items = @()
+    if ($r.Code -eq 0 -and $r.Text -and $r.Text.Trim()) {
+        try { $parsed = $r.Text | ConvertFrom-Json }
+        catch {
+            return [pscustomobject]@{
+                Code = 1
+                Text = "Could not parse gh api issue JSON: $($_.Exception.Message)"
+                Items = @()
+            }
+        }
+        if ($null -ne $parsed) {
+            $items = @($parsed | Where-Object { -not $_.pull_request })
+        }
+    }
+    return [pscustomobject]@{ Code = $r.Code; Text = $r.Text; Items = $items }
+}
+
 function Get-BlockText {
     # Extract the text between two sentinel lines from free-form model output.
     # Last occurrence wins, so a sentinel echoed in reasoning cannot mask the
@@ -282,11 +308,10 @@ $queueStateAmbiguous = $false
 if ($openQueue.Count -eq 0) {
     # GitHub label search can occasionally report an empty queue even when the
     # queue runner can see an already-filed dispatch issue. Retry the primary
-    # query, then cross-check through the queue runner's own dry-run path so a
-    # filed issue is not stranded behind the autonomous task cap. If the
-    # cross-check itself fails, treat queue state as ambiguous and skip this
-    # tick instead of selecting fresh work or cap-halting on a possibly stale
-    # empty result.
+    # query, then cross-check through the REST issues endpoint so a filed issue
+    # is not stranded behind the autonomous task cap. If the cross-check itself
+    # fails, treat queue state as ambiguous and skip this tick instead of
+    # selecting fresh work or cap-halting on a possibly stale empty result.
     for ($poll = 1; $poll -le 2 -and $openQueue.Count -eq 0; $poll++) {
         Start-Sleep -Seconds 5
         $openQueue = Get-IssuesJson @(
@@ -298,23 +323,20 @@ if ($openQueue.Count -eq 0) {
     }
 
     if ($openQueue.Count -eq 0) {
-        $queueDryRun = Invoke-Tool -Exe 'powershell.exe' -CmdArgs @(
-            '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $queueScript,
-            '-QueueLabel', $queueLabel, '-DryRun')
-        if ($queueDryRun.Code -eq 0 -and $queueDryRun.Text -match '(?m)^\s*Queued:\s+([1-9]\d*)\s+issue') {
-            $count = [int]$matches[1]
-            Write-Output "Primary queue check returned empty, but queue runner dry-run sees $count pending '$queueLabel' issue(s); draining before cap check."
-            $openQueue = @([pscustomobject]@{
-                number = 0
-                title  = 'queue-runner dry-run cross-check'
+        $restQueue = Get-OpenQueueIssuesRest -RepoSlug $repoSlug -QueueLabel $queueLabel
+        if ($restQueue.Code -eq 0 -and @($restQueue.Items).Count -gt 0) {
+            $count = @($restQueue.Items).Count
+            Write-Output "Primary queue check returned empty, but REST issues check sees $count open '$queueLabel' issue(s); draining before cap check."
+            $openQueue = @($restQueue.Items | ForEach-Object {
+                [pscustomobject]@{
+                    number = $_.number
+                    title  = $_.title
+                }
             })
-        } elseif ($queueDryRun.Code -eq 0 -and $queueDryRun.Text -match "(?m)^\s*No queued '$([regex]::Escape($queueLabel))' issues") {
-            Write-Output "Queue runner dry-run confirms no queued '$queueLabel' issues."
-        } elseif ($queueDryRun.Code -ne 0) {
-            Write-Output "WARNING: queue runner dry-run cross-check failed (exit $($queueDryRun.Code)); queue state is ambiguous, so this tick will not select new work or cap-halt."
-            $queueStateAmbiguous = $true
+        } elseif ($restQueue.Code -eq 0) {
+            Write-Output "REST issues check confirms no open '$queueLabel' issues."
         } else {
-            Write-Output "WARNING: queue runner dry-run cross-check returned unrecognized output; queue state is ambiguous, so this tick will not select new work or cap-halt."
+            Write-Output "WARNING: REST issues queue cross-check failed (exit $($restQueue.Code)); queue state is ambiguous, so this tick will not select new work or cap-halt."
             $queueStateAmbiguous = $true
         }
     }
