@@ -61,5 +61,12 @@ rge-kernel-ecs         = { workspace = true }
 # `rge-material-graph`.
 rge-material-graph     = { path = "../material-graph" }
 
+# ISSUE-61: integration test `node_graph_anim_graph_smoke` builds a real
+# `AnimGraph` and feeds it to the generic `NodeGraphWidget` through the
+# existing `rge_kernel_graph_foundation::VizAdapter` bridge. Test-only — the
+# production `editor-ui` surface remains domain-agnostic and must NOT name
+# `rge-anim-graph`.
+rge-anim-graph         = { path = "../anim-graph" }
+
 [lints]
 workspace = true
