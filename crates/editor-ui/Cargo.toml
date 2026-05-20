@@ -54,5 +54,12 @@ tempfile = "3"
 rge-kernel-diagnostics = { workspace = true }
 rge-kernel-ecs         = { workspace = true }
 
+# ISSUE-60: integration test `node_graph_material_smoke` builds a real
+# `MaterialGraph` and feeds it to the generic `NodeGraphWidget` through the
+# existing `rge_kernel_graph_foundation::VizAdapter` bridge. Test-only — the
+# production `editor-ui` surface remains domain-agnostic and must NOT name
+# `rge-material-graph`.
+rge-material-graph     = { path = "../material-graph" }
+
 [lints]
 workspace = true
