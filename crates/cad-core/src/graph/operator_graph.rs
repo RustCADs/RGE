@@ -1112,4 +1112,76 @@ mod tests {
             );
         }
     }
+
+    // ---------------------------------------------------------------------
+    // Invalidation propagation (issue #59)
+    // ---------------------------------------------------------------------
+
+    /// Issue #59 — `rge_kernel_graph_foundation::Invalidation` propagates
+    /// through an `OperatorGraph` diamond by deriving downstream dependents
+    /// from `Graph::outgoing` plus each edge record's `dst`. The convergence
+    /// node is reachable through both branch paths and must be delivered
+    /// exactly once (graph-foundation's own dedup).
+    #[test]
+    fn invalidation_propagates_through_operator_outgoing_edges() {
+        use std::sync::Mutex;
+
+        use rge_kernel_graph_foundation::{Invalidation, InvalidationListener};
+
+        // Diamond: source -> {branch_a, branch_b} -> convergence (ports 0,1).
+        let mut g = OperatorGraph::new();
+        let source = g.add_operator(cuboid_node(1.0, 1.0, 1.0)).expect("source");
+        let branch_a = g.add_operator(translate_node(1.0)).expect("branch_a");
+        let branch_b = g.add_operator(translate_node(2.0)).expect("branch_b");
+        let convergence = g
+            .add_operator(OperatorNode::Boolean(BooleanOp::union()))
+            .expect("convergence");
+        g.connect(source, branch_a, 0).expect("source -> branch_a");
+        g.connect(source, branch_b, 0).expect("source -> branch_b");
+        g.connect(branch_a, convergence, 0)
+            .expect("branch_a -> convergence port 0");
+        g.connect(branch_b, convergence, 1)
+            .expect("branch_b -> convergence port 1");
+
+        struct Recorder(Arc<Mutex<Vec<NodeId>>>);
+        impl InvalidationListener for Recorder {
+            fn on_invalidated(&mut self, node: NodeId) {
+                self.0.lock().expect("log lock").push(node);
+            }
+        }
+
+        let log: Arc<Mutex<Vec<NodeId>>> = Arc::new(Mutex::new(Vec::new()));
+        let mut inv = Invalidation::new();
+        inv.register(Box::new(Recorder(Arc::clone(&log))));
+
+        // Derive dependents from the inner graph's outgoing-edge surface
+        // (the contract this dispatch proves): edge ids from
+        // `Graph::outgoing`, resolved through `Graph::edge` to read `dst`.
+        inv.mark_dirty(source, |node| {
+            g.inner()
+                .outgoing(node)
+                .filter_map(|edge_id| g.inner().edge(edge_id).map(|rec| rec.dst))
+                .collect()
+        });
+
+        let calls = log.lock().expect("log lock");
+        // Order is BFS-from-source but we assert membership + exactly-once
+        // counts rather than ordering (per the planner-noted constraint).
+        assert_eq!(
+            calls.len(),
+            4,
+            "source + branch_a + branch_b + convergence = 4 callbacks, got {calls:?}"
+        );
+
+        let count_of = |target: NodeId| calls.iter().filter(|&&n| n == target).count();
+        assert_eq!(count_of(source), 1, "source dirtied exactly once");
+        assert_eq!(count_of(branch_a), 1, "branch_a dirtied exactly once");
+        assert_eq!(count_of(branch_b), 1, "branch_b dirtied exactly once");
+        assert_eq!(
+            count_of(convergence),
+            1,
+            "convergence dedupes to exactly one delivery despite being reachable \
+             through both branch paths"
+        );
+    }
 }
