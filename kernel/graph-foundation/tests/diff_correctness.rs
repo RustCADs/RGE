@@ -86,3 +86,62 @@ fn diff_remove_node_cascades_edge_removal() {
     assert_eq!(diff.removed_nodes.len(), 1);
     assert_eq!(diff.removed_edges.len(), 1);
 }
+
+#[test]
+fn diff_remove_edge_only_reports_edge_removal() {
+    let mut g: Graph<String, u32> = Graph::new();
+    g.insert_node(n(1), "a".to_string()).unwrap();
+    g.insert_node(n(2), "b".to_string()).unwrap();
+    g.insert_edge(e(10), n(1), n(2), 7).unwrap();
+    let snap1 = GraphSnapshot::from_graph(&g);
+
+    g.remove_edge(e(10)).unwrap();
+    let snap2 = GraphSnapshot::from_graph(&g);
+
+    let diff = GraphDiff::between(&snap1, &snap2);
+
+    assert_eq!(diff.removed_edges.len(), 1);
+    assert!(diff.removed_edges.contains_key(&e(10)));
+
+    assert_eq!(diff.added_edges.len(), 0);
+    assert_eq!(diff.changed_edges.len(), 0);
+    assert_eq!(diff.added_nodes.len(), 0);
+    assert_eq!(diff.removed_nodes.len(), 0);
+    assert_eq!(diff.changed_nodes.len(), 0);
+
+    assert_eq!(diff.node_change_count(), 0);
+    assert_eq!(diff.edge_change_count(), 1);
+}
+
+#[test]
+fn diff_edge_mut_payload_reports_edge_change_only() {
+    let mut g: Graph<String, u32> = Graph::new();
+    g.insert_node(n(1), "a".to_string()).unwrap();
+    g.insert_node(n(2), "b".to_string()).unwrap();
+    g.insert_edge(e(10), n(1), n(2), 1).unwrap();
+    let snap1 = GraphSnapshot::from_graph(&g);
+
+    g.edge_mut(e(10)).unwrap().data = 42;
+    let snap2 = GraphSnapshot::from_graph(&g);
+
+    let diff = GraphDiff::between(&snap1, &snap2);
+
+    assert_eq!(diff.changed_edges.len(), 1);
+    assert!(diff.changed_edges.contains_key(&e(10)));
+    let (old, new) = &diff.changed_edges[&e(10)];
+    assert_eq!(old.src, n(1));
+    assert_eq!(old.dst, n(2));
+    assert_eq!(old.data, 1);
+    assert_eq!(new.src, n(1));
+    assert_eq!(new.dst, n(2));
+    assert_eq!(new.data, 42);
+
+    assert_eq!(diff.removed_edges.len(), 0);
+    assert_eq!(diff.added_edges.len(), 0);
+    assert_eq!(diff.added_nodes.len(), 0);
+    assert_eq!(diff.removed_nodes.len(), 0);
+    assert_eq!(diff.changed_nodes.len(), 0);
+
+    assert_eq!(diff.node_change_count(), 0);
+    assert_eq!(diff.edge_change_count(), 1);
+}
