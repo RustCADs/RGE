@@ -19,7 +19,9 @@
 
 #![forbid(unsafe_code)]
 
-use rge_kernel_graph_foundation::{EdgeId, Graph, GraphError, NodeId};
+use rge_kernel_graph_foundation::{
+    EdgeId, EdgeView, Graph, GraphError, NodeId, NodeView, VizAdapter,
+};
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
@@ -194,6 +196,44 @@ fn script_edge_id(src: NodeId, dst: NodeId, edge: &ScriptEdge) -> EdgeId {
 }
 
 // ---------------------------------------------------------------------------
+// Graph-viewer adapter
+// ---------------------------------------------------------------------------
+
+/// Exposes the script graph structure to editor graph-viewer widgets.
+///
+/// This is a read-only view surface only: it adds no script execution,
+/// evaluator, interpreter, traversal runtime, editor behavior, ECS, runtime
+/// scheduling, or script-host integration. Counts delegate straight to the
+/// substrate counters, and node/edge views borrow the existing substrate
+/// records — no duplicate structural state is introduced.
+impl VizAdapter for ScriptGraph {
+    fn node_count(&self) -> usize {
+        self.graph.node_count()
+    }
+
+    fn edge_count(&self) -> usize {
+        self.graph.edge_count()
+    }
+
+    fn nodes(&self) -> Box<dyn Iterator<Item = NodeView<'_>> + '_> {
+        Box::new(self.graph.nodes().map(|(id, node)| NodeView {
+            id,
+            display_name: node.key.as_str(),
+            kind: "ScriptNode",
+        }))
+    }
+
+    fn edges(&self) -> Box<dyn Iterator<Item = EdgeView<'_>> + '_> {
+        Box::new(self.graph.edges().map(|(id, record)| EdgeView {
+            id,
+            src: record.src,
+            dst: record.dst,
+            label: record.data.key.as_str(),
+        }))
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Unit tests
 // ---------------------------------------------------------------------------
 
@@ -298,6 +338,105 @@ mod tests {
         let g = ScriptGraph::default();
         assert_eq!(g.node_count(), 0);
         assert_eq!(g.edge_count(), 0);
+    }
+
+    #[test]
+    fn viz_adapter_counts_observed_through_trait() {
+        let mut g = ScriptGraph::new();
+        let entry = g.add_node("entry").unwrap();
+        let body = g.add_node("body").unwrap();
+        let exit = g.add_node("exit").unwrap();
+        g.connect(entry, body, ScriptEdge::new("flow")).unwrap();
+        g.connect(body, exit, ScriptEdge::new("done")).unwrap();
+
+        let adapter: &dyn VizAdapter = &g;
+        assert_eq!(
+            adapter.node_count(),
+            3,
+            "VizAdapter node_count must delegate to the substrate count"
+        );
+        assert_eq!(
+            adapter.edge_count(),
+            2,
+            "VizAdapter edge_count must delegate to the substrate count"
+        );
+        assert_eq!(
+            adapter.nodes().count(),
+            adapter.node_count(),
+            "node view iteration yields exactly node_count items"
+        );
+        assert_eq!(
+            adapter.edges().count(),
+            adapter.edge_count(),
+            "edge view iteration yields exactly edge_count items"
+        );
+    }
+
+    #[test]
+    fn viz_adapter_node_views_match_substrate_order() {
+        let mut g = ScriptGraph::new();
+        let entry = g.add_node("entry").unwrap();
+        let body = g.add_node("body").unwrap();
+        let exit = g.add_node("exit").unwrap();
+
+        // Expected order is the deterministic substrate (BTreeMap) order,
+        // i.e. sorted by NodeId — not the insertion order above.
+        let mut expected: Vec<(NodeId, &str)> =
+            vec![(entry, "entry"), (body, "body"), (exit, "exit")];
+        expected.sort_by_key(|&(id, _)| id);
+
+        let adapter: &dyn VizAdapter = &g;
+        let views: Vec<(NodeId, String, String)> = adapter
+            .nodes()
+            .map(|n| (n.id, n.display_name.to_owned(), n.kind.to_owned()))
+            .collect();
+
+        assert_eq!(views.len(), 3, "one node view per script node");
+        for (view, &(exp_id, exp_name)) in views.iter().zip(expected.iter()) {
+            assert_eq!(view.0, exp_id, "node view id is the substrate NodeId");
+            assert_eq!(
+                view.1, exp_name,
+                "node view display_name is the script node key"
+            );
+            assert_eq!(
+                view.2, "ScriptNode",
+                "every script node view has the static kind string"
+            );
+        }
+    }
+
+    #[test]
+    fn viz_adapter_edge_views_match_substrate_order() {
+        let mut g = ScriptGraph::new();
+        let entry = g.add_node("entry").unwrap();
+        let body = g.add_node("body").unwrap();
+        let exit = g.add_node("exit").unwrap();
+
+        let e1 = g.connect(entry, body, ScriptEdge::new("flow")).unwrap();
+        let e2 = g.connect(body, exit, ScriptEdge::new("done")).unwrap();
+
+        // Expected order is the deterministic substrate (BTreeMap) order,
+        // i.e. sorted by EdgeId — not the insertion order above.
+        let mut expected: Vec<(EdgeId, NodeId, NodeId, &str)> =
+            vec![(e1, entry, body, "flow"), (e2, body, exit, "done")];
+        expected.sort_by_key(|&(id, ..)| id);
+
+        let adapter: &dyn VizAdapter = &g;
+        let views: Vec<(EdgeId, NodeId, NodeId, String)> = adapter
+            .edges()
+            .map(|e| (e.id, e.src, e.dst, e.label.to_owned()))
+            .collect();
+
+        assert_eq!(views.len(), 2, "one edge view per script edge");
+        for (view, &(exp_id, exp_src, exp_dst, exp_label)) in views.iter().zip(expected.iter()) {
+            assert_eq!(view.0, exp_id, "edge view id is the substrate EdgeId");
+            assert_eq!(view.1, exp_src, "edge view src is the record source");
+            assert_eq!(view.2, exp_dst, "edge view dst is the record destination");
+            assert_eq!(
+                view.3, exp_label,
+                "edge view label is the script edge key string"
+            );
+        }
     }
 
     #[test]
