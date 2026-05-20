@@ -1,0 +1,14 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-77",
+    "packet_type": "CORRECT",
+    "author": "Planner / OpenAI Codex",
+    "timestamp": "2026-05-20_22-08-09+0300",
+    "related_files": [
+                          "kernel/graph-foundation/tests/round_trip_ron.rs"
+                      ],
+    "status": "CORRECTION_OPEN",
+    "handoff_status": "COMPLETE",
+    "next_role": "EXECUTOR_AI",
+    "exit_code": 0
+}
