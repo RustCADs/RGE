@@ -239,7 +239,9 @@ impl VizAdapter for ScriptGraph {
 
 #[cfg(test)]
 mod tests {
-    use rge_kernel_graph_foundation::{EdgeRecord, GraphDiff, GraphError, GraphSnapshot};
+    use rge_kernel_graph_foundation::{
+        EdgeRecord, GraphDiff, GraphError, GraphSnapshot, Invalidation, InvalidationListener,
+    };
 
     use super::*;
 
@@ -575,6 +577,71 @@ mod tests {
         assert!(
             diff.changed_edges.is_empty(),
             "no existing script edge record changed"
+        );
+    }
+
+    #[test]
+    fn invalidation_propagates_through_script_outgoing_edges() {
+        use std::sync::{Arc, Mutex};
+
+        // Diamond: root -> left, root -> right, left -> join, right -> join.
+        // The shared sink `join` exercises the router's per-call visited-set
+        // dedup; the two outgoing edges from `root` exercise BFS scheduling
+        // order.
+        let mut g = ScriptGraph::new();
+        let root = g.add_node("root").unwrap();
+        let left = g.add_node("left").unwrap();
+        let right = g.add_node("right").unwrap();
+        let join = g.add_node("join").unwrap();
+
+        let e_left = g.connect(root, left, ScriptEdge::new("to_left")).unwrap();
+        let e_right = g.connect(root, right, ScriptEdge::new("to_right")).unwrap();
+        g.connect(left, join, ScriptEdge::new("left_join")).unwrap();
+        g.connect(right, join, ScriptEdge::new("right_join"))
+            .unwrap();
+
+        // The substrate iterates `outgoing(root)` in EdgeId-sorted order
+        // (BTreeSet<EdgeId>), which fixes whether `left` or `right` is
+        // enqueued first. Derive the expected BFS sequence from those
+        // concrete ids rather than guessing from declaration order.
+        let (first_child, second_child) = if e_left < e_right {
+            (left, right)
+        } else {
+            (right, left)
+        };
+        let expected = vec![root, first_child, second_child, join];
+
+        struct Recorder(Arc<Mutex<Vec<NodeId>>>);
+        impl InvalidationListener for Recorder {
+            fn on_invalidated(&mut self, node: NodeId) {
+                self.0.lock().unwrap().push(node);
+            }
+        }
+
+        let log = Arc::new(Mutex::new(Vec::<NodeId>::new()));
+        let mut inv = Invalidation::new();
+        inv.register(Box::new(Recorder(Arc::clone(&log))));
+
+        // The dependents closure reads downstream nodes straight off the
+        // script graph's substrate via outgoing edges + edge-record dst,
+        // proving the wrapper's substrate is sufficient to drive
+        // graph-foundation invalidation without any ad hoc side table.
+        inv.mark_dirty(root, |node| {
+            g.graph
+                .outgoing(node)
+                .filter_map(|eid| g.graph.edge(eid).map(|record| record.dst))
+                .collect()
+        });
+
+        let calls = log.lock().unwrap().clone();
+        assert_eq!(
+            calls, expected,
+            "listener log is the dirty root followed by every downstream script node exactly once in BFS order"
+        );
+        assert_eq!(
+            calls.iter().filter(|&&n| n == join).count(),
+            1,
+            "diamond convergence node is deduplicated to a single delivery"
         );
     }
 }
