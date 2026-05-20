@@ -1,0 +1,14 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-69",
+    "packet_type": "EXEC",
+    "author": "Executor / Claude",
+    "timestamp": "2026-05-20T16:10:01+03:00",
+    "related_files": [
+                          "crates/script-graph/src/lib.rs — normalized line endings from CRLF to LF (Unix) to satisfy `rustfmt.toml`\u0027s `newline_style = \"Unix\"`; no Rust source content changes."
+                      ],
+    "status": "AWAITING_REVIEW",
+    "handoff_status": "COMPLETE",
+    "next_role": "REVIEWER_AI",
+    "exit_code": 0
+}

@@ -4154,6 +4154,7 @@ dependencies = [
  "rge-kernel-graph-foundation",
  "rge-kernel-plugin-host",
  "rge-material-graph",
+ "rge-script-graph",
  "ron",
  "serde",
  "serde_json",
