@@ -1,0 +1,14 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-65",
+    "packet_type": "EXEC",
+    "author": "Executor / Claude",
+    "timestamp": "2026-05-20_13-38-23+0300",
+    "related_files": [
+                          "crates/editor-ui/tests/phase8_graph_diff_smoke.rs — extended the ISSUE-64 per-domain smoke with the new ISSUE-65 combined three-domain checkpoint diff test and its test-local namespacing helpers"
+                      ],
+    "status": "AWAITING_REVIEW",
+    "handoff_status": "COMPLETE",
+    "next_role": "REVIEWER_AI",
+    "exit_code": 0
+}
