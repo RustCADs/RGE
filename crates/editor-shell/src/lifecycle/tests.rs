@@ -714,3 +714,95 @@ fn shell_with_no_cursor_pos_reports_pointer_not_over_viewport() {
     assert!(shell.cursor_pos.is_none());
     assert!(!shell.is_pointer_over_viewport_tab());
 }
+
+// ---------------------------------------------------------------------------
+// Dispatch K — per-mesh `base_color` parallel-Vec construction
+// ---------------------------------------------------------------------------
+
+#[test]
+fn with_render_meshes_populates_white_base_colors_for_every_mesh() {
+    // Backward-compat wrapper: every mesh gets the opaque white
+    // default. Verifies the Vec lengths stay aligned and every entry
+    // is [1, 1, 1, 1].
+    let positions: Vec<[f32; 3]> = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
+    let m1 = rge_brep_render::RenderMesh::from_buffers(&positions, &[0, 1, 2], None);
+    let m2 = rge_brep_render::RenderMesh::from_buffers(&positions, &[0, 1, 2], None);
+    let shell = EditorShell::with_render_meshes(vec![m1, m2]);
+    assert_eq!(shell.prebuilt_render_meshes.len(), 2);
+    assert_eq!(shell.prebuilt_render_base_colors.len(), 2);
+    for bc in &shell.prebuilt_render_base_colors {
+        assert_eq!(*bc, [1.0, 1.0, 1.0, 1.0]);
+    }
+}
+
+#[test]
+fn with_render_meshes_and_base_colors_stores_supplied_colors() {
+    // The dispatch-K constructor stores both vecs verbatim. Each
+    // mesh-color pair lines up index-for-index so the render path
+    // can bind them in lockstep.
+    let positions: Vec<[f32; 3]> = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
+    let m1 = rge_brep_render::RenderMesh::from_buffers(&positions, &[0, 1, 2], None);
+    let m2 = rge_brep_render::RenderMesh::from_buffers(&positions, &[0, 1, 2], None);
+    let shell = EditorShell::with_render_meshes_and_base_colors(
+        vec![m1, m2],
+        vec![[0.9, 0.1, 0.1, 1.0], [0.1, 0.2, 0.9, 1.0]],
+    );
+    assert_eq!(shell.prebuilt_render_meshes.len(), 2);
+    assert_eq!(shell.prebuilt_render_base_colors.len(), 2);
+    assert_eq!(shell.prebuilt_render_base_colors[0], [0.9, 0.1, 0.1, 1.0]);
+    assert_eq!(shell.prebuilt_render_base_colors[1], [0.1, 0.2, 0.9, 1.0]);
+}
+
+#[test]
+fn with_render_meshes_and_base_colors_empty_pair_constructs() {
+    // Both vecs empty is the boundary defensive case — the
+    // length-match invariant is satisfied (0 == 0), the shell
+    // constructs, and `init_render_state` will no-op on the empty
+    // mesh Vec (matching the W03 "no scene attached" path).
+    let shell = EditorShell::with_render_meshes_and_base_colors(vec![], vec![]);
+    assert!(shell.prebuilt_render_meshes.is_empty());
+    assert!(shell.prebuilt_render_base_colors.is_empty());
+}
+
+#[test]
+#[should_panic(expected = "meshes (2) and base_colors (1) must have matching length")]
+fn with_render_meshes_and_base_colors_panics_on_length_mismatch() {
+    // Caller contract: every mesh must have exactly one base_color.
+    // A mismatch is a substrate bug (the editor binary's
+    // `load_all_glb_meshes` returns aligned vecs by construction),
+    // so we panic with a clear message rather than silently
+    // truncating or padding.
+    let positions: Vec<[f32; 3]> = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
+    let m1 = rge_brep_render::RenderMesh::from_buffers(&positions, &[0, 1, 2], None);
+    let m2 = rge_brep_render::RenderMesh::from_buffers(&positions, &[0, 1, 2], None);
+    drop(EditorShell::with_render_meshes_and_base_colors(
+        vec![m1, m2],
+        vec![[0.9, 0.1, 0.1, 1.0]],
+    ));
+}
+
+#[test]
+fn with_render_mesh_single_wraps_white_via_multi_path() {
+    // Sanity: the dispatch-G single-mesh wrapper now routes through
+    // `with_render_meshes` (which fills white) -> through
+    // `with_render_meshes_and_base_colors`. Verify the white default
+    // shows up on the single-mesh path too.
+    let positions: Vec<[f32; 3]> = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
+    let mesh = rge_brep_render::RenderMesh::from_buffers(&positions, &[0, 1, 2], None);
+    let shell = EditorShell::with_render_mesh(mesh);
+    assert_eq!(shell.prebuilt_render_meshes.len(), 1);
+    assert_eq!(shell.prebuilt_render_base_colors.len(), 1);
+    assert_eq!(shell.prebuilt_render_base_colors[0], [1.0, 1.0, 1.0, 1.0]);
+}
+
+#[test]
+fn cad_path_constructors_leave_prebuilt_base_colors_empty() {
+    // Sanity: the CAD `new` / `with_world` paths must NOT pollute
+    // `prebuilt_render_base_colors`. Empty Vec on the CAD side
+    // ensures `init_render_state_post_surface`'s CAD branch fills
+    // the materials Vec with one white default rather than reading
+    // a stale prebuilt sequence.
+    let shell = EditorShell::new();
+    assert!(shell.prebuilt_render_base_colors.is_empty());
+    assert!(shell.prebuilt_render_meshes.is_empty());
+}

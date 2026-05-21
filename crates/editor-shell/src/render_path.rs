@@ -73,6 +73,16 @@ pub(crate) const HIGHLIGHT_COLOR: glam::Vec4 = glam::Vec4::new(1.0, 0.6, 0.0, 1.
 /// continuity with the main cuboid is preserved.
 const HIGHLIGHT_PHONG: glam::Vec4 = glam::Vec4::new(0.1, 1.0, 0.5, 32.0);
 
+/// Dispatch K — default Phong factors applied to every per-mesh
+/// `Material` produced from a glTF `base_color`. Same `(ambient,
+/// diffuse, specular, shininess)` shape `Material::new` initialises
+/// to, so the only thing that varies between meshes is `base_color`.
+/// glTF's `metallic` / `roughness` factors are intentionally NOT
+/// translated into Phong shininess for v0 — the Lambert+Phong
+/// shader has no PBR slot and a guessed mapping would be more
+/// misleading than a uniform default.
+const DEFAULT_PHONG: glam::Vec4 = glam::Vec4::new(0.1, 1.0, 0.5, 32.0);
+
 // ---------------------------------------------------------------------------
 // Phase 6 sub-β — transient depth wire constants + helper
 // ---------------------------------------------------------------------------
@@ -434,17 +444,55 @@ impl EditorShell {
     ) -> Result<(), String> {
         let aspect = (width.max(1) as f32) / (height.max(1) as f32);
 
-        // Step 4 — bind groups (camera UBO + material + light).
+        // Step 4 — bind groups (camera UBO + per-mesh materials + light).
         let gfx_camera = GfxCamera::new(&gfx_ctx).map_err(|e| format!("gfx camera: {e:?}"))?;
         gfx_camera.update(
             &gfx_ctx,
             self.editor_camera.view_proj(aspect),
             glam::Mat4::IDENTITY,
         );
-        let material = Material::new(&gfx_ctx, &WHITE_1X1_RGBA, 1, 1)
-            .map_err(|e| format!("material: {e:?}"))?;
+
+        // Dispatch K — resolve the per-mesh `base_color` sequence
+        // BEFORE building the materials Vec. CAD path: single white
+        // default (matches pre-dispatch-K hardcoded behaviour). glTF
+        // path: clone the prebuilt sequence (one entry per
+        // mesh-bearing entity, populated by the editor binary's
+        // `load_all_glb_meshes`). The two sides are mutually
+        // exclusive — at most one is non-empty.
+        let base_colors_for_meshes: Vec<[f32; 4]> = if !self.prebuilt_render_base_colors.is_empty()
+        {
+            self.prebuilt_render_base_colors.clone()
+        } else {
+            // CAD path or untextured default — single white material.
+            vec![[1.0, 1.0, 1.0, 1.0]]
+        };
+
+        // Build one `Material` per upcoming mesh. Each owns its own
+        // 1×1 placeholder texture + sampler + bind group; the UBO
+        // is then refreshed with the per-mesh base_color via
+        // `update_color`. The bind-group LAYOUT is identical across
+        // entries (all materials use the same `Material::new`
+        // constructor) so the `LitMeshPipeline` built below can
+        // rebind any entry without re-validation.
+        let mut materials: Vec<Material> = Vec::with_capacity(base_colors_for_meshes.len());
+        for (i, base_color) in base_colors_for_meshes.iter().enumerate() {
+            let m = Material::new(&gfx_ctx, &WHITE_1X1_RGBA, 1, 1)
+                .map_err(|e| format!("material[{i}]: {e:?}"))?;
+            m.update_color(&gfx_ctx, glam::Vec4::from_array(*base_color), DEFAULT_PHONG);
+            materials.push(m);
+        }
+        // The materials Vec is non-empty here: the CAD branch above
+        // always pushes one entry, and the glTF branch is only taken
+        // when `prebuilt_render_base_colors` is non-empty (which the
+        // length-invariant assert in
+        // `with_render_meshes_and_base_colors` ties to a non-empty
+        // mesh Vec). materials[0] is always a valid layout source
+        // for pipeline construction below + for any future
+        // bind-group-layout consumer in the highlight path.
+        debug_assert!(!materials.is_empty(), "materials populated above");
+
         // sub-ε: a second `Material` for the highlight overlay. Same
-        // bind-group layout as the main material (so the existing
+        // bind-group layout as the main materials (so the existing
         // `LitMeshPipeline` accepts it at @group(2)); the UBO is then
         // refreshed with `HIGHLIGHT_COLOR` via `update_color`.
         let highlight_material = Material::new(&gfx_ctx, &WHITE_1X1_RGBA, 1, 1)
@@ -456,12 +504,14 @@ impl EditorShell {
         // Step 5 — pipeline against the chosen color format, depth-ready
         // per Phase 6 sub-α + sub-β. The `lit_mesh_depth_state()` choice
         // (`LessEqual` + `depth_write_enabled: false`) is documented at
-        // the helper's site above.
+        // the helper's site above. Sources the material bind-group
+        // layout from `materials[0]` — every entry shares the same
+        // layout (see comment above).
         let pipeline = LitMeshPipeline::new_with_depth(
             &gfx_ctx,
             gfx_camera.bind_group_layout(),
             light.bind_group_layout(),
-            material.bind_group_layout(),
+            materials[0].bind_group_layout(),
             format,
             Some(lit_mesh_depth_state()),
         )
@@ -521,12 +571,26 @@ impl EditorShell {
             uploaded_meshes.push(lit);
         }
 
+        // Dispatch K invariant: per-mesh materials must align 1:1 with
+        // uploaded meshes. The CAD path produces (1 mesh, 1 material);
+        // the glTF path's `with_render_meshes_and_base_colors`
+        // constructor enforces the input length pair, and both vecs
+        // are sized off the same `base_colors_for_meshes` / meshes
+        // source above. A mismatch here is a substrate bug.
+        debug_assert_eq!(
+            uploaded_meshes.len(),
+            materials.len(),
+            "uploaded_meshes ({}) and materials ({}) must align 1:1",
+            uploaded_meshes.len(),
+            materials.len(),
+        );
+
         // Stash all post-surface fields. Winit-bound bits (window,
         // surface_ctx) are owned by the caller and stashed there.
         self.gfx_ctx = Some(gfx_ctx);
         self.pipeline = Some(pipeline);
         self.gfx_camera = Some(gfx_camera);
-        self.material = Some(material);
+        self.materials = materials;
         self.highlight_material = Some(highlight_material);
         self.light = Some(light);
         self.meshes = uploaded_meshes;
@@ -676,10 +740,15 @@ impl EditorShell {
         let Some(light) = self.light.as_ref() else {
             return false;
         };
-        let Some(material) = self.material.as_ref() else {
-            return false;
-        };
         if self.meshes.is_empty() {
+            return false;
+        }
+        // Dispatch K — the per-mesh materials Vec must be populated and
+        // aligned 1:1 with `self.meshes`. `init_render_state_post_surface`
+        // enforces this via the `debug_assert_eq!` at field-stash time;
+        // re-checking at draw time covers any future construction path
+        // that might bypass init.
+        if self.materials.len() != self.meshes.len() {
             return false;
         }
 
@@ -725,19 +794,23 @@ impl EditorShell {
             pass.set_pipeline(pipeline.pipeline());
             pass.set_bind_group(0, gfx_camera.bind_group(), &[]);
             pass.set_bind_group(1, light.bind_group(), &[]);
-            pass.set_bind_group(2, material.bind_group(), &[]);
 
-            // Dispatch I — loop over every mesh. Pipeline + bind
-            // groups stay bound for the whole sequence; only the
+            // Dispatch I + K — loop over every mesh. Pipeline +
+            // camera + light bind groups stay bound for the whole
+            // sequence; the material bind group (@group(2)) and the
             // vertex / index buffers swap per mesh.
             //
-            // The CAD-cuboid path puts exactly ONE mesh here (`meshes
-            // = [cuboid_lit_mesh]`) so this loop runs once and the
-            // behaviour is byte-identical to the pre-dispatch-I
-            // single-draw path. The `--glb` path puts N meshes here,
-            // one per glTF primitive entity, and the loop draws them
-            // in scene-entity order.
-            for mesh in &self.meshes {
+            // The CAD-cuboid path puts exactly ONE mesh here
+            // (`meshes = [cuboid_lit_mesh]`, `materials = [white]`)
+            // so this loop runs once and the behaviour matches the
+            // pre-dispatch-K single-draw shape with one
+            // set_bind_group(2) per draw instead of one before the
+            // loop. The `--glb` path puts N meshes + N materials
+            // here, one per glTF primitive entity; the loop draws
+            // them in scene-entity order, each tinted by its
+            // `base_color`.
+            for (i, mesh) in self.meshes.iter().enumerate() {
+                pass.set_bind_group(2, self.materials[i].bind_group(), &[]);
                 pass.set_vertex_buffer(0, mesh.vertex_buffer().buffer().slice(..));
                 if let Some(ib) = mesh.index_buffer() {
                     pass.set_index_buffer(ib.buffer().slice(..), ib.index_format());

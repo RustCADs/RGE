@@ -1,3 +1,14 @@
+// SPLIT-EXEMPTION: cohesive editor-binary entry point. This file holds (a)
+// CLI parsing (`Cli`, `CliError`, `parse_args`), (b) the glTF -> editor-shell
+// load pipeline (`trs_to_mat4`, `accumulate_world_transform`, `bake_positions`,
+// `resolve_base_color`, `load_all_glb_meshes`), (c) the default CAD-cuboid
+// demo (`build_cuboid_demo_shell`), (d) `main` dispatching on the CLI, and
+// (e) inline `#[cfg(test)]` coverage of every private helper. Splitting would
+// either expose the helpers as `pub(crate)` (no other module needs them) or
+// fragment a single-binary surface across sibling files for no cognitive
+// gain — the dispatch-J / dispatch-K helpers only matter at the
+// `load_all_glb_meshes` boundary, which lives here.
+
 //! `rge-editor` — main editor binary.
 //!
 //! # Sub-δ.1.B / dispatch G modes
@@ -22,7 +33,7 @@
 //! `EditorShell` defensive guards return early when `projection` is
 //! `None`.
 //!
-//! # v0 scope (dispatches G / I / J)
+//! # v0 scope (dispatches G / I / J / K)
 //!
 //! - **All mesh primitives** in the scene are loaded (dispatch I).
 //! - **Accumulated transform hierarchy.** Every mesh-bearing entity's
@@ -31,8 +42,18 @@
 //!   J). Flat normals come out correct because `from_buffers`
 //!   recomputes them from the baked positions via cross-product of
 //!   CCW winding — including under non-uniform / negative scale.
-//! - **No material / texture support.** The render path uses the
-//!   editor's hardcoded white-1×1 Lambert+Phong material.
+//! - **Per-mesh `base_color` from glTF `MaterialAsset`** (dispatch K).
+//!   Resolves `EntityComponents.material` through `MemoryCache::
+//!   get_material`; entities without a material slot fall back to
+//!   `[1.0, 1.0, 1.0, 1.0]`. The render path then constructs one
+//!   `rge_gfx::Material` per mesh, all sharing the existing 1×1 white
+//!   placeholder texture but each carrying a distinct UBO base_color.
+//!   The Lambert+Phong shader is unchanged — only `base_color` flows
+//!   through; metallic / roughness / emissive / normal / textures /
+//!   alpha modes are all deferred.
+//! - **No texture / image / sampler support.** glTF texture indices
+//!   are dropped on the floor; io-gltf doesn't extract image bytes
+//!   today.
 //! - **No animation / skeleton.** Skipped during import; skinning
 //!   would require per-frame vertex re-bake.
 //! - **No asset-store integration.** Uses io-gltf's in-memory
@@ -202,10 +223,34 @@ fn bake_positions(positions: &[[f32; 3]], world: &Mat4) -> Vec<[f32; 3]> {
 // glTF → Vec<RenderMesh>
 // ---------------------------------------------------------------------------
 
+/// Default `base_color` for entities whose `comps.material` is
+/// `None` — opaque white. Matches `MaterialAsset::default().
+/// base_color`, and matches the editor's pre-dispatch-K hardcoded
+/// single-Material colour, so a glTF scene with no materials at all
+/// renders byte-identically to how it did before dispatch K.
+const DEFAULT_BASE_COLOR: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
+
+/// Resolve the per-entity `base_color` for one [`EntityComponents`].
+///
+/// If `comps.material` is `Some(handle)` and the cache holds a
+/// matching [`rge_io_gltf::MaterialAsset`], the asset's `base_color`
+/// is returned. Otherwise the [`DEFAULT_BASE_COLOR`] white is
+/// returned — covers both entities that opt out of materials (`mesh:
+/// Some, material: None`) and the should-never-happen case of a
+/// dangling handle.
+fn resolve_base_color(cache: &MemoryCache, comps: &rge_io_gltf::EntityComponents) -> [f32; 4] {
+    comps
+        .material
+        .as_ref()
+        .and_then(|h| cache.get_material(h))
+        .map_or(DEFAULT_BASE_COLOR, |m| m.base_color)
+}
+
 /// Load a glTF/GLB file and convert **every** mesh primitive in its
-/// scene to a flat-shaded [`RenderMesh`], returning them in
-/// scene-entity order with accumulated TRS hierarchy CPU-baked
-/// into vertex positions.
+/// scene into a (flat-shaded [`RenderMesh`], `base_color`) pair,
+/// returned as two parallel `Vec`s in scene-entity order with
+/// accumulated TRS hierarchy CPU-baked into vertex positions and
+/// per-entity material colours resolved through the import cache.
 ///
 /// # Dispatch I — multi-mesh contract
 ///
@@ -234,6 +279,16 @@ fn bake_positions(positions: &[[f32; 3]], world: &Mat4) -> Vec<[f32; 3]> {
 /// or negative scale produces correct outward-facing normals
 /// automatically.
 ///
+/// # Dispatch K — per-mesh `base_color`
+///
+/// For each mesh-bearing entity, `comps.material` is resolved
+/// through the import [`MemoryCache`] into a [`f32; 4]` `base_color`.
+/// Entities without a material handle (or with a dangling handle)
+/// fall back to [`DEFAULT_BASE_COLOR`] white. The returned
+/// `Vec<[f32; 4]>` has the same length and order as the returned
+/// `Vec<RenderMesh>`; the caller (editor-shell) builds one
+/// `rge_gfx::Material` per mesh with these colours.
+///
 /// `face_labels = None` for every mesh — glTF data has no B-Rep
 /// topology, so the editor's face-pick path silently no-ops in
 /// render-only mode (the existing `handle_left_click`
@@ -241,27 +296,34 @@ fn bake_positions(positions: &[[f32; 3]], world: &Mat4) -> Vec<[f32; 3]> {
 ///
 /// # Order
 ///
-/// Output Vec order matches `Scene.iter()` order, which matches the
-/// glTF document's node order (per the `scene_builder` contract).
-/// This is the same order the editor's render pass draws meshes in,
-/// so what you load is what you render in document order.
+/// Output `Vec` order matches `Scene.iter()` order, which matches
+/// the glTF document's node order (per the `scene_builder`
+/// contract). Both returned vecs are aligned 1:1 — `meshes[i]` and
+/// `base_colors[i]` describe the same entity. This is the same
+/// order the editor's render pass draws meshes in, so what you load
+/// is what you render in document order.
 ///
 /// # Errors
 ///
 /// - File-system / parse errors propagate from `import_glb` as a
 ///   string message.
 /// - "no meshes in scene" if no entity carries a mesh handle. Empty
-///   `Vec` is NOT returned silently — the binary surfaces this as a
-///   hard error so the user knows the file is empty.
+///   `Vec`s are NOT returned silently — the binary surfaces this as
+///   a hard error so the user knows the file is empty.
 /// - "mesh cache lookup failed" if a mesh handle isn't in the cache
 ///   (would indicate an io-gltf bug; never expected in practice).
-fn load_all_glb_meshes(path: &std::path::Path) -> Result<Vec<RenderMesh>, String> {
+fn load_all_glb_meshes(path: &std::path::Path) -> Result<(Vec<RenderMesh>, Vec<[f32; 4]>), String> {
     let mut cache = MemoryCache::new();
     let scene = import_glb(path, &mut cache).map_err(|e| format!("glTF import: {e}"))?;
 
-    let drawable: Vec<(Entity, rge_io_gltf::MeshHandle)> = scene
+    let drawable: Vec<(Entity, rge_io_gltf::MeshHandle, [f32; 4])> = scene
         .iter()
-        .filter_map(|(e, comps)| comps.mesh.map(|m| (e, m)))
+        .filter_map(|(e, comps)| {
+            comps.mesh.map(|m| {
+                let bc = resolve_base_color(&cache, comps);
+                (e, m, bc)
+            })
+        })
         .collect();
     if drawable.is_empty() {
         return Err(format!(
@@ -272,9 +334,10 @@ fn load_all_glb_meshes(path: &std::path::Path) -> Result<Vec<RenderMesh>, String
     }
 
     let mut render_meshes: Vec<RenderMesh> = Vec::with_capacity(drawable.len());
+    let mut base_colors: Vec<[f32; 4]> = Vec::with_capacity(drawable.len());
     let mut total_vertices = 0usize;
     let mut total_triangles = 0usize;
-    for (mesh_index, (entity, handle)) in drawable.iter().enumerate() {
+    for (mesh_index, (entity, handle, base_color)) in drawable.iter().enumerate() {
         let mesh_asset = cache
             .get_mesh(handle)
             .ok_or_else(|| "io-gltf returned a mesh handle that isn't in its cache".to_string())?;
@@ -286,7 +349,8 @@ fn load_all_glb_meshes(path: &std::path::Path) -> Result<Vec<RenderMesh>, String
         // The 4th column of a TRS matrix is `(tx, ty, tz, 1)` — useful
         // for runtime smoke verification ("is the cube actually at
         // (1,2,3)?"). Logged per-mesh so a multi-mesh scene shows the
-        // distribution at a glance.
+        // distribution at a glance. Dispatch K adds `base_color_r/g/b/a`
+        // so the per-mesh tint is visible alongside the per-mesh pose.
         let world_translation = world.w_axis.truncate();
         tracing::info!(
             target: "rge::editor",
@@ -295,12 +359,17 @@ fn load_all_glb_meshes(path: &std::path::Path) -> Result<Vec<RenderMesh>, String
             world_x = world_translation.x,
             world_y = world_translation.y,
             world_z = world_translation.z,
+            base_color_r = base_color[0],
+            base_color_g = base_color[1],
+            base_color_b = base_color[2],
+            base_color_a = base_color[3],
             vertices = mesh_asset.vertex_count(),
             triangles = mesh_asset.triangle_count(),
-            "applied accumulated glTF TRS"
+            "applied accumulated glTF TRS + base_color"
         );
 
         render_meshes.push(RenderMesh::from_buffers(&baked, &mesh_asset.indices, None));
+        base_colors.push(*base_color);
     }
 
     tracing::info!(
@@ -310,10 +379,10 @@ fn load_all_glb_meshes(path: &std::path::Path) -> Result<Vec<RenderMesh>, String
         mesh_count = drawable.len(),
         total_vertices,
         total_triangles,
-        "loaded all glTF mesh primitives (render-only, no CAD, world-baked)"
+        "loaded all glTF mesh primitives (render-only, no CAD, world-baked, per-mesh base_color)"
     );
 
-    Ok(render_meshes)
+    Ok((render_meshes, base_colors))
 }
 
 // ---------------------------------------------------------------------------
@@ -403,15 +472,17 @@ fn main() -> ExitCode {
     // ---- Branch on --glb flag ----------------------------------------
     let mut shell = match cli.glb_path.as_ref() {
         Some(path) => {
-            // Dispatch G + I — render-only mesh(es) from glTF.
-            let render_meshes = match load_all_glb_meshes(path) {
-                Ok(meshes) => meshes,
+            // Dispatches G + I + J + K — render-only mesh(es) from glTF
+            // with TRS hierarchy CPU-baked and per-mesh `base_color`
+            // resolved through the import cache.
+            let (render_meshes, base_colors) = match load_all_glb_meshes(path) {
+                Ok(pair) => pair,
                 Err(e) => {
                     eprintln!("rge-editor: failed to load --glb {}: {e}", path.display());
                     return ExitCode::FAILURE;
                 }
             };
-            EditorShell::with_render_meshes(render_meshes)
+            EditorShell::with_render_meshes_and_base_colors(render_meshes, base_colors)
         }
         None => {
             // Default — cuboid demo (byte-identical to pre-dispatch-G).
@@ -798,8 +869,13 @@ mod tests {
             return;
         }
 
-        let meshes = load_all_glb_meshes(&path).expect("load cube.glb");
+        let (meshes, base_colors) = load_all_glb_meshes(&path).expect("load cube.glb");
         assert_eq!(meshes.len(), 1, "cube.glb has exactly one mesh entity");
+        assert_eq!(
+            base_colors.len(),
+            meshes.len(),
+            "base_colors must be aligned 1:1 with meshes"
+        );
 
         let mut min = [f32::INFINITY; 3];
         let mut max = [f32::NEG_INFINITY; 3];
@@ -822,5 +898,255 @@ mod tests {
         assert!((max[1] - 2.5).abs() < tol, "max.y = {} (want 2.5)", max[1]);
         assert!((min[2] - 2.5).abs() < tol, "min.z = {} (want 2.5)", min[2]);
         assert!((max[2] - 3.5).abs() < tol, "max.z = {} (want 3.5)", max[2]);
+    }
+
+    // -----------------------------------------------------------------------
+    // Dispatch K — per-mesh `base_color` resolution
+    // -----------------------------------------------------------------------
+
+    fn fixtures_path() -> std::path::PathBuf {
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("crates")
+            .join("io-gltf")
+            .join("tests")
+            .join("fixtures")
+    }
+
+    fn skip_if_fixture_missing(path: &std::path::Path) -> bool {
+        if !path.exists() {
+            eprintln!(
+                "SKIP: fixture not present at {} (io-gltf tests materialize it on first run)",
+                path.display()
+            );
+            return true;
+        }
+        false
+    }
+
+    fn base_color_approx_eq(a: [f32; 4], b: [f32; 4]) -> bool {
+        let tol = 1e-5_f32;
+        a.iter().zip(b.iter()).all(|(x, y)| (x - y).abs() < tol)
+    }
+
+    #[test]
+    fn cube_glb_returns_expected_base_color() {
+        // cube.glb fixture sets MaterialAsset.base_color = [0.4, 0.6, 0.8, 1.0]
+        // (the make_cube_glb helper in io-gltf/tests/common/mod.rs).
+        let path = fixtures_path().join("cube.glb");
+        if skip_if_fixture_missing(&path) {
+            return;
+        }
+        let (meshes, base_colors) = load_all_glb_meshes(&path).expect("load cube.glb");
+        assert_eq!(meshes.len(), 1);
+        assert_eq!(base_colors.len(), 1);
+        assert!(
+            base_color_approx_eq(base_colors[0], [0.4, 0.6, 0.8, 1.0]),
+            "cube.glb base_color = {:?} (expected [0.4, 0.6, 0.8, 1.0])",
+            base_colors[0]
+        );
+    }
+
+    #[test]
+    fn pbr_material_glb_returns_expected_base_color() {
+        // pbr_material.glb fixture sets base_color = [0.97, 0.86, 0.32, 1.0]
+        // (the make_pbr_material_glb helper).
+        let path = fixtures_path().join("pbr_material.glb");
+        if skip_if_fixture_missing(&path) {
+            return;
+        }
+        let (_meshes, base_colors) = load_all_glb_meshes(&path).expect("load pbr_material.glb");
+        assert_eq!(base_colors.len(), 1);
+        assert!(
+            base_color_approx_eq(base_colors[0], [0.97, 0.86, 0.32, 1.0]),
+            "pbr_material.glb base_color = {:?} (expected [0.97, 0.86, 0.32, 1.0])",
+            base_colors[0]
+        );
+    }
+
+    #[test]
+    fn animated_character_glb_returns_skin_tone_base_color() {
+        // animated_character.glb fixture sets base_color = [1.0, 0.85, 0.7, 1.0].
+        // The fixture has one mesh-bearing entity (the armature) plus two
+        // bone-only entities (no mesh); load_all_glb_meshes returns 1 mesh.
+        let path = fixtures_path().join("animated_character.glb");
+        if skip_if_fixture_missing(&path) {
+            return;
+        }
+        let (meshes, base_colors) =
+            load_all_glb_meshes(&path).expect("load animated_character.glb");
+        assert_eq!(
+            meshes.len(),
+            1,
+            "animated_character has 1 mesh-bearing entity (bones are mesh: None)"
+        );
+        assert!(
+            base_color_approx_eq(base_colors[0], [1.0, 0.85, 0.7, 1.0]),
+            "animated_character base_color = {:?} (expected [1.0, 0.85, 0.7, 1.0])",
+            base_colors[0]
+        );
+    }
+
+    #[test]
+    fn missing_material_falls_back_to_white() {
+        // Synthetic scene: one entity with `mesh: Some(_)` but `material:
+        // None`. resolve_base_color must return DEFAULT_BASE_COLOR white.
+        use rge_io_gltf::{EntityComponents, MeshAsset};
+
+        let mut cache = MemoryCache::new();
+        let mh = cache.insert_mesh(MeshAsset {
+            positions: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            normals: vec![],
+            texcoords: vec![],
+            indices: vec![0, 1, 2],
+            material_index: None,
+        });
+        let comps = EntityComponents {
+            name: "no-mat".into(),
+            transform: rge_io_gltf::Transform::IDENTITY,
+            parent: Entity::ROOT,
+            mesh: Some(mh),
+            material: None,
+            skeleton: None,
+        };
+        let bc = resolve_base_color(&cache, &comps);
+        assert_eq!(bc, DEFAULT_BASE_COLOR);
+        assert_eq!(bc, [1.0, 1.0, 1.0, 1.0]);
+    }
+
+    #[test]
+    fn material_present_returns_cached_base_color() {
+        // Synthetic scene: one entity with `mesh: Some(_)` AND `material:
+        // Some(handle)`. resolve_base_color must return the cached
+        // MaterialAsset's `base_color`.
+        use rge_io_gltf::{EntityComponents, MaterialAsset, MeshAsset};
+
+        let mut cache = MemoryCache::new();
+        let mh = cache.insert_mesh(MeshAsset {
+            positions: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            normals: vec![],
+            texcoords: vec![],
+            indices: vec![0, 1, 2],
+            material_index: Some(0),
+        });
+        let mat_h = cache.insert_material(MaterialAsset {
+            name: "red".into(),
+            base_color: [0.9, 0.1, 0.1, 1.0],
+            ..Default::default()
+        });
+        let comps = EntityComponents {
+            name: "red-tri".into(),
+            transform: rge_io_gltf::Transform::IDENTITY,
+            parent: Entity::ROOT,
+            mesh: Some(mh),
+            material: Some(mat_h),
+            skeleton: None,
+        };
+        let bc = resolve_base_color(&cache, &comps);
+        assert!(base_color_approx_eq(bc, [0.9, 0.1, 0.1, 1.0]));
+    }
+
+    #[test]
+    fn multi_material_scene_preserves_entity_order_colors() {
+        // Build an in-memory GLB with two mesh-bearing entities carrying
+        // distinct materials (red and blue). Verify the returned
+        // base_colors Vec preserves the scene-iteration order.
+        //
+        // glTF nuance: material is per-primitive (i.e. per-glTF-mesh),
+        // not per-node. If two entities share the same MeshHandle,
+        // io-gltf's exporter writes ONE glTF mesh whose first-seen
+        // entity's material is baked in — both entities then re-import
+        // with the same material. To test per-entity tinting we must
+        // give each entity a DISTINCT mesh asset (different content
+        // hash). We perturb a single vertex by 1e-3 — visually
+        // identical, structurally distinct.
+        use rge_io_gltf::{export_glb, EntityComponents, MaterialAsset, MeshAsset, Scene};
+
+        let mut cache = MemoryCache::new();
+        let tri_a = MeshAsset {
+            positions: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            normals: vec![],
+            texcoords: vec![],
+            indices: vec![0, 1, 2],
+            material_index: None,
+        };
+        let tri_b = MeshAsset {
+            positions: vec![[0.0, 0.0, 0.0], [1.001, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            normals: vec![],
+            texcoords: vec![],
+            indices: vec![0, 1, 2],
+            material_index: None,
+        };
+        let mh_a = cache.insert_mesh(tri_a);
+        let mh_b = cache.insert_mesh(tri_b);
+        let red = cache.insert_material(MaterialAsset {
+            name: "red".into(),
+            base_color: [0.9, 0.1, 0.1, 1.0],
+            ..Default::default()
+        });
+        let blue = cache.insert_material(MaterialAsset {
+            name: "blue".into(),
+            base_color: [0.1, 0.2, 0.9, 1.0],
+            ..Default::default()
+        });
+
+        let mut scene = Scene::new();
+        scene.spawn(EntityComponents {
+            name: "red_tri".into(),
+            transform: rge_io_gltf::Transform::IDENTITY,
+            parent: Entity::ROOT,
+            mesh: Some(mh_a),
+            material: Some(red),
+            skeleton: None,
+        });
+        scene.spawn(EntityComponents {
+            name: "blue_tri".into(),
+            transform: rge_io_gltf::Transform::IDENTITY,
+            parent: Entity::ROOT,
+            mesh: Some(mh_b),
+            material: Some(blue),
+            skeleton: None,
+        });
+
+        let bytes = export_glb(&scene, &cache).expect("export");
+        let path = std::env::temp_dir().join("rge_editor_test_multi_mat.glb");
+        std::fs::write(&path, &bytes).expect("write");
+
+        let (meshes, base_colors) = load_all_glb_meshes(&path).expect("load multi-mat");
+        assert_eq!(meshes.len(), 2);
+        assert_eq!(base_colors.len(), 2);
+        assert!(
+            base_color_approx_eq(base_colors[0], [0.9, 0.1, 0.1, 1.0]),
+            "base_colors[0] = {:?}",
+            base_colors[0]
+        );
+        assert!(
+            base_color_approx_eq(base_colors[1], [0.1, 0.2, 0.9, 1.0]),
+            "base_colors[1] = {:?}",
+            base_colors[1]
+        );
+
+        drop(std::fs::remove_file(&path));
+    }
+
+    #[test]
+    fn meshes_and_base_colors_have_matching_lengths() {
+        // Defensive smoke: regardless of which fixture loads, the parallel
+        // Vec invariant must hold. Runs against every available fixture.
+        for name in ["cube.glb", "pbr_material.glb", "animated_character.glb"] {
+            let path = fixtures_path().join(name);
+            if skip_if_fixture_missing(&path) {
+                continue;
+            }
+            let (meshes, base_colors) = load_all_glb_meshes(&path).expect("load fixture");
+            assert_eq!(
+                meshes.len(),
+                base_colors.len(),
+                "{name}: meshes.len()={} != base_colors.len()={}",
+                meshes.len(),
+                base_colors.len()
+            );
+        }
     }
 }

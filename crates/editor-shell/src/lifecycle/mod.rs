@@ -334,6 +334,19 @@ pub struct EditorShell {
     ///   binary rejects zero-mesh glTF files before reaching here).
     pub(crate) prebuilt_render_meshes: Vec<RenderMesh>,
 
+    /// Dispatch K — per-mesh `base_color` parallel to
+    /// [`Self::prebuilt_render_meshes`]. Populated by
+    /// [`Self::with_render_meshes_and_base_colors`] (or by
+    /// [`Self::with_render_meshes`] which fills every slot with
+    /// opaque white `[1.0, 1.0, 1.0, 1.0]`). The render path
+    /// consumes this Vec in `init_render_state_post_surface` to
+    /// build one [`Material`] per mesh, each carrying the matching
+    /// `base_color` in its UBO. Length invariant:
+    /// `prebuilt_render_base_colors.len() == prebuilt_render_meshes.len()`
+    /// — enforced at construction time by the
+    /// `with_render_meshes_and_base_colors` constructor.
+    pub(crate) prebuilt_render_base_colors: Vec<[f32; 4]>,
+
     /// winit window the surface is bound to (kept alive for the surface's
     /// `'static` lifetime). `None` until `resumed`.
     pub(crate) window: Option<Arc<Window>>,
@@ -350,8 +363,19 @@ pub struct EditorShell {
     /// Camera UBO (GPU side). `None` until `resumed`.
     pub(crate) gfx_camera: Option<GfxCamera>,
 
-    /// Material bind group + UBO + texture. `None` until `resumed`.
-    pub(crate) material: Option<Material>,
+    /// Dispatch K — per-mesh material bind groups, populated 1:1 with
+    /// [`Self::meshes`] in `init_render_state_post_surface`. Each
+    /// entry owns its own UBO (`base_color` + `phong`) + 1×1 white
+    /// placeholder texture + sampler + bind group, but the bind-group
+    /// LAYOUT is identical across entries so the `LitMeshPipeline`
+    /// can rebind any entry mid-pass without re-validation. Empty
+    /// until `resumed`; the render path's `encode_main_pass` guards
+    /// on `materials.is_empty()` for the same reason it guards on
+    /// `meshes.is_empty()`. The pre-dispatch-K shared
+    /// `material: Option<Material>` slot is gone — what was one
+    /// global material is now the first (and only) entry in
+    /// `materials` for the CAD-cuboid path.
+    pub(crate) materials: Vec<Material>,
 
     /// Directional light UBO. `None` until `resumed`.
     pub(crate) light: Option<DirectionalLight>,
@@ -534,7 +558,7 @@ impl EditorShell {
             surface_ctx: None,
             pipeline: None,
             gfx_camera: None,
-            material: None,
+            materials: Vec::new(),
             light: None,
             meshes: Vec::new(),
             cursor_pos: None,
@@ -548,6 +572,7 @@ impl EditorShell {
             egui_host: None,
             inspector_handoff: None,
             prebuilt_render_meshes: Vec::new(),
+            prebuilt_render_base_colors: Vec::new(),
         }
     }
 
@@ -614,7 +639,7 @@ impl EditorShell {
             surface_ctx: None,
             pipeline: None,
             gfx_camera: None,
-            material: None,
+            materials: Vec::new(),
             light: None,
             meshes: Vec::new(),
             cursor_pos: None,
@@ -628,6 +653,7 @@ impl EditorShell {
             egui_host: None,
             inspector_handoff: None,
             prebuilt_render_meshes: Vec::new(),
+            prebuilt_render_base_colors: Vec::new(),
         }
     }
 
@@ -710,6 +736,60 @@ impl EditorShell {
     /// crossing into the CAD authority surface.
     #[must_use]
     pub fn with_render_meshes(meshes: Vec<RenderMesh>) -> Self {
+        // Backward-compat wrapper around the dispatch-K
+        // `with_render_meshes_and_base_colors` constructor: every
+        // mesh gets opaque white `[1, 1, 1, 1]` as its `base_color`,
+        // reproducing the pre-dispatch-K hardcoded single-Material
+        // behaviour exactly.
+        let n = meshes.len();
+        Self::with_render_meshes_and_base_colors(meshes, vec![[1.0, 1.0, 1.0, 1.0]; n])
+    }
+
+    /// Construct an [`EditorShell`] with N render-only meshes plus
+    /// matching per-mesh `base_color` factors (no CAD).
+    /// **Dispatch K entry point** for `rge-editor --glb <path>` —
+    /// renders every mesh primitive with the colour resolved from
+    /// the glTF `MaterialAsset`, not a hardcoded white.
+    ///
+    /// Each `base_colors[i]` is a linear-space `[r, g, b, a]` that
+    /// will be uploaded into the matching mesh's
+    /// [`rge_gfx::Material`] UBO during
+    /// `init_render_state_post_surface`. The render path's per-mesh
+    /// `set_bind_group(2, materials[i].bind_group(), ..)` then
+    /// produces correct tinting in the Lambert+Phong fragment
+    /// shader.
+    ///
+    /// # Length invariant
+    ///
+    /// `meshes.len() == base_colors.len()` is REQUIRED. Mismatched
+    /// lengths indicate a caller contract violation (the editor
+    /// binary's `load_all_glb_meshes` guarantees alignment); we
+    /// panic with a clear message rather than silently truncating
+    /// or padding.
+    ///
+    /// # Render-only semantics
+    ///
+    /// All caveats documented on [`Self::with_render_meshes`]
+    /// apply unchanged — this constructor only adds the per-mesh
+    /// colour axis. Textures / PBR / animation / face-pick / save /
+    /// undo remain explicitly out of scope.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `meshes.len() != base_colors.len()`.
+    #[must_use]
+    pub fn with_render_meshes_and_base_colors(
+        meshes: Vec<RenderMesh>,
+        base_colors: Vec<[f32; 4]>,
+    ) -> Self {
+        assert_eq!(
+            meshes.len(),
+            base_colors.len(),
+            "with_render_meshes_and_base_colors: meshes ({}) and base_colors ({}) must have matching length",
+            meshes.len(),
+            base_colors.len(),
+        );
+
         // Install `TimeScale` as a resource on the editor wrapper world
         // so the inspector + playback shortcuts work identically to
         // the CAD-driven path. Same `world` construction shape as
@@ -745,7 +825,7 @@ impl EditorShell {
             surface_ctx: None,
             pipeline: None,
             gfx_camera: None,
-            material: None,
+            materials: Vec::new(),
             light: None,
             meshes: Vec::new(),
             cursor_pos: None,
@@ -759,6 +839,7 @@ impl EditorShell {
             egui_host: None,
             inspector_handoff: None,
             prebuilt_render_meshes: meshes,
+            prebuilt_render_base_colors: base_colors,
         }
     }
 
