@@ -12,7 +12,8 @@
 //! of `rge_asset_store::Cache`.
 
 use crate::animation::AnimationClip;
-use crate::handles::{AnimationHandle, MaterialHandle, MeshHandle, SkeletonHandle};
+use crate::handles::{AnimationHandle, ImageHandle, MaterialHandle, MeshHandle, SkeletonHandle};
+use crate::image::ImageAsset;
 use crate::material::MaterialAsset;
 use crate::mesh::MeshAsset;
 use crate::skeleton::Skeleton;
@@ -44,6 +45,15 @@ pub trait Cache {
     fn insert_skeleton(&mut self, skel: Skeleton) -> SkeletonHandle;
     /// Look up a skeleton by handle.
     fn get_skeleton(&self, h: &SkeletonHandle) -> Option<&Skeleton>;
+
+    /// Dispatch L — insert an image asset; returns the content-hash
+    /// handle. Provided as a default-method-style addition with no
+    /// `default` body so existing custom `Cache` impls don't silently
+    /// regress (none exist outside `MemoryCache` today; this trait is
+    /// the W17 stub for the future W16 `rge-asset-store::Cache`).
+    fn insert_image(&mut self, asset: ImageAsset) -> ImageHandle;
+    /// Dispatch L — look up an image by handle.
+    fn get_image(&self, h: &ImageHandle) -> Option<&ImageAsset>;
 }
 
 /// Reference [`Cache`] impl: HashMap-backed in-memory store. Used by the
@@ -55,6 +65,8 @@ pub struct MemoryCache {
     materials: std::collections::HashMap<MaterialHandle, MaterialAsset>,
     animations: std::collections::HashMap<AnimationHandle, AnimationClip>,
     skeletons: std::collections::HashMap<SkeletonHandle, Skeleton>,
+    /// Dispatch L — decoded image bytes keyed by content hash.
+    images: std::collections::HashMap<ImageHandle, ImageAsset>,
 }
 
 impl MemoryCache {
@@ -86,6 +98,12 @@ impl MemoryCache {
     #[must_use]
     pub fn skeleton_count(&self) -> usize {
         self.skeletons.len()
+    }
+
+    /// Dispatch L — number of cached images.
+    #[must_use]
+    pub fn image_count(&self) -> usize {
+        self.images.len()
     }
 }
 
@@ -125,6 +143,15 @@ impl Cache for MemoryCache {
     fn get_skeleton(&self, h: &SkeletonHandle) -> Option<&Skeleton> {
         self.skeletons.get(h)
     }
+
+    fn insert_image(&mut self, asset: ImageAsset) -> ImageHandle {
+        let h = asset.content_hash();
+        self.images.entry(h).or_insert(asset);
+        h
+    }
+    fn get_image(&self, h: &ImageHandle) -> Option<&ImageAsset> {
+        self.images.get(h)
+    }
 }
 
 #[cfg(test)]
@@ -155,5 +182,28 @@ mod tests {
         let h2 = c.insert_mesh(b);
         assert_eq!(h1, h2);
         assert_eq!(c.mesh_count(), 1);
+    }
+
+    #[test]
+    fn cache_insert_image_get_image_roundtrip() {
+        let mut c = MemoryCache::new();
+        let asset = ImageAsset::from_inner(rge_io_image::Image::from_rgba8(
+            2,
+            2,
+            vec![
+                255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 0, 255,
+            ],
+        ));
+        let h = c.insert_image(asset.clone());
+        assert_eq!(c.image_count(), 1);
+        let fetched = c.get_image(&h).expect("get_image");
+        assert_eq!(fetched.width(), 2);
+        assert_eq!(fetched.height(), 2);
+        assert_eq!(fetched.pixels(), asset.pixels());
+
+        // Re-insert the same asset — handle is stable, count unchanged.
+        let h2 = c.insert_image(asset);
+        assert_eq!(h, h2);
+        assert_eq!(c.image_count(), 1);
     }
 }

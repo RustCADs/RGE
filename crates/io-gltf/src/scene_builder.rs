@@ -12,7 +12,9 @@
 
 use crate::animation::{extract_animations, AnimationClip};
 use crate::cache_stub::Cache;
-use crate::handles::{AnimationHandle, MaterialHandle, MeshHandle, SkeletonHandle};
+use crate::handles::{AnimationHandle, ImageHandle, MaterialHandle, MeshHandle, SkeletonHandle};
+use crate::image::{extract_images, ImageAsset};
+use crate::import::BufferData;
 use crate::material::{extract_materials, MaterialAsset};
 use crate::mesh::{extract_meshes, MeshAsset};
 use crate::scene_stub::{Entity, EntityComponents, Scene, Transform};
@@ -27,7 +29,7 @@ use crate::GltfError;
 /// glTF buffer index.
 pub fn build_scene(
     doc: &gltf::Document,
-    buffers: &[Vec<u8>],
+    buffers: &[BufferData],
     cache: &mut dyn Cache,
 ) -> Result<Scene, GltfError> {
     // Step 1 — extract & cache all assets.
@@ -36,7 +38,50 @@ pub fn build_scene(
     let skeletons: Vec<Skeleton> = extract_skeletons(doc, buffers)?;
     let animations: Vec<AnimationClip> = extract_animations(doc, buffers)?;
 
-    let material_handles: Vec<MaterialHandle> = materials
+    // Dispatch L — decode every embedded glTF image and insert into
+    // the cache. Build a `glTF image index -> ImageHandle` lookup so
+    // material extraction can resolve `base_color_texture` through
+    // `textures[i].source().index()` to an `ImageHandle`. Pure-glTF-
+    // index entities (cube.glb / animated_character.glb today) have
+    // no images and produce an empty handle vec, leaving every
+    // material's `base_color_image_handle` as `None` (verified by
+    // unit + integration tests).
+    let images: Vec<ImageAsset> = extract_images(doc, buffers)?;
+    let image_handles: Vec<ImageHandle> = images
+        .into_iter()
+        .map(|img| cache.insert_image(img))
+        .collect();
+
+    // glTF `textures[i]` maps to `images[image_handles[texture.source().
+    // index()]]`. Pre-resolve the indirection so material extraction
+    // is a single Option lookup per `base_color_texture` slot.
+    let texture_index_to_image_handle: Vec<Option<ImageHandle>> = doc
+        .textures()
+        .map(|t| image_handles.get(t.source().index()).copied())
+        .collect();
+
+    // Populate `base_color_image_handle` on each material BEFORE
+    // inserting into the cache (handle is part of the material's
+    // identity for downstream consumers; but excluded from
+    // `MaterialAsset::content_hash` since the image identity is
+    // already content-addressed via the cache itself).
+    let materials_with_image_handles: Vec<MaterialAsset> = materials
+        .into_iter()
+        .map(|mut m| {
+            if let Some(tex_idx) = m.base_color_texture {
+                if let Some(handle) = texture_index_to_image_handle
+                    .get(tex_idx)
+                    .copied()
+                    .flatten()
+                {
+                    m.base_color_image_handle = Some(handle);
+                }
+            }
+            m
+        })
+        .collect();
+
+    let material_handles: Vec<MaterialHandle> = materials_with_image_handles
         .into_iter()
         .map(|m| cache.insert_material(m))
         .collect();

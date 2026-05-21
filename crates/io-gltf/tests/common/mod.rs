@@ -64,6 +64,19 @@ pub fn pbr_material_fixture_path() -> PathBuf {
     p
 }
 
+/// Dispatch L — materialise the textured-cube fixture if not already
+/// on disk; return its path.
+pub fn textured_cube_fixture_path() -> PathBuf {
+    let mut p = fixtures_dir();
+    std::fs::create_dir_all(&p).expect("create fixtures dir");
+    p.push("textured_cube.glb");
+    if !p.exists() {
+        let bytes = make_textured_cube_glb();
+        std::fs::write(&p, bytes).expect("write textured_cube.glb");
+    }
+    p
+}
+
 /// Build a unit-cube GLB: 8 vertices, 12 triangles, 1 material.
 pub fn make_cube_glb() -> Vec<u8> {
     let mut cache = MemoryCache::new();
@@ -212,6 +225,99 @@ pub fn make_animated_character_glb() -> Vec<u8> {
     rge_io_gltf::export_glb(&scene, &cache).expect("export animated character")
 }
 
+/// Dispatch L — build a textured-cube GLB with a REAL 4×4 PNG
+/// checkerboard embedded in the BIN chunk via a buffer-view image
+/// source. Distinct from [`make_pbr_material_glb`] (which round-trips
+/// material parameters with placeholder image URIs that don't decode)
+/// — this fixture's image bytes are produced by
+/// [`rge_io_image::png::save_png`] and survive a real
+/// [`rge_io_image::load_bytes`] decode round-trip.
+///
+/// The fixture intentionally carries NO mesh geometry (empty scene
+/// nodes list). Dispatch L scope is image extraction only —
+/// rendering wiring (Dispatch M) will pair the image with a real
+/// drawable cube. Keeping the fixture small makes the bin chunk
+/// easy to reason about: it holds ONLY the encoded PNG bytes.
+pub fn make_textured_cube_glb() -> Vec<u8> {
+    let png_bytes = make_checker_4x4_png();
+    let png_len = png_bytes.len();
+
+    // Hand-rolled JSON: minimal glTF document with one image sourced
+    // from `bufferViews[0]` (offset 0, length = PNG byte count). We
+    // bypass `export_glb` because the production exporter still emits
+    // placeholder PNG-magic URIs (Dispatch M deferral, see export.rs
+    // TODO) — for THIS fixture we need the importer's `View` path
+    // exercised against real bytes.
+    let json = serde_json::json!({
+        "asset": { "version": "2.0" },
+        "scene": 0,
+        "scenes": [{ "nodes": [] }],
+        "materials": [{
+            "name": "checker-mat",
+            "pbrMetallicRoughness": {
+                "baseColorTexture": { "index": 0 }
+            }
+        }],
+        "textures": [{ "source": 0 }],
+        "images": [{ "bufferView": 0, "mimeType": "image/png", "name": "checker" }],
+        "buffers": [{ "byteLength": png_len }],
+        "bufferViews": [{ "buffer": 0, "byteOffset": 0, "byteLength": png_len }]
+    });
+
+    let mut json_padded = serde_json::to_vec(&json).expect("serialize json");
+    while json_padded.len() % 4 != 0 {
+        json_padded.push(b' ');
+    }
+    let mut bin_padded = png_bytes;
+    while bin_padded.len() % 4 != 0 {
+        bin_padded.push(0);
+    }
+
+    let json_chunk_len = u32::try_from(json_padded.len()).expect("json chunk fits u32");
+    let bin_chunk_len = u32::try_from(bin_padded.len()).expect("bin chunk fits u32");
+    let total_len_usize = 12 + 8 + json_padded.len() + 8 + bin_padded.len();
+    let total_len = u32::try_from(total_len_usize).expect("total fits u32");
+
+    let mut out = Vec::with_capacity(total_len_usize);
+    // GLB header.
+    out.extend_from_slice(&0x4654_6C67_u32.to_le_bytes()); // "glTF" magic
+    out.extend_from_slice(&2_u32.to_le_bytes()); // version 2
+    out.extend_from_slice(&total_len.to_le_bytes());
+    // JSON chunk.
+    out.extend_from_slice(&json_chunk_len.to_le_bytes());
+    out.extend_from_slice(&0x4E4F_534A_u32.to_le_bytes()); // "JSON"
+    out.extend_from_slice(&json_padded);
+    // BIN chunk.
+    out.extend_from_slice(&bin_chunk_len.to_le_bytes());
+    out.extend_from_slice(&0x004E_4942_u32.to_le_bytes()); // "BIN\0"
+    out.extend_from_slice(&bin_padded);
+
+    out
+}
+
+/// Build a 4×4 red/blue checkerboard PNG via the production io-image
+/// codec. Sixteen pixels = 64 bytes RGBA8; output is a real PNG that
+/// `rge_io_image::load_bytes` decodes back to the same RGBA layout.
+///
+/// Pixel layout (row-major from top):
+///   row 0: R B R B
+///   row 1: B R B R
+///   row 2: R B R B
+///   row 3: B R B R
+fn make_checker_4x4_png() -> Vec<u8> {
+    let red: [u8; 4] = [255, 0, 0, 255];
+    let blue: [u8; 4] = [0, 0, 255, 255];
+    let mut rgba = Vec::with_capacity(64);
+    for y in 0..4 {
+        for x in 0..4 {
+            let on = ((x + y) % 2) == 0;
+            rgba.extend_from_slice(if on { &red } else { &blue });
+        }
+    }
+    let img = rge_io_image::Image::from_rgba8(4, 4, rgba);
+    rge_io_image::png::save_png(&img).expect("save_png")
+}
+
 /// Build the PBR-material GLB: a cube + a material exercising all the PBR
 /// parameter slots and the two non-default texture-index slots so the
 /// importer round-trips them.
@@ -233,6 +339,7 @@ pub fn make_pbr_material_glb() -> Vec<u8> {
         double_sided: true,
         alpha_mode: rge_io_gltf::material::AlphaMode::Mask,
         alpha_cutoff: 0.4,
+        base_color_image_handle: None,
     };
     let mh = cache.insert_mesh(mesh);
     let mat_h = cache.insert_material(mat);

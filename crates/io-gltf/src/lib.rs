@@ -78,6 +78,7 @@
 
 pub mod animation;
 pub mod export;
+pub mod image;
 pub mod import;
 pub mod material;
 pub mod mesh;
@@ -94,7 +95,8 @@ pub use animation::{
 };
 pub use cache_stub::{Cache, MemoryCache};
 pub use export::{export_glb, export_glb_to_file};
-pub use handles::{AnimationHandle, MaterialHandle, MeshHandle, SkeletonHandle};
+pub use handles::{AnimationHandle, ImageHandle, MaterialHandle, MeshHandle, SkeletonHandle};
+pub use image::{extract_images, ImageAsset};
 pub use import::{import_glb, import_glb_bytes};
 pub use material::{extract_materials, AlphaMode, MaterialAsset};
 pub use mesh::{extract_meshes, MeshAsset, Primitive};

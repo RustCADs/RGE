@@ -231,6 +231,18 @@ pub fn export_glb(scene: &Scene, cache: &dyn Cache) -> Result<Vec<u8>, GltfError
 
     // Synthetic texture / sampler / image padding.
     //
+    // TODO (Dispatch M+) — real texture export. Dispatch L added
+    // `MaterialAsset::base_color_image_handle` and a cache surface for
+    // decoded images, but this exporter still emits placeholder PNG
+    // magic-byte URIs (`iVBORw0KGgo=`) to satisfy the glTF validator
+    // on round-trip. Hooking the placeholder path to
+    // `cache.get_image(handle)` + `rge_io_image::png::save_png`
+    // requires (a) deciding whether to re-encode every export or
+    // cache the encoded bytes alongside the decoded ones, and (b)
+    // wiring sampler + texture JSON properly. Deferred to its own
+    // dispatch so Dispatch L stays substrate-only and the import
+    // path lands cleanly.
+    //
     // v0 round-trips texture **indices** but doesn't serialise the texture
     // bitmaps themselves (those live in `io-image`, W18). The `gltf` crate's
     // validator enforces that every texture index resolves; if we leave the
@@ -240,8 +252,15 @@ pub fn export_glb(scene: &Scene, cache: &dyn Cache) -> Result<Vec<u8>, GltfError
     // trip. Texture bytes themselves are not preserved at v0 — that's
     // explicitly W18's job.
     if let Some(max_tex) = max_referenced_texture_index(cache, scene) {
+        // Dispatch L — synthesise a real 1×1 white PNG via io-image so
+        // the round-trip survives the new `extract_images` decode step
+        // (the prior 8-byte PNG-magic-only placeholder was rejected by
+        // `rge_io_image::load_bytes` as truncated). Single placeholder
+        // shared across every texture slot — they're identical byte
+        // patterns so importers dedupe via content hash anyway.
+        let placeholder_uri = synthetic_placeholder_png_data_uri();
         let images: Vec<Value> = (0..=max_tex)
-            .map(|i| json!({"uri": format!("data:image/png;base64,iVBORw0KGgo="), "name": format!("placeholder_{i}")}))
+            .map(|i| json!({"uri": placeholder_uri.clone(), "name": format!("placeholder_{i}")}))
             .collect();
         let samplers: Vec<Value> = (0..=max_tex).map(|_| json!({})).collect();
         let textures: Vec<Value> = (0..=max_tex)
@@ -270,6 +289,61 @@ pub fn export_glb(scene: &Scene, cache: &dyn Cache) -> Result<Vec<u8>, GltfError
 
     let json_str = serde_json::to_string(&Value::Object(top))?;
     Ok(pack_glb(json_str.as_bytes(), &bin))
+}
+
+/// Dispatch L — encode a 1×1 white PNG once per export and return it
+/// as a `data:image/png;base64,...` URI. Replaces the prior 8-byte
+/// PNG-magic-only placeholder so the round-trip survives the new
+/// `extract_images` decode step (`rge_io_image::load_bytes` rejected
+/// the truncated form). Cheap enough to recompute per export call —
+/// the PNG is tiny (~70 bytes) and base64 doubles that.
+///
+/// Round-trip semantics unchanged: importers see a valid 1×1 image,
+/// the cache stores it, the texture index resolves; the actual pixel
+/// content is opaque white and is NOT a faithful re-encoding of any
+/// originally-imported image. Real texture export is deferred to
+/// Dispatch M+ (see TODO at the synthetic-padding block above).
+fn synthetic_placeholder_png_data_uri() -> String {
+    let img = rge_io_image::Image::from_rgba8(1, 1, vec![0xFF, 0xFF, 0xFF, 0xFF]);
+    let png = rge_io_image::png::save_png(&img).expect("save_png 1×1 white");
+    let mut b64 = String::with_capacity((png.len() + 2) / 3 * 4);
+    base64_encode_into(&png, &mut b64);
+    format!("data:image/png;base64,{b64}")
+}
+
+/// Minimal RFC-4648 base64 encoder. Inverse of
+/// [`crate::import::base64_decode_exposed`]; same charset, same
+/// padding rules. Local to export so the synthetic-placeholder path
+/// doesn't pull a new dependency in.
+fn base64_encode_into(bytes: &[u8], out: &mut String) {
+    const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut chunks = bytes.chunks_exact(3);
+    for chunk in chunks.by_ref() {
+        let n = (u32::from(chunk[0]) << 16) | (u32::from(chunk[1]) << 8) | u32::from(chunk[2]);
+        out.push(CHARSET[((n >> 18) & 0x3F) as usize] as char);
+        out.push(CHARSET[((n >> 12) & 0x3F) as usize] as char);
+        out.push(CHARSET[((n >> 6) & 0x3F) as usize] as char);
+        out.push(CHARSET[(n & 0x3F) as usize] as char);
+    }
+    let rem = chunks.remainder();
+    match rem.len() {
+        0 => {}
+        1 => {
+            let n = u32::from(rem[0]) << 16;
+            out.push(CHARSET[((n >> 18) & 0x3F) as usize] as char);
+            out.push(CHARSET[((n >> 12) & 0x3F) as usize] as char);
+            out.push('=');
+            out.push('=');
+        }
+        2 => {
+            let n = (u32::from(rem[0]) << 16) | (u32::from(rem[1]) << 8);
+            out.push(CHARSET[((n >> 18) & 0x3F) as usize] as char);
+            out.push(CHARSET[((n >> 12) & 0x3F) as usize] as char);
+            out.push(CHARSET[((n >> 6) & 0x3F) as usize] as char);
+            out.push('=');
+        }
+        _ => unreachable!(),
+    }
 }
 
 /// Highest texture index referenced by any material in the cache that is

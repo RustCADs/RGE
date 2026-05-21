@@ -78,6 +78,15 @@ handle! {
     SkeletonHandle
 }
 
+handle! {
+    /// Dispatch L — stable handle to an [`crate::ImageAsset`] cached in a
+    /// [`crate::Cache`]. Same shape as the other handles (blake3 of the
+    /// asset's canonical byte form). Used by [`crate::MaterialAsset::
+    /// base_color_image_handle`] to point at the decoded image bytes
+    /// belonging to the material's `base_color_texture` slot.
+    ImageHandle
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

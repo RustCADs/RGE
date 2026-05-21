@@ -11,7 +11,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::handles::MaterialHandle;
+use crate::handles::{ImageHandle, MaterialHandle};
 
 /// PBR material parameters round-tripped at v0.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -39,6 +39,20 @@ pub struct MaterialAsset {
     pub alpha_mode: AlphaMode,
     /// Alpha cutoff (used only with [`AlphaMode::Mask`]).
     pub alpha_cutoff: f32,
+    /// Dispatch L — content-hash handle to the decoded base-colour
+    /// image, populated by [`crate::scene_builder::build_scene`] when
+    /// `base_color_texture` is `Some(i)` and the resolved
+    /// `textures[i] -> images[j]` image successfully decodes through
+    /// [`crate::extract_images`]. `None` when no `base_color_texture`
+    /// was set or the resolution chain failed at scene-build time.
+    ///
+    /// Additive surface: the existing `base_color_texture` index field
+    /// is preserved verbatim for round-trip and downstream callers
+    /// that haven't migrated to handle-based lookup. Not hashed in
+    /// [`Self::content_hash`] — handle identity is derivable from the
+    /// image bytes via the cache.
+    #[serde(default)]
+    pub base_color_image_handle: Option<ImageHandle>,
 }
 
 impl Default for MaterialAsset {
@@ -55,6 +69,7 @@ impl Default for MaterialAsset {
             double_sided: false,
             alpha_mode: AlphaMode::Opaque,
             alpha_cutoff: 0.5,
+            base_color_image_handle: None,
         }
     }
 }
@@ -144,6 +159,10 @@ fn extract_one(m: gltf::Material) -> MaterialAsset {
         double_sided: m.double_sided(),
         alpha_mode: AlphaMode::from_gltf(m.alpha_mode()),
         alpha_cutoff: m.alpha_cutoff().unwrap_or(0.5),
+        // Dispatch L — populated post-extraction by
+        // `scene_builder::build_scene` after images are decoded and
+        // texture indices resolved. Default `None` is correct here.
+        base_color_image_handle: None,
     }
 }
 

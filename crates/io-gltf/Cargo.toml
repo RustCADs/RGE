@@ -20,6 +20,14 @@ serde      = { workspace = true }
 serde_json = { workspace = true }
 thiserror  = { workspace = true }
 blake3     = { workspace = true }
+# Dispatch L — io-tier -> io-tier edge for embedded glTF image bytes.
+# io-gltf now extracts buffer-view and `data:image/...;base64,...` source
+# images and dispatches the encoded bytes through `rge_io_image::load_bytes`
+# to decode into `Image { Rgba8|16|32F }`. Keeps the
+# one-import-path-per-format rule (PLAN §1.6.5) intact — io-image stays
+# the single owner of raster codecs; io-gltf only handles the glTF
+# embedding semantics.
+rge-io-image = { path = "../io-image" }
 
 [dev-dependencies]
 ron = { workspace = true }

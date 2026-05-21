@@ -112,6 +112,15 @@ fn decode_data_uri(uri: &str) -> Result<Vec<u8>, GltfError> {
 /// Minimal RFC-4648 base64 decoder. Used because adding the `base64` crate
 /// to the workspace just for a single decode site would inflate the
 /// import-path footprint.
+///
+/// Dispatch L exposes this through [`base64_decode_exposed`] so the
+/// image-URI parser in [`crate::image`] can reuse the same routine
+/// without duplicating it (image URIs and buffer URIs share the
+/// base64 payload encoding).
+pub(crate) fn base64_decode_exposed(s: &str) -> Option<Vec<u8>> {
+    base64_decode(s)
+}
+
 fn base64_decode(s: &str) -> Option<Vec<u8>> {
     let mut out = Vec::with_capacity(s.len() * 3 / 4);
     let bytes = s.as_bytes();
