@@ -533,3 +533,105 @@ Until **at least one** of those fires, treat the reflection substrate as observe
   rg "use rge_macros_reflect::" --type rust
   ```
 - This preflight is read-only and complementary to (not a replacement for) `kernel/types/BUDGET.md`. The BUDGET doc owns Phase 1.1 compile-budget numbers and their re-running instructions; this entry owns the **adoption** baseline and the two-arm revisit trigger. They should be re-read together when either trigger fires.
+
+---
+
+## Editor-usability preflight (Phase 9)
+
+**Budget anchors and gate references:**
+
+- IMPLEMENTATION.md Phase 9 §9 (line 600): "Editor usability — friction points from real authoring."
+- IMPLEMENTATION.md Phase 5 §5.1–§5.2 (lines 374, 384): `editor-shell` + `editor-state` (narrow per §1.15).
+- IMPLEMENTATION.md Phase 2 §2.2 (line 217): `editor-actions` (Command Bus) — **VERY EARLY**.
+- PLAN.md §1.15: editor-state coordination-not-authority rule (selection / hover / active-tool only; no authoritative content types).
+- PLAN.md §6.16.7: Command Bus 500 ms coalesce semantics.
+
+**This entry is a Phase 9 PREFLIGHT — pure read-only audit of the editor's actual user-facing surface.** It does NOT add commands, wire keyboard handlers, build scene serialization, or change any substrate. It is the first recorded *editor-usability* baseline (distinct from the Phase 5 / Phase 6 substrate-closure records already in this doc) so future user-loop landings have an honest before-and-after reference.
+
+**Methodology (read-only):**
+
+1. Inventory of `[[bin]]` entry points and `src/main.rs` across `crates/editor-*/`, `editor/`, `apps/`, `tools/`.
+2. Read `lib.rs` + key modules + `Cargo.toml` of `editor-shell`, `editor-ui`, `editor-actions`, `editor-state`, `components-editor`, `anim-graph-editor`, `material-graph-editor`.
+3. Grep across `editor-*` for: `open_file`, `load_project`, `save_project`, `.rge` / `.rgeproj` / `.scene` / `.project` file-extension string literals, `unimplemented!()` / `todo!()` / stub markers, `KeyboardInput` event branches, call sites of `io-gltf` / `io-image` / `io-3mf` public APIs.
+4. Cross-check the editor's call graph against the `CommandBus::submit` / `Action::apply` / `Action::revert` signatures to determine whether user-visible CAD mutations can flow through the existing bus.
+5. Test inventory across `editor-*` (`#[test]` count + integration vs unit breakdown + workflow coverage).
+
+### 2026-05-21 — initial editor-usability adoption snapshot (recorder host, Rust 1.92.0)
+
+**Editor binary entry point (confirmed):**
+
+| Binary | Path | Entry | What it does at launch today |
+|---|---|---|---|
+| `rge-editor` | `editor/rge-editor/Cargo.toml:12-14` → `editor/rge-editor/src/main.rs:38-96` | `fn main()` | Constructs `CadGraph` with one hardcoded `CuboidOp(1.0, 1.0, 1.0)` (line 47); spawns one ECS entity with `BRepHandle` (line 68); ticks `CadProjection` once (line 83); hands world / projection / graph to `EditorShell::with_world_projection_graph()` (line 87); runs winit event loop; renders the cuboid with Lambert+Phong + directional light |
+
+Only one editor binary exists today; `crates/editor-shell/src/bin/` does not contain a binary entry point.
+
+**Workflows that work end-to-end TODAY:**
+
+| Workflow | Status | Citation |
+|---|---|---|
+| Launch `rge-editor`, render the hardcoded 1×1×1 cuboid | ✅ WORKING | `editor/rge-editor/src/main.rs:38-96`, `crates/editor-shell/src/render_path.rs:471-578` (clear color `0.12, 0.12, 0.14` at `:509`; one `draw_indexed` for the cuboid + optional second `draw_indexed` for the highlight overlay) |
+| Mouse cursor tracking | ✅ WORKING | `crates/editor-shell/src/lifecycle.rs:760-765` updates `self.cursor_pos` on `CursorMoved` |
+| Left-click face picking + orange highlight overlay (sub-ε) | ✅ WORKING | `lifecycle.rs:767-774` (`MouseInput` left-press → `handle_left_click`); `crates/editor-shell/src/camera.rs::pick_face_at()`; `crates/editor-shell/src/pick_path.rs` (`rebuild_highlight_overlay`); `crates/cad-projection/src/picking.rs:194` (`CadProjection::pick_face()`); highlight color constant at `render_path.rs:69` |
+| Play / Stop / Pause / Step PIE — byte-identical world snapshot across 100 ticks | ✅ WORKING (Phase 5.3 CLOSED) | `lifecycle.rs:479` (`handle_button`); `crates/editor-shell/src/snapshot.rs` (`WorldSnapshot::capture_and_audit` / `restore_and_audit`); 8 tests in `lifecycle.rs` |
+| Editor-coord state (`Selection` / `Hover` / `ActiveTool` / `FaceSelection`) persists across Play/Stop | ✅ WORKING | `crates/editor-shell/src/coord.rs` (`EditorCoord`); `crates/editor-shell/tests/snapshot_correctness.rs:24,45,84` |
+| Workspace layout persistence (egui_dock RON files) | ✅ WORKING | `crates/editor-ui/src/dock/layout_service.rs` (`LayoutService::{load,save}`); `crates/editor-ui/tests/workspace_round_trip.rs:41,57` |
+| Render handoff (latest-only single-threaded proxy) | ✅ WORKING (Phase 6.2) | `crates/editor-shell/src/render_input.rs` (`RenderHandoff::{acquire,publish}`); `crates/editor-shell/tests/render_input_boundary.rs:27,72,160,396` |
+| Time-scale dilation (0.5× halves game progress; editor unaffected) | ✅ WORKING | `crates/editor-shell/tests/time_scale_test.rs:32` |
+
+**Test coverage:** **312 `#[test]` annotations across `editor-*` crates** — 74 integration (`editor-shell/tests/` 42 + `editor-ui/tests/` 32) + 238 inline / `#[cfg(test)]` unit (`editor-shell/src/` 68 + `editor-ui/src/` 81 + `editor-actions/src/` 23 + `editor-state/src/` 33 + dock/layout subsystem 33). Strong coverage of: PIE snapshot semantics, face picking via camera ray, render-input handoff, editor/game-state boundary discipline, time-scale game-systems dilation, workspace-layout disk round-trip. **No coverage** of: full UI event loop (mouse clicks / keyboard input through `window_event`), WASM script reload via editor, multi-entity scene complexity, fillet/loft operator-graph UX flow.
+
+**Top 3 usability gaps (qualitative; baseline-state findings):**
+
+1. **No scene/project persistence — zero file-I/O paths for actual scene state.** No `open_file` / `load_project` / `save_project` symbols anywhere in `editor-shell` or `rge-editor`. Zero string-literal matches for `.rge` / `.rgeproj` / `.scene` / `.project` extensions. `crates/rge-data` declares `serde` + `ron` dependencies (e.g. `crates/cad-projection/Cargo.toml:19-20`) and a RON serialization API exists, but **the editor never calls it**. The editor cannot save user work and cannot reload anything; the hardcoded `CuboidOp(1.0, 1.0, 1.0)` is the only shape that ever exists. The authoring loop is therefore **structurally unmeasurable** — there is no loop to friction-test.
+
+2. **Command Bus is fully implemented in `editor-actions` but structurally unreachable from the editor UI.** `crates/editor-actions/src/bus.rs:86` defines `CommandBus` with `submit` (line 143), `UndoStack`, `SaveMark`, 500 ms coalesce window, audit-ledger projection, and full unit coverage. **Zero call sites from `editor-shell` / `rge-editor` dispatch any user-triggered command through the bus.** `crates/editor-shell/src/lifecycle.rs::window_event()` ends with a catch-all `_ => {}` (line 776) that silently swallows every `KeyboardInput` event the OS delivers. The user cannot press Ctrl+Z, cannot trigger any command from the keyboard, cannot escape a tool. The Phase 2 doctrine ("Command Bus VERY EARLY", IMPLEMENTATION.md:217) has materialized as substrate but has **no production user yet** at the editor surface.
+
+3. **`MenuRegistry` + `io-*` asset loaders are both ready internally but never called from the editor.** `crates/editor-ui/src/menus/registry.rs` (`MenuRegistry::declare_extension_point` / `register_entry` / `resolve`) is closed per W08 and tested; the `menus::Command` enum is defined. **Zero menu handlers are wired** — `ResolvedEntry` produced by the registry is never acted upon by editor-shell. `crates/io-gltf/src/lib.rs:20-24` (`import_glb` / `export_glb`) and `crates/io-image/src/lib.rs:80,87` (`load_path` / `load_bytes`) are public APIs but **have zero call sites** from `editor-shell` or `rge-editor`; no drag-drop path; no CLI argument parsing for a file path. Users cannot "File → Open" anything. Phase 5 W08 menu substrate and the Phase 4 `io-*` loaders are **paper-only at the editor surface**.
+
+**Cross-cutting pattern.** Substrate-first architecture has worked: PIE / Command Bus / MenuRegistry / io-gltf / io-image / CadProjection / LitMeshPipeline are all closed and tested in isolation, each with their own gate-recorded baselines in this doc. **But no user-input path connects any of them to a visible scene change.** The editor today is a rendering + picking testbed with battle-tested internals nobody can drive from the UI.
+
+**Rejected/boundedness note — F → `SpawnCuboidAt` proposal:**
+
+A direct preflight follow-up was considered and **rejected as not bounded**: "wire `F` keypress → dispatch `Command::SpawnCuboidAt(Vec3)` through `CommandBus::submit()` → spawn a second visible cuboid; map `Ctrl+Z` to `CommandBus::undo()`; one headless integration test asserting entity-count round-trip." On surface inspection this looked like ≤ 200 LoC source + ≤ 100 LoC test. The actual scope is larger:
+
+- **`CommandBus` is World-only today.** `crates/editor-actions/src/bus.rs:143` signs `submit(action: Box<dyn Action>, world: &mut World)`; `crates/editor-actions/src/action.rs:74-96` signs `Action::apply(&self, world: &mut World)` and `revert(&self, world: &mut World)`. The `Action` trait has **no access** to `CadGraph`, `CadProjection`, or any editor-shell render projection state. `BusEntry::apply/revert` at `bus.rs:33,44` mirror the World-only signature.
+- **A visible CAD-cuboid spawn requires mutating `CadGraph` and producing a fresh `CadProjection` snapshot** — neither of which lives in `World`. The current cuboid is constructed in `editor/rge-editor/src/main.rs:47-68` against the standalone `CadGraph` + `CadProjection` instances that are handed to `EditorShell` once at construction time (`with_world_projection_graph(world, projection, graph)` at `main.rs:87`).
+- **`EditorShell::with_world_projection_graph` is explicitly single-cuboid / sub-δ scope.** The render path assumes a single `BRepHandle` and a single mesh in the projection cache (matching the sub-δ.1.B closure noted in `render_path.rs`). A second visible cuboid would require:
+  - Extending the projection-side rendering path to iterate multiple `BRepHandle` meshes (currently single-cuboid by construction).
+  - Either (a) a `CommandBus` context redesign that exposes `&mut CadGraph` + `&mut CadProjection` to `Action::apply` (changing the World-only invariant on which the existing 23 `editor-actions` tests rely), or (b) a parallel "editor command" channel that mutates editor-shell state outside the `Action` trait (which forks the architecture and the audit-ledger story).
+  - Snapshot/restore semantics for entity-count changes mid-undo-stack, which the current `WorldSnapshot` was not exercised against — `pie_round_trip.rs:156` covers entity-count-preserved-across-Play/Stop but not undo-on-Play/Stop boundary.
+
+The minimum bounded next dispatch is therefore **NOT** a visible-CAD-spawn task. It is a smaller **CommandBus integration design / adapter** dispatch that explicitly decides whether the bus stays World-only or grows an editor command context — and what the cad-graph mutation path looks like either way. That design dispatch is not started here.
+
+**Status:** **PHASE 9 PREFLIGHT — substrate complete in isolation, no user-input path connects to it, defer.**
+
+- The editor binary renders + picks but cannot save / load / spawn / undo through user input.
+- All three usability gaps (persistence / Command-Bus-from-UI / menu+asset wiring) share the same shape: the underlying substrate is closed and tested, only the input-to-substrate path is missing.
+- The natural "small" follow-up (F → SpawnCuboidAt) is bigger than it looks because of the World-only `CommandBus` / `Action` trait surface.
+
+**Revisit triggers** — re-run this preflight when **either** of the following becomes true:
+
+1. **A CommandBus integration design dispatch lands a decision** on whether `CommandBus::submit` stays `(&mut World)`-only or grows a richer context (e.g. `(&mut World, &mut CadGraph, &mut CadProjection)` or a typed `&mut EditorCommandCtx` aggregate), and what the corresponding `Action::apply`/`revert` signature looks like. The decision itself can be a docs-only ADR / design note plus a stub adapter; it does not have to land the full multi-context bus.
+2. **A non-CAD user-input path lands first** — e.g. workspace-layout RON load/save bound to `Ctrl+S` / `Ctrl+O` (already has working substrate per `workspace_round_trip.rs`), or PIE Play/Stop bound to a keyboard shortcut. Either would surface the `KeyboardInput` catch-all at `lifecycle.rs:776` and force a real `window_event` keyboard branch without first redesigning the bus.
+
+Until **at least one** of those fires, **defer all user-facing editor wire-up dispatches**. The substrate quality is high and not at risk; the architectural cost of wiring the wrong abstraction first (e.g. fork the bus, or bypass the audit ledger to "ship something") is high.
+
+**Notes / caveats:**
+
+- This preflight does NOT propose shrinking, refactoring, or rewriting any existing editor substrate. PIE / Command Bus / MenuRegistry / `editor-coord` / `LitMeshPipeline` / `RenderHandoff` are all healthy and well-tested. The gap is purely the absence of input → substrate plumbing.
+- **F → `SpawnCuboidAt` is not the only rejected micro-dispatch** — also considered and deferred for the same architectural-cost reason: (a) `Ctrl+S` writes workspace RON to a fixed path (would land easily but ships a half-loop with no `Ctrl+O` partner); (b) `--load <gltf-path>` CLI arg invokes `io-gltf::import_glb` (would land easily but ECS/projection ingestion of an external mesh is unexercised and the projection cache today assumes the `CadGraph`-owned mesh, not an imported one); (c) wire `MenuRegistry::resolve` output to a no-op handler (provides nothing user-visible).
+- The asset-ingestion path is itself a Phase 4 / Phase 8 concern (cad-projection invalidation behavior on a foreign mesh isn't covered by the existing `cad-projection` tests). A foreign-mesh-into-editor dispatch would need its own preflight independent of the CommandBus-context question.
+- The 312-test surface on `editor-*` provides good regression coverage for the *internals*; the gaps above are pure *external surface* gaps. Adding more `editor-*` unit tests would not move this preflight's headline numbers.
+- Reproducer for the consumer inventory (read-only grep; no harness in-tree):
+  ```
+  # editor-shell call sites of io-* loaders (expect zero today):
+  rg "io_gltf::|io_image::|io_3mf::" crates/editor-shell crates/editor-ui editor/rge-editor --type rust
+  # KeyboardInput branches in editor-shell window_event (expect zero non-catch-all):
+  rg "KeyboardInput|key_code|virtual_keycode" crates/editor-shell/src/lifecycle.rs
+  # CommandBus::submit call sites from editor-shell / editor-ui (expect zero):
+  rg "CommandBus|\.submit\(|editor_actions::" crates/editor-shell crates/editor-ui editor/rge-editor --type rust
+  # File-extension string literals (expect zero in editor surface today):
+  rg "\.rge\"|\.rgeproj\"|\.scene\"|\.project\"" crates/editor-shell crates/editor-ui editor/rge-editor --type rust
+  ```
+- This preflight is read-only and complementary to (not a replacement for) the Phase 5.3 PIE-round-trip baseline, the W10 workspace-round-trip baseline, and the §6.3 Gate A render-performance baseline already in this doc. Those entries own the *substrate-closure* baselines; this entry owns the **user-loop adoption** baseline and the two-arm revisit trigger. They should be re-read together when either trigger fires.
