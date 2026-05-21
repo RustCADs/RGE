@@ -320,3 +320,112 @@ For the `--all-targets` variants, append `--all-targets` to the `cargo check` li
 - Two warnings were emitted during the runs (`rge-ui-theme` missing-docs, `rge-cad-core revolve_fillet_smoke.rs` unused variable). They are pre-existing and unrelated to this preflight; they did not affect timing meaningfully.
 - The shared `CARGO_TARGET_DIR=A:\RustCache\target` setup means individual dispatch sessions inherit a fully warm cache; a fresh-checkout developer on a different machine will see materially different numbers on first build. That asymmetry is exactly why a future clean-build dispatch is non-trivial to schedule.
 - Hardware identity is deliberately not pinned in this row beyond "recorder host / Windows / x86_64". A future dispatch that owns the cleaner harness should record the CPU model, NVMe vs SATA on `A:\`, and antivirus posture (NTFS realtime scan is a known cargo-throughput drag on Windows).
+
+---
+
+## §1.10.4 Incremental-invalidation-radius preflight (Phase 9)
+
+**Budget anchor (per `plans/PLAN.md` §1.10.4 / risk-table line 1218):**
+
+> **Incremental invalidation radius** (crates rebuilt after touching one core type) **> 30 % of workspace ⇒ lint warn**.
+
+For the current workspace (95 members per `cargo metadata`), the lint-warn threshold is **28.5 crates** (i.e. a crate whose transitive reverse-dep closure includes ≥ 29 workspace members would trip the warning).
+
+**This entry is a Phase 9 PREFLIGHT — pure read-only `cargo metadata` measurement.** It is NOT a lint, it is NOT a harness wired into CI, and it does NOT touch source / Cargo / lint code. It establishes the first recorded radius reference for the workspace so future regressions are visible, and it codifies the revisit triggers under which a real lint / harness becomes warranted.
+
+**Methodology (read-only):**
+
+1. `cargo metadata --format-version 1 > meta.json` — produces the full resolved dep tree including `dep_kinds` per edge.
+2. Parse the JSON: collect `workspace_members` (set of package IDs), then walk `resolve.nodes[].deps[].dep_kinds[]` to build the workspace-internal forward graph in two flavours:
+   - **NORMAL** = edges with `dep_kinds.kind = null` (normal lib) ∪ `"build"` (build-deps invalidate too).
+   - **NORMAL+DEV** = above ∪ edges with `dep_kinds.kind = "dev"` (counts test/bench rebuilds).
+3. Invert each forward graph to a reverse graph, then compute the transitive reverse-dependency closure for every workspace crate (DFS through the reverse adjacency map).
+4. The percentage **closure / 95** is the invalidation-radius measurement.
+
+No source files were read; only `Cargo.toml` (via cargo's own resolver) and the resolved metadata JSON. The Python parser is throw-away (lives outside the repo at `C:/Users/halil/AppData/Local/Temp/rge_radius2.py`); reproducer is below.
+
+### 2026-05-21 — initial workspace radius snapshot (recorder host, Rust 1.92.0)
+
+**Workspace context:**
+
+| Field | Value |
+|---|---|
+| `cargo metadata` workspace members | **95** crates |
+| Older `Status.md` / `HANDOFF.md` / `README.md` wording | "94 crates" (one-off doc drift; one extra crate has landed since those rows were last refreshed; not material to threshold analysis — the discrepancy is < 2 %) |
+| Workspace-internal edges (normal + build) | **64** |
+| Workspace-internal edges (dev) | **13** |
+| Distinct workspace-internal edges | **75** |
+| **Isolated crates** (zero workspace-internal edges in either direction) | **57 of 95 (60 %)** |
+| Examples of isolated crates | `anim-clip`, `anim-ik`, `anim-retarget`, `cad-native`, `cad-occt`, `components-{editor, interaction, lifecycle, networking, physics, spatial}`, `runtime-{web, mobile, headless}`, 7 of 8 `tools/*` (only `architecture-lints` is connected) |
+
+**Top 10 workspace crates by reverse-dep closure (descending):**
+
+| Rank | Crate | Normal closure | % of 95 | Direct (normal) | +Dev closure | +Dev % |
+|---:|---|---:|---:|---:|---:|---:|
+| 1 | `rge-kernel-graph-foundation` | **18** | **18.9 %** | 9 | 18 | 18.9 % |
+| 2 | `rge-kernel-diagnostics` | 15 | 15.8 % | 12 | 15 | 15.8 % |
+| 3 | `rge-kernel-ecs` | 10 | 10.5 % | 9 | 10 | 10.5 % |
+| 4 | `rge-kernel-asset` | 7 | 7.4 % | 7 | 7 | 7.4 % |
+| 5 | `rge-kernel-plugin-host` | 7 | 7.4 % | 5 | 7 | 7.4 % |
+| 6 | `rge-cad-core` | 5 | 5.3 % | 4 | 5 | 5.3 % |
+| 7 | `rge-brep-render` | 4 | 4.2 % | 3 | 4 | 4.2 % |
+| 8 | `rge-editor-state` | 3 | 3.2 % | 2 | 4 | 4.2 % |
+| 9 | `rge-material-runtime` | 3 | 3.2 % | 1 | 4 | 4.2 % |
+| 10 | `rge-runtime-wasmtime` | 3 | 3.2 % | 2 | 3 | 3.2 % |
+
+**Requested candidates (explicit) — side-by-side normal vs +dev:**
+
+| Crate | Normal closure / % | +Dev closure / % | Direct normal revdeps |
+|---|---:|---:|---|
+| `rge-kernel-types` | 2 / 2.1 % | 3 / 3.2 % | `rge-macros-reflect`, `rge-script-host` |
+| `rge-kernel-graph-foundation` | **18 / 18.9 %** | 18 / 18.9 % | `rge-anim-graph`, `rge-asset-store`, `rge-cad-core`, `rge-cad-projection`, `rge-editor-ui`, `rge-gfx`, `rge-kernel-asset`, `rge-material-graph`, `rge-script-graph` |
+| `rge-cad-core` | 5 / 5.3 % | 5 / 5.3 % | `rge-cad-projection`, `rge-editor`, `rge-editor-shell`, `rge-editor-state`, `rge-editor-ui` |
+| `rge-macros-reflect` | **0 / 0.0 %** | 0 / 0.0 % | — (only its own internal tests/fixtures use it) |
+| `rge-kernel-app` | 0 / 0.0 % | 0 / 0.0 % | — (declared in workspace; no consumer) |
+| `rge-kernel-schedule` | 0 / 0.0 % | 0 / 0.0 % | — (declared in workspace; no consumer) |
+
+**Status:** **PHASE 9 PREFLIGHT — no breach. Defer lint and tool implementation.**
+
+- **No crate is anywhere near the 30 % threshold today.** Highest fanout is `kernel/graph-foundation` at **18.9 %** (18 of 95 crates) — **11.1 pp under** the lint-warn ceiling, with **~10.5 crates of headroom** before the warn level fires.
+- The earlier rough qualitative estimate (`graph-foundation NodeId ~32 %`, recorded in the §13.3 Compile-time baseline section's "Top 3 risks" #2 entry) was **wrong** in direction-of-error: it conflated *VizAdapter trait usage via `&dyn`* (which doesn't add a crate-level Cargo edge) with *transitive Cargo deps*. The current radius is materially safer than that section implied. The §13.3 entry's qualitative claim should be read in that corrected light.
+
+**Top 3 invalidation-radius risks (qualitative; baseline-state findings):**
+
+1. **No present breach, but 60 % of the workspace is structurally isolated.** 57 of 95 crates have zero workspace-internal Cargo edges in either direction. The current 18.9 % top is a **temporary low-water mark, not a stable equilibrium** — radius will increase materially as stubs land and start consuming kernel substrate. Implication: this baseline must be **revisited periodically**, not treated as evergreen.
+2. **`kernel/diagnostics` is the second-place fanout at 15.8 %** with **12 direct normal revdeps** — the densest direct edge count of any crate. Any signature-breaking change to `Diagnostic` / `Severity` / `DiagnosticSink` / `FailureClass` would cascade across 12 crates immediately and 15 transitively. Today this is well under threshold; if `kernel/diagnostics` ever absorbs additional concerns (e.g. structured telemetry, metrics, plugin telemetry), it is the most likely first crate to pierce 25 %.
+3. **Three "architectural-root" crates are effectively orphaned by Cargo:** `kernel/types` (2 normal revdeps), `kernel/app` (0), `kernel/schedule` (0); plus `macros-reflect` itself (0). `kernel/types` is documented in PLAN §1.1 as *the* reflection root, but no production crate currently goes through `macros-reflect`-derived reflection — only the macro crate's own `tests/compile_budget_5_pilots.rs` exercises 5 pilot types. This is a **honesty gap between the §1.1 framing and the dep graph**, not a compile-time risk today, but it explains why the §13.3 reflection compile-time gate (`> 30 s on 5 pilot types ⇒ STOP`) has never fired: there *are* no production-reflected types in the workspace yet.
+
+**Revisit triggers** — re-run this `cargo metadata`-based preflight when **either** of the following becomes true:
+
+1. **Any single crate's normal-closure percentage crosses 25 %** (≈ 24 of 95 crates today; ≈ a 5 pp jump from the current top of 18.9 %). At that point the warn-level breach at 30 % is one substrate-merger or one kernel-substrate-consumer landing away, and a real lint becomes warranted.
+2. **The isolated-stubs population drops below 30 of 95** (i.e. **more than ~ 65 of 95 workspace crates have wired up to workspace-internal deps**). At that connectivity level, the closure percentages of the existing top crates will have grown enough that radius regression is no longer dominated by stub-state.
+
+Until **at least one** of those fires, treat the current radius as observed-safe and **defer both the lint and any tool wiring**. `tools/invalidation-profiler/` is currently a 5-line `main.rs` stub; that is the correct state for now — building it before either revisit trigger fires would be premature mechanism per PLAN §1.10's "pressure-driven" doctrine.
+
+**Reproducer (read-only, no harness in-tree):**
+
+```
+$env:CARGO_HOME='A:\RustCache\cargo'; $env:RUSTUP_HOME='A:\RustCache\rustup'
+$env:Path='A:\RustCache\cargo\bin;' + $env:Path
+cd A:\RCAD\RGE
+cargo metadata --format-version 1 > meta.json
+# Parse meta.json with any JSON-aware tool:
+#   - workspace IDs: .workspace_members[]
+#   - graph: .resolve.nodes[] (each node has .id, .deps[].pkg, .deps[].dep_kinds[].kind)
+#   - filter dep_kinds where kind is null (normal) or "build" for the normal-closure;
+#     include "dev" for the +dev variant.
+#   - transitive reverse closure = DFS through reverse adjacency map.
+# The throw-away parser used for this entry lives at
+#   C:/Users/halil/AppData/Local/Temp/rge_radius2.py
+# but is not committed and not required (any JSON path tool reproduces the same numbers
+# from meta.json — Python with `json` stdlib, jq, or PowerShell ConvertFrom-Json).
+```
+
+**Notes / caveats:**
+
+- All numbers above are workspace-internal only. External crates.io deps are NOT counted in the percentages — they don't trigger workspace-crate recompilation when their version is unchanged.
+- The `+Dev` column matters for `cargo test --workspace` invalidation but NOT for `cargo build --workspace`; the §1.10.4 budget targets the latter, so the **normal-closure column is the primary signal**. The `+Dev` column is included for completeness and to highlight cases (e.g. `kernel/types` 2 → 3, `kernel/diagnostics` 15 → 15, `cad-core` 5 → 5) where test/bench-only deps don't materially shift the picture today.
+- The "94 vs 95" workspace-member count discrepancy is harmless. `cargo metadata` is the authoritative count and reports 95; the older "94" wording in `Status.md` / `HANDOFF.md` / `README.md` predates the latest workspace-Cargo.toml addition. A future docs-only reconciliation can refresh those numbers when a meatier Status/HANDOFF sweep is warranted; not in scope for this baseline-record dispatch.
+- Two crates show **direct revdep count > normal closure** in the top 10 (`kernel/diagnostics`: direct 12, closure 15; `kernel/ecs`: direct 9, closure 10). That happens when most direct consumers are leaf crates (no further fanout); good news structurally — diagnostics has wide *direct* reach but doesn't compound transitively.
+- This preflight does **NOT** measure: compile-time wall-clock impact of a 1-line edit to a core type (that's a §13.3 incremental p95 measurement, separately deferred); reflection schema explosion (separately gated by PLAN §1.1's "> 30 s on 5 pilot types" reflection gate, never fired); or generic-monomorphization count per crate (PLAN §1.10's "5,000 warn / 15,000 hard" threshold, not measured here). It strictly measures *which* crates would be invalidated, not *how long* that invalidation would take to resolve.
+- The `cad-projection` closure (2 normal revdeps: `rge-editor`, `rge-editor-shell`) is much smaller than expected given its central architectural role — this is because `cad-projection` is consumed at the *application* layer (editor binary + editor-shell orchestrator), not by downstream Tier-2 crates. The cad-projection moat is wide-but-shallow in graph-shape terms.
