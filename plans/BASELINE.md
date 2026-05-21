@@ -246,3 +246,77 @@ cargo test -p rge-gfx --release --test gate_a_simple_scene_60fps -- --ignored --
 **Sequencing note**: Gate B (CPU-idle empty-shell baseline) closed earlier 2026-05-11; Gate A (this entry) closes for current recorder constraints; **Gate C (render-thread sees stable snapshot; sim-thread mutations don't race) remains DEFERRED** — blocked on the sim/render thread split landing per PLAN §1.5.2 (today's substrate is single-threaded, so the property is vacuously true and the gate is structurally unmeasurable until the split exists).
 
 **Post-depth Gate A — CLOSED 2026-05-14 (MAIN-RENDER-POSTDEPTH-GATEA-001 dispatch, gfx-level synthetic harness)**: The "depth-attached gfx-level harness" option (a) listed in the prior `Post-sub-β measurement gap` note landed as `crates/gfx/tests/gate_a_simple_scene_depth_60fps.rs` — an additive, release-only, `#[ignore]` integration test that mirrors the pre-depth Gate A methodology byte-for-byte (1000 cubes / 10×10×10 / 1280×720 / 60 warmup + 600 sample / 3 runs / P95 ≤ 16.67 ms / variance ≤ 30%) but constructs the pipeline via `LitMeshPipeline::new_with_depth(.., Some(DepthStateKey { Depth24Plus, depth_write_enabled: false, LessEqual }))` (sub-α API) and passes `Some(&depth_view)` to `record_lit_mesh_pass(...)` (per-frame `Depth24Plus` depth texture allocated once and reused). Zero non-test `crates/gfx/src/` edits; the existing `record_lit_mesh_pass` already supports the `Option<&wgpu::TextureView>` arg. Recorder-host run on **NVIDIA GeForce RTX 4060 Ti / Vulkan / DiscreteGpu**: run 0 P95 = 0.125 ms, run 1 P95 = 0.122 ms, run 2 P95 = 0.122 ms → **min-of-3 P95 = 0.122 ms** (median P95 = 0.122 ms, max P95 = 0.125 ms, worst frame = 1.996 ms, **variance across runs = 2.6%**). About 9% slower than pre-depth (0.122 ms vs 0.112 ms) — the measured cost of the depth attachment — and still ~137× under the 16.67 ms gate. **The 0.112 ms pre-depth claim above remains valid for the pre-depth gfx path; this post-depth claim is the additional valid measurement for the depth-attached gfx path.** **Scope (recorder-host-only)**: NOT universal, NOT vendor parity, NOT cold-start, NOT sustained thermal, NOT realistic geometry complexity, NOT CI regression coverage, NOT editor-shell `render_frame` end-to-end (the harness exercises the gfx-level primitives that editor-shell production consumes post-sub-β; it does not exercise editor-shell's winit + `SurfaceContext` + `FrameGraph` + `build_resource_map` substrate ceremony — that remains a separate non-winit-perf-harness scope, blocked on `EditorShell::render_frame` accepting a mock event loop, not pursued by this dispatch). **What's still deferred**: option (b) non-winit editor-shell perf harness (unchanged scope; pressure-driven future dispatch); option (c) manual user report (unchanged; orthogonal to harness-level proof). **No new architecture, no production-source edits, no PLAN target retargeting in this dispatch.**
+
+---
+
+## §13.3 Compile-time baseline (Phase 9 preflight)
+
+**Budget anchors (per `plans/PLAN.md` §1.10 + `plans/IMPLEMENTATION.md` §6 table at line 689–690):**
+
+- Clean-build budget: **≤ 120 s** (`cargo build --release` from a wiped `target/`)
+- Incremental p95 budget: **≤ 10 s** (`cargo build` after a 1-line source change)
+- Reflection compile-time gate (Phase 1.1): **> 30 s on 5 pilot types ⇒ STOP**
+- Incremental invalidation radius (v0.7, NEW): **> 30 % of workspace rebuilt after touching one core type ⇒ lint warn**
+
+**This entry is a Phase 9 PREFLIGHT — a warm-cache `cargo check` baseline ONLY.** It is explicitly **NOT** a proof that the clean-build or incremental p95 budgets are satisfied, and it does NOT close any §13.3 gate. It establishes the first recorded compile-time reference number for the workspace so future regressions can be detected; the formal clean-build and 1-line-edit incremental measurements are deferred to a future dispatch that owns the target-dir rewarm cost and a dedicated harness script.
+
+**Harness (manual):** PowerShell `[System.Diagnostics.Stopwatch]` around `cargo check` invocations (no `--timings` flag, no on-disk artifacts written outside `target/`). Reproducer:
+
+```
+$env:CARGO_HOME='A:\RustCache\cargo'; $env:RUSTUP_HOME='A:\RustCache\rustup'
+$env:Path='A:\RustCache\cargo\bin;' + $env:Path
+cd A:\RCAD\RGE
+$sw = [System.Diagnostics.Stopwatch]::StartNew()
+cargo check --workspace --message-format=short
+$sw.Stop(); $sw.Elapsed.TotalSeconds
+```
+
+For the `--all-targets` variants, append `--all-targets` to the `cargo check` line.
+
+### 2026-05-21 — initial warm-cache `cargo check` baseline (Phase 9 preflight; recorder host)
+
+| Measurement | Command | Elapsed (wall) | Cargo "Finished" | Notes |
+|---|---|---:|---:|---|
+| Warm, fingerprint-stale full-workspace check | `cargo check --workspace` | **17.65 s** | 17.42 s | Many workspace crates re-checked despite warm cache → fingerprint drift since last build (recent dispatch-publish commits touched source). Worst-of-pair for this preflight. |
+| Warm no-op rerun (full workspace, no `--all-targets`) | `cargo check --workspace` (immediate rerun) | **0.93 s** | 0.76 s | Sentinel scan only — cargo overhead floor for this workspace under the warm cache. |
+| Warm `--all-targets` first run (adds tests + benches) | `cargo check --workspace --all-targets` | **13.69 s** | 13.40 s | Tests/benches for two crates (`rge-io-3mf`, `rge-kernel-shared`) checked for the first time this session; rest were already up-to-date. |
+| Warm `--all-targets` no-op rerun | `cargo check --workspace --all-targets` (immediate rerun) | **1.18 s** | 0.91 s | Sentinel scan only with tests + benches included. |
+
+**Recorder context (for trend tracking):**
+
+| Field | Value |
+|---|---|
+| Workspace members (Cargo.toml count) | **94 crates** (kernel 15 / crates 65 / tools 8 / runtime 4 / editor 1 + 1 proc-macro at `crates/macros-reflect`) |
+| Source files (non-vendor `.rs`, excludes `target/` / `.claude/` / `OLD/` / `third_party/`) | **673** |
+| Source LoC (non-vendor `.rs`, same exclusions) | **144,754** (kernel 21,324 / crates 116,806 / runtime 20 / editor 96 / tools 6,508) |
+| Largest single crate by `src/` LoC | **`cad-core` = 24,842 LoC** (next: `gfx` 8,950, `editor-ui` 5,779, `editor-shell` 5,256) |
+| Rust toolchain | **1.92.0** (pinned via `rust-toolchain.toml`; floor driven by `egui_dock 0.19` MSRV) |
+| `CARGO_TARGET_DIR` | **`A:\RustCache\target`** (shared across dispatches; not the workspace-local `target/`) |
+| Shared target dir on-disk size | **≈ 385 GB** (~395 GB measured at sample time; warm with all transitive deps from prior dispatches) |
+| Host OS | Windows 11 / x86_64 |
+
+**Status:** **PHASE 9 PREFLIGHT — warm-cache only.**
+
+- The four numbers above establish the first recorded compile/check reference for the workspace. They do NOT satisfy or close any §13.3 budget gate.
+- **NOT a clean-build measurement**: `target/` was deliberately not wiped (would cost hours of recompile time across the ~385 GB shared cache and would have broken every subsequent dispatch). The 17.65 s number is best read as "warm cache after fingerprint drift from the most recent source touches", not as the §13.3 ≤ 120 s clean-build budget.
+- **NOT a 1-line-edit incremental p95 measurement**: this preflight was docs-only by directive — no source touch, no Cargo touch, no lint/ADR/automation touch. The "no-op rerun" floors (0.93 s / 1.18 s) are a lower bound on cargo overhead, not the p95 metric the §13.3 budget targets.
+- **`cargo check` not `cargo build`**: §13.3's ≤ 120 s clean / ≤ 10 s incremental budgets are written against `cargo build`. `cargo check` is a strict subset (no codegen / no linking), so a passing `cargo check` time is necessary but not sufficient evidence for the build budget.
+
+**Top 3 compile-time pressure risks identified by this preflight (qualitative; no measurement yet):**
+
+1. **No formal compile-time baseline existed prior to this entry.** Every other Phase 9 compile-time axis is downstream of this row.
+2. **Incremental invalidation radius likely already grazing the 30 % lint-warn threshold.** `kernel/graph-foundation::NodeId` is a transitive dep of `cad-core`, `material-graph`, `anim-graph`, `script-graph`, `editor-ui`, `cad-projection`, `gfx`, `kernel/asset`, `kernel/asset-store`, plus all four Tier-2 plugin canaries and all 5 `node_graph_*_smoke.rs` integration tests — roughly 30+ of 94 crates (~32 %). `kernel/types::EntityId` is similar or worse. **Not yet measured empirically; deferred to a follow-up Phase 9 dispatch.**
+3. **`cad-core` at 24,842 LoC is the dominant single-crate compile cost.** Already internally split (`topology/` / `operators/` / `topo_lineage/` / `tessellation/` / `checkpoints/` / `graph/`), but fingerprinted as one unit, so any cad-core source edit recompiles the full 25 k LoC plus the csgrs / nalgebra / blake3 link tail. Severity is low–medium today; would matter only when iteration on cad-core becomes the bottleneck (constraint solver, Fillet G2 patches, a second CAD-kernel adapter under ADR-113-deferred).
+
+**Explicit deferrals (next dispatches, in order; NOT executed in this preflight):**
+
+1. **True clean-build measurement** (§13.3 ≤ 120 s gate) — owns the `target/` rewarm cost; should land its own tiny harness (e.g. `tools/compile-timing.ps1`) before wiping the cache.
+2. **Incremental invalidation radius measurement** for the highest-fan-out kernel types (`kernel/types::EntityId`, `kernel/graph-foundation::NodeId`, `kernel/graph-foundation::EdgeId`) — pure measurement, no lint added; maps directly to PLAN §1.10.4's 30 % lint-warn threshold.
+3. **1-line-edit incremental p95 sample** (§13.3 ≤ 10 s gate) — minimal source touch (e.g. a comment append on a leaf crate) with explicit revert in the same dispatch.
+
+**Notes / caveats:**
+
+- Cargo's "Checking …" lines do not imply work was done; only the "Finished … in N.NNs" line counts. The "wall" column above is the PowerShell-stopwatch wall-clock around the whole `cargo` invocation (includes process startup + stdout drain); the "Cargo `Finished`" column is what cargo itself reports.
+- Two warnings were emitted during the runs (`rge-ui-theme` missing-docs, `rge-cad-core revolve_fillet_smoke.rs` unused variable). They are pre-existing and unrelated to this preflight; they did not affect timing meaningfully.
+- The shared `CARGO_TARGET_DIR=A:\RustCache\target` setup means individual dispatch sessions inherit a fully warm cache; a fresh-checkout developer on a different machine will see materially different numbers on first build. That asymmetry is exactly why a future clean-build dispatch is non-trivial to schedule.
+- Hardware identity is deliberately not pinned in this row beyond "recorder host / Windows / x86_64". A future dispatch that owns the cleaner harness should record the CPU model, NVMe vs SATA on `A:\`, and antivirus posture (NTFS realtime scan is a known cargo-throughput drag on Windows).
