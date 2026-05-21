@@ -33,7 +33,7 @@
 //! `EditorShell` defensive guards return early when `projection` is
 //! `None`.
 //!
-//! # v0 scope (dispatches G / I / J / K)
+//! # v0 scope (dispatches G / I / J / K / M1 / M2 / M3)
 //!
 //! - **All mesh primitives** in the scene are loaded (dispatch I).
 //! - **Accumulated transform hierarchy.** Every mesh-bearing entity's
@@ -216,6 +216,55 @@ fn bake_positions(positions: &[[f32; 3]], world: &Mat4) -> Vec<[f32; 3]> {
     positions
         .iter()
         .map(|p| world.transform_point3(Vec3::from_array(*p)).to_array())
+        .collect()
+}
+
+/// Dispatch M3 — apply the inverse-transpose of `world` to every
+/// model-space normal, re-normalizing the result. Returns a fresh
+/// world-space `Vec` aligned 1:1 with the input slice.
+///
+/// The inverse-transpose is the standard normal-correction formula
+/// — it preserves perpendicularity under non-uniform scale, flips
+/// direction under negative-determinant (mirror) scale (which is
+/// the geometrically-correct response for surface orientation),
+/// and degrades gracefully under zero-determinant inputs (glam's
+/// `inverse()` returns a non-finite matrix; the resulting normals
+/// would be NaN — gates against that defensively below).
+///
+/// Transforms via `vec4(n, 0.0)` so translation is excluded
+/// (`Mat4::transform_vector3` does this by zeroing the w
+/// component). The result is re-normalized per vertex because:
+///
+/// 1. Non-uniform scale yields non-unit-length output even from
+///    unit-length input.
+/// 2. The fragment shader normalizes interpolated normals; passing
+///    unit-length per-vertex normals minimizes interpolation drift.
+///
+/// Falls back to the dispatch-pre-M3 behaviour (caller-pass `None`
+/// to [`rge_brep_render::RenderMesh::from_buffers_with_attributes`])
+/// when:
+///
+/// - The input `normals` slice is empty (glTF primitive had no
+///   `NORMAL` accessor).
+/// - The world matrix is singular (`determinant().abs() < EPS`) —
+///   inverse-transpose would produce NaN normals; brep-render
+///   recomputes cross-product flat normals from the (also-baked)
+///   positions, which stays finite.
+fn bake_normals(normals: &[[f32; 3]], world: &Mat4) -> Vec<[f32; 3]> {
+    // Inverse-transpose of `world`. The fragment shader normalizes
+    // interpolated values, but we pre-normalize the per-vertex
+    // result for accuracy under non-uniform scale.
+    let normal_matrix = world.inverse().transpose();
+    normals
+        .iter()
+        .map(|n| {
+            let world_n = normal_matrix.transform_vector3(Vec3::from_array(*n));
+            // glam's `normalize_or_zero` clamps NaN / zero-length
+            // inputs to `[0, 0, 0]` rather than propagating NaN
+            // into the GPU buffer. Fragment shader's `normalize(in.
+            // world_normal)` is the second line of defense.
+            world_n.normalize_or_zero().to_array()
+        })
         .collect()
 }
 
@@ -418,11 +467,15 @@ fn load_all_glb_meshes(
         // so the per-mesh tint is visible alongside the per-mesh pose.
         // Dispatch M2 adds `texture_width / texture_height` (0/0 when
         // no texture, real dimensions otherwise) so the runtime smoke
-        // shows which meshes picked up real image bytes.
+        // shows which meshes picked up real image bytes. Dispatch M3
+        // adds `normal_count` (0 = recompute flat from positions,
+        // otherwise = number of imported NORMAL accessor entries) so
+        // smooth-vs-flat shading is visible at a glance.
         let world_translation = world.w_axis.truncate();
         let (texture_width, texture_height) = texture
             .as_ref()
             .map_or((0_u32, 0_u32), |t| (t.width, t.height));
+        let normal_count = mesh_asset.normals.len();
         tracing::info!(
             target: "rge::editor",
             mesh_index,
@@ -438,24 +491,52 @@ fn load_all_glb_meshes(
             texture_height,
             vertices = mesh_asset.vertex_count(),
             triangles = mesh_asset.triangle_count(),
-            "applied accumulated glTF TRS + base_color + base_color_texture"
+            normal_count,
+            "applied accumulated glTF TRS + base_color + base_color_texture + normals"
         );
 
         // Dispatch M1 — thread `MeshAsset.texcoords` through to
-        // `RenderMesh::from_buffers_with_uvs`. UVs are 2D and unaffected
-        // by the dispatch-J world matrix, so they pass through
-        // untransformed. Empty texcoords (glTF primitive without
-        // TEXCOORD_0) → `None` → output `RenderMesh.texcoords` empty,
-        // and gfx's adapter falls back to `[0, 0]` per vertex.
+        // `RenderMesh::from_buffers_with_attributes`. UVs are 2D and
+        // unaffected by the dispatch-J world matrix, so they pass
+        // through untransformed. Empty texcoords (glTF primitive
+        // without TEXCOORD_0) → `None` → output `RenderMesh.
+        // texcoords` empty, and gfx's adapter falls back to `[0, 0]`
+        // per vertex.
         let uvs: Option<&[[f32; 2]]> = if mesh_asset.texcoords.is_empty() {
             None
         } else {
             Some(&mesh_asset.texcoords)
         };
-        render_meshes.push(RenderMesh::from_buffers_with_uvs(
+
+        // Dispatch M3 — CPU-bake input normals through the inverse-
+        // transpose of the accumulated world matrix and thread them
+        // into `RenderMesh::from_buffers_with_attributes` as
+        // `Some(&baked_normals)`. When the glTF primitive lacks
+        // NORMAL, pass `None` and let brep-render recompute flat
+        // face normals from the (also-world-baked) positions.
+        //
+        // Defensive: if the world matrix is singular (degenerate
+        // scale), `bake_normals` still returns finite values via
+        // `normalize_or_zero`, but the resulting normals are
+        // meaningless. Fall back to `None` so brep-render
+        // recomputes from positions instead.
+        let baked_normals: Option<Vec<[f32; 3]>> = if mesh_asset.normals.is_empty() {
+            None
+        } else if world.determinant().abs() < 1e-7 {
+            // Degenerate world matrix — input normals can't be
+            // meaningfully transformed. Let brep-render recompute
+            // from the baked positions (whose flat normal stays
+            // finite under degenerate scale).
+            None
+        } else {
+            Some(bake_normals(&mesh_asset.normals, &world))
+        };
+
+        render_meshes.push(RenderMesh::from_buffers_with_attributes(
             &baked,
             &mesh_asset.indices,
             None,
+            baked_normals.as_deref(),
             uvs,
         ));
         base_colors.push(base_color);
@@ -469,7 +550,7 @@ fn load_all_glb_meshes(
         mesh_count = render_meshes.len(),
         total_vertices,
         total_triangles,
-        "loaded all glTF mesh primitives (render-only, no CAD, world-baked, per-mesh base_color + base_color_texture)"
+        "loaded all glTF mesh primitives (render-only, no CAD, world-baked, per-mesh base_color + base_color_texture + imported normals)"
     );
 
     Ok((render_meshes, base_colors, base_color_textures))
@@ -1236,6 +1317,157 @@ mod tests {
     // -----------------------------------------------------------------------
     // Dispatch M1 — UV propagation tests
     // -----------------------------------------------------------------------
+
+    // -----------------------------------------------------------------------
+    // Dispatch M3 — normal-matrix baking + input-normal propagation tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn bake_normals_identity_leaves_normals_unchanged() {
+        let normals = vec![[1.0_f32, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+        let baked = bake_normals(&normals, &Mat4::IDENTITY);
+        assert_eq!(baked.len(), 3);
+        for (i, b) in baked.iter().enumerate() {
+            assert!(vec3_approx_eq(
+                Vec3::from_array(*b),
+                Vec3::from_array(normals[i])
+            ));
+        }
+    }
+
+    #[test]
+    fn bake_normals_rotation_transforms_normals_correctly() {
+        // 90° about Y: [1, 0, 0] → [0, 0, -1] (RH coordinates).
+        let s = std::f32::consts::FRAC_1_SQRT_2;
+        let rot = Mat4::from_quat(Quat::from_xyzw(0.0, s, 0.0, s));
+        let normals = vec![[1.0_f32, 0.0, 0.0], [0.0, 1.0, 0.0]];
+        let baked = bake_normals(&normals, &rot);
+        // x-hat → -z-hat (Y is the rotation axis, unchanged).
+        assert!(vec3_approx_eq(
+            Vec3::from_array(baked[0]),
+            Vec3::new(0.0, 0.0, -1.0)
+        ));
+        assert!(vec3_approx_eq(
+            Vec3::from_array(baked[1]),
+            Vec3::new(0.0, 1.0, 0.0)
+        ));
+    }
+
+    #[test]
+    fn bake_normals_non_uniform_scale_uses_inverse_transpose() {
+        // Scale [2, 1, 1]. A normal at 45° in the XY plane —
+        // input `(1, 1, 0)` normalized = `(0.707, 0.707, 0)` —
+        // should NOT just get scaled in X by 2 (that would make
+        // the rotated surface look misaligned). Inverse-transpose
+        // of scale `(2, 1, 1)` is scale `(0.5, 1, 1)` (diagonal
+        // matrix's inverse is the reciprocal-diagonal; transpose
+        // of a diagonal matrix is itself). So input `(1, 1, 0)`
+        // becomes `(0.5, 1, 0)`, then normalized = `(0.447,
+        // 0.894, 0)`.
+        let world = Mat4::from_scale(Vec3::new(2.0, 1.0, 1.0));
+        let input_normal = Vec3::new(1.0, 1.0, 0.0).normalize().to_array();
+        let baked = bake_normals(&[input_normal], &world);
+        let expected = Vec3::new(0.5, 1.0, 0.0).normalize();
+        assert!(
+            vec3_approx_eq(Vec3::from_array(baked[0]), expected),
+            "non-uniform scale should use inverse-transpose; got {:?}, expected {expected:?}",
+            baked[0]
+        );
+    }
+
+    #[test]
+    fn bake_normals_re_normalizes_per_vertex() {
+        // Input is non-unit-length; output must be unit-length.
+        // (The world matrix is identity here so the only work is
+        // the `normalize_or_zero` step.)
+        let normals = vec![[3.0_f32, 0.0, 4.0]]; // length 5
+        let baked = bake_normals(&normals, &Mat4::IDENTITY);
+        let len = Vec3::from_array(baked[0]).length();
+        assert!(
+            (len - 1.0).abs() < 1e-5,
+            "baked normal must be unit-length; got {len}"
+        );
+    }
+
+    #[test]
+    fn load_all_glb_meshes_preserves_input_normals_when_present() {
+        // cube.glb's `make_cube_glb` pushes per-face outward
+        // normals (`[1, 0, 0]` for +X face, etc.). After M3 these
+        // input normals reach the RenderMesh output instead of
+        // being replaced by cross-product flat normals. With
+        // cube.glb's per-face uniform normals, the input and the
+        // cross-product flat normals happen to be equal — the
+        // test below confirms the OUTPUT normals are non-empty
+        // and finite, which is the substrate-correctness property.
+        // A future smooth-normal fixture would distinguish input
+        // vs recomputed values visibly.
+        let path = fixtures_path().join("cube.glb");
+        if skip_if_fixture_missing(&path) {
+            return;
+        }
+        let (meshes, _, _) = load_all_glb_meshes(&path).expect("load cube.glb");
+        assert_eq!(meshes.len(), 1);
+        // 24 input verts × 12 input tris × 3 = 36 output verts.
+        // Cube.glb has 8 unique positions but per-face split = 24
+        // input verts; brep-render vertex-tripling gives 36 output.
+        // The exact output count depends on cube.glb's per-face
+        // unwrap — assert non-empty + all finite + all unit-length.
+        assert!(!meshes[0].normals.is_empty());
+        assert_eq!(meshes[0].normals.len(), meshes[0].positions.len());
+        for n in &meshes[0].normals {
+            assert!(
+                n.iter().all(|c| c.is_finite()),
+                "normal must be finite: {n:?}"
+            );
+            let len = Vec3::from_array(*n).length();
+            assert!(
+                (len - 1.0).abs() < 1e-4,
+                "baked normal must be unit-length: {n:?} (len={len})"
+            );
+        }
+    }
+
+    #[test]
+    fn load_all_glb_meshes_falls_back_to_flat_normals_without_input() {
+        // Build a synthetic GLB with positions but NO NORMAL accessor.
+        // After load, the RenderMesh's normals must be the cross-
+        // product flat normals from the (world-baked) positions.
+        use rge_io_gltf::{export_glb, EntityComponents, MeshAsset, Scene};
+
+        let mut cache = MemoryCache::new();
+        let tri = MeshAsset {
+            positions: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            normals: vec![], // empty — no NORMAL accessor
+            texcoords: vec![],
+            indices: vec![0, 1, 2],
+            material_index: None,
+        };
+        let mh = cache.insert_mesh(tri);
+        let mut scene = Scene::new();
+        scene.spawn(EntityComponents {
+            name: "flat".into(),
+            transform: rge_io_gltf::Transform::IDENTITY,
+            parent: Entity::ROOT,
+            mesh: Some(mh),
+            material: None,
+            skeleton: None,
+        });
+
+        let bytes = export_glb(&scene, &cache).expect("export");
+        let path = std::env::temp_dir().join("rge_editor_m3_no_normals.glb");
+        std::fs::write(&path, &bytes).expect("write");
+
+        let (meshes, _, _) = load_all_glb_meshes(&path).expect("load");
+        assert_eq!(meshes.len(), 1);
+        // CCW XY plane → cross-product flat normal = +Z = [0, 0, 1].
+        for n in &meshes[0].normals {
+            assert!((n[0] - 0.0).abs() < 1e-5);
+            assert!((n[1] - 0.0).abs() < 1e-5);
+            assert!((n[2] - 1.0).abs() < 1e-5);
+        }
+
+        drop(std::fs::remove_file(&path));
+    }
 
     // -----------------------------------------------------------------------
     // Dispatch M2 — per-mesh `base_color_texture` propagation tests

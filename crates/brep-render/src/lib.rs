@@ -159,6 +159,12 @@ impl RenderMesh {
 
     /// Dispatch M1 — UV-aware variant of [`Self::from_buffers`].
     ///
+    /// Backward-compat wrapper around
+    /// [`Self::from_buffers_with_attributes`] that passes
+    /// `normals = None` (recomputes flat face normals from
+    /// positions) and threads UVs through verbatim. CAD-projection
+    /// and the rest of the pre-M3 call sites stay byte-identical.
+    ///
     /// When `uvs = Some(slice)`, `slice.len()` must equal
     /// `positions.len()` (one input UV per input position; vertex-
     /// tripling produces one output UV per output vertex, matching
@@ -185,15 +191,62 @@ impl RenderMesh {
         face_labels: Option<&[u64]>,
         uvs: Option<&[[f32; 2]]>,
     ) -> Self {
+        Self::from_buffers_with_attributes(positions, indices, face_labels, None, uvs)
+    }
+
+    /// Dispatch M3 — full-attribute constructor accepting optional
+    /// per-input-vertex normals AND optional per-input-vertex UVs
+    /// alongside the existing positions / indices / face-labels.
+    ///
+    /// When `normals = Some(slice)`, `slice.len()` must equal
+    /// `positions.len()`; the supplied normals are vertex-tripled
+    /// by index lookup `[slice[i0], slice[i1], slice[i2]]` per
+    /// triangle (identical shape to how UVs are tripled), and the
+    /// cross-product flat-normal recomputation is SKIPPED. This is
+    /// the glTF "imported NORMAL accessor" path.
+    ///
+    /// When `normals = None`, the constructor falls back to the
+    /// dispatch-pre-M3 behaviour: cross-product flat normals
+    /// derived from the (potentially world-baked) positions. This
+    /// is the CAD-projection path (no per-vertex normals available)
+    /// and the glTF "primitive lacks NORMAL accessor" path.
+    ///
+    /// UV handling is the M1 contract unchanged.
+    ///
+    /// # Panics
+    ///
+    /// - `indices.len()` not a multiple of 3 (caller invariant).
+    /// - `normals = Some(slice)` and `slice.len() != positions.len()`,
+    ///   with a clear message naming both lengths.
+    /// - `uvs = Some(slice)` and `slice.len() != positions.len()`,
+    ///   same clear-message contract.
+    /// - OOB position / normal / UV index from `indices` (caller
+    ///   pre-validated invariant).
+    #[must_use]
+    pub fn from_buffers_with_attributes(
+        positions: &[[f32; 3]],
+        indices: &[u32],
+        face_labels: Option<&[u64]>,
+        normals: Option<&[[f32; 3]]>,
+        uvs: Option<&[[f32; 2]]>,
+    ) -> Self {
         assert!(
             indices.len() % 3 == 0,
-            "RenderMesh::from_buffers_with_uvs: indices.len() must be a multiple of 3 (got {})",
+            "RenderMesh::from_buffers_with_attributes: indices.len() must be a multiple of 3 (got {})",
             indices.len()
         );
+        if let Some(normals_slice) = normals {
+            assert!(
+                normals_slice.len() == positions.len(),
+                "RenderMesh::from_buffers_with_attributes: normals.len() ({}) must equal positions.len() ({})",
+                normals_slice.len(),
+                positions.len()
+            );
+        }
         if let Some(uvs_slice) = uvs {
             assert!(
                 uvs_slice.len() == positions.len(),
-                "RenderMesh::from_buffers_with_uvs: uvs.len() ({}) must equal positions.len() ({})",
+                "RenderMesh::from_buffers_with_attributes: uvs.len() ({}) must equal positions.len() ({})",
                 uvs_slice.len(),
                 positions.len()
             );
@@ -219,27 +272,37 @@ impl RenderMesh {
             let v1 = positions[i1];
             let v2 = positions[i2];
 
-            let edge1 = sub(v1, v0);
-            let edge2 = sub(v2, v0);
-            let cross_v = cross(edge1, edge2);
-            let len = length(cross_v);
-            let normal = if len < DEGENERATE_AREA_EPS {
-                [0.0_f32, 0.0, 0.0]
-            } else {
-                [cross_v[0] / len, cross_v[1] / len, cross_v[2] / len]
-            };
-
             out_positions.push(v0);
             out_positions.push(v1);
             out_positions.push(v2);
-            out_normals.push(normal);
-            out_normals.push(normal);
-            out_normals.push(normal);
+
+            // Normals: supplied (vertex-tripled by index lookup) OR
+            // recomputed flat from the triangle's cross product.
+            if let Some(normals_slice) = normals {
+                out_normals.push(normals_slice[i0]);
+                out_normals.push(normals_slice[i1]);
+                out_normals.push(normals_slice[i2]);
+            } else {
+                let edge1 = sub(v1, v0);
+                let edge2 = sub(v2, v0);
+                let cross_v = cross(edge1, edge2);
+                let len = length(cross_v);
+                let normal = if len < DEGENERATE_AREA_EPS {
+                    [0.0_f32, 0.0, 0.0]
+                } else {
+                    [cross_v[0] / len, cross_v[1] / len, cross_v[2] / len]
+                };
+                out_normals.push(normal);
+                out_normals.push(normal);
+                out_normals.push(normal);
+            }
+
             if let Some(uvs_slice) = uvs {
                 out_texcoords.push(uvs_slice[i0]);
                 out_texcoords.push(uvs_slice[i1]);
                 out_texcoords.push(uvs_slice[i2]);
             }
+
             let base = (tri_idx * 3) as u32;
             out_indices.push(base);
             out_indices.push(base + 1);
@@ -555,5 +618,127 @@ mod tests {
         // Cuboid: 12 input tris → 36 output verts → 36 output UVs.
         assert_eq!(mesh.positions.len(), 36);
         assert_eq!(mesh.texcoords.len(), 36);
+    }
+
+    // -----------------------------------------------------------------------
+    // Dispatch M3 — input-normal propagation tests
+    // -----------------------------------------------------------------------
+
+    /// `from_buffers_with_attributes(normals = None)` matches the
+    /// pre-M3 flat-normal recompute byte-for-byte. CAD-projection
+    /// path stays byte-identical.
+    #[test]
+    fn from_buffers_with_attributes_normals_none_matches_legacy_flat_recompute() {
+        let positions = vec![[0.0_f32, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
+        let indices = vec![0_u32, 1, 2];
+        let legacy = RenderMesh::from_buffers_with_uvs(&positions, &indices, None, None);
+        let m3 = RenderMesh::from_buffers_with_attributes(&positions, &indices, None, None, None);
+        assert_eq!(legacy, m3);
+        // Sanity: cross-product CCW XY plane is +Z.
+        for n in &m3.normals {
+            assert!((n[0] - 0.0).abs() < 1e-5);
+            assert!((n[1] - 0.0).abs() < 1e-5);
+            assert!((n[2] - 1.0).abs() < 1e-5);
+        }
+    }
+
+    /// Supplied normals are vertex-tripled by index lookup — NOT
+    /// replaced by cross-product flat normals. The triangle's
+    /// 3 output normals match the input normals at indices i0, i1,
+    /// i2 in that order.
+    #[test]
+    fn from_buffers_with_attributes_supplied_normals_are_vertex_tripled_not_recomputed() {
+        // Triangle in the XY plane (CCW → cross-product flat normal
+        // would be +Z = [0, 0, 1]). Input normals are deliberately
+        // distinct from +Z so the test can detect any accidental
+        // overwrite by the recompute path.
+        let positions = vec![[0.0_f32, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
+        let indices = vec![0_u32, 1, 2];
+        let input_normals = vec![[1.0_f32, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+        let mesh = RenderMesh::from_buffers_with_attributes(
+            &positions,
+            &indices,
+            None,
+            Some(&input_normals),
+            None,
+        );
+        assert_eq!(mesh.normals.len(), 3);
+        assert_eq!(mesh.normals[0], [1.0, 0.0, 0.0]);
+        assert_eq!(mesh.normals[1], [0.0, 1.0, 0.0]);
+        assert_eq!(mesh.normals[2], [0.0, 0.0, 1.0]);
+    }
+
+    /// Multiple triangles with shared input vertices: each
+    /// triangle's 3 output normals look up the input slice at the
+    /// triangle's index triple. Shared positions across triangles
+    /// produce duplicated normals at the shared vertex.
+    #[test]
+    fn from_buffers_with_attributes_normals_preserved_across_shared_indices() {
+        let positions = vec![
+            [0.0_f32, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [1.0, 1.0, 0.0],
+            [0.0, 1.0, 0.0],
+        ];
+        let indices = vec![0_u32, 1, 2, 0, 2, 3]; // 2 tris sharing vert 0 and 2
+        let input_normals = vec![
+            [0.0_f32, 0.0, 1.0], // vert 0
+            [1.0, 0.0, 0.0],     // vert 1
+            [0.0, 1.0, 0.0],     // vert 2
+            [-1.0, 0.0, 0.0],    // vert 3
+        ];
+        let mesh = RenderMesh::from_buffers_with_attributes(
+            &positions,
+            &indices,
+            None,
+            Some(&input_normals),
+            None,
+        );
+        assert_eq!(mesh.normals.len(), 6);
+        // Tri 0: (0, 1, 2)
+        assert_eq!(mesh.normals[0], [0.0, 0.0, 1.0]);
+        assert_eq!(mesh.normals[1], [1.0, 0.0, 0.0]);
+        assert_eq!(mesh.normals[2], [0.0, 1.0, 0.0]);
+        // Tri 1: (0, 2, 3). Verts 0 and 2 share normals with tri 0.
+        assert_eq!(mesh.normals[3], [0.0, 0.0, 1.0]);
+        assert_eq!(mesh.normals[4], [0.0, 1.0, 0.0]);
+        assert_eq!(mesh.normals[5], [-1.0, 0.0, 0.0]);
+    }
+
+    /// `from_buffers_with_attributes` panics with a clear message
+    /// when `normals.len() != positions.len()`. Caller invariant
+    /// violation.
+    #[test]
+    #[should_panic(expected = "normals.len() (2) must equal positions.len() (3)")]
+    fn from_buffers_with_attributes_panics_on_normal_length_mismatch() {
+        let positions = vec![[0.0_f32, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
+        let indices = vec![0_u32, 1, 2];
+        let bad_normals = vec![[0.0_f32, 0.0, 1.0], [0.0, 0.0, 1.0]]; // 2 vs 3 positions
+        let _ = RenderMesh::from_buffers_with_attributes(
+            &positions,
+            &indices,
+            None,
+            Some(&bad_normals),
+            None,
+        );
+    }
+
+    /// `from_buffers_with_uvs` routes through the new
+    /// `from_buffers_with_attributes` constructor with `normals =
+    /// None`. UV behaviour is unchanged from M1; the recompute
+    /// fallback for normals still fires.
+    #[test]
+    fn from_buffers_with_uvs_routes_through_attributes_with_none_normals() {
+        let positions = vec![[0.0_f32, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
+        let indices = vec![0_u32, 1, 2];
+        let uvs = vec![[0.0_f32, 0.0], [1.0, 0.0], [0.0, 1.0]];
+        let m1_path = RenderMesh::from_buffers_with_uvs(&positions, &indices, None, Some(&uvs));
+        let m3_equivalent =
+            RenderMesh::from_buffers_with_attributes(&positions, &indices, None, None, Some(&uvs));
+        assert_eq!(m1_path, m3_equivalent);
+        // Cross-product flat normal +Z preserved across the M1 path.
+        for n in &m1_path.normals {
+            assert!((n[2] - 1.0).abs() < 1e-5);
+        }
     }
 }
