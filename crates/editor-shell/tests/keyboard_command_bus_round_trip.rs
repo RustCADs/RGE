@@ -247,30 +247,91 @@ fn key_command_mapping_table_is_exact() {
     // The mapping table itself is part of the dispatch contract; this
     // test guards against accidental rebindings or expansions.
 
-    // Ctrl + mapped keys → Some(command)
+    // Ctrl-without-Shift + mapped keys → Some(command).
     assert_eq!(
-        EditorKeyCommand::from_key_press(KeyCode::KeyZ, true),
+        EditorKeyCommand::from_key_press(KeyCode::KeyZ, true, false),
         Some(EditorKeyCommand::Undo)
     );
     assert_eq!(
-        EditorKeyCommand::from_key_press(KeyCode::KeyY, true),
+        EditorKeyCommand::from_key_press(KeyCode::KeyY, true, false),
         Some(EditorKeyCommand::Redo)
     );
     assert_eq!(
-        EditorKeyCommand::from_key_press(KeyCode::KeyS, true),
+        EditorKeyCommand::from_key_press(KeyCode::KeyS, true, false),
         Some(EditorKeyCommand::MarkSaved)
     );
 
-    // Ctrl + unmapped keys → None
-    assert_eq!(EditorKeyCommand::from_key_press(KeyCode::KeyA, true), None);
-    assert_eq!(EditorKeyCommand::from_key_press(KeyCode::KeyX, true), None);
-    assert_eq!(EditorKeyCommand::from_key_press(KeyCode::Space, true), None);
+    // Ctrl-without-Shift + unmapped keys → None.
+    assert_eq!(
+        EditorKeyCommand::from_key_press(KeyCode::KeyA, true, false),
+        None
+    );
+    assert_eq!(
+        EditorKeyCommand::from_key_press(KeyCode::KeyX, true, false),
+        None
+    );
+    assert_eq!(
+        EditorKeyCommand::from_key_press(KeyCode::Space, true, false),
+        None
+    );
 
     // Bare keys (no Ctrl) → always None (we don't bind anything without
     // a modifier today).
-    assert_eq!(EditorKeyCommand::from_key_press(KeyCode::KeyZ, false), None);
-    assert_eq!(EditorKeyCommand::from_key_press(KeyCode::KeyY, false), None);
-    assert_eq!(EditorKeyCommand::from_key_press(KeyCode::KeyS, false), None);
+    assert_eq!(
+        EditorKeyCommand::from_key_press(KeyCode::KeyZ, false, false),
+        None
+    );
+    assert_eq!(
+        EditorKeyCommand::from_key_press(KeyCode::KeyY, false, false),
+        None
+    );
+    assert_eq!(
+        EditorKeyCommand::from_key_press(KeyCode::KeyS, false, false),
+        None
+    );
+
+    // Shift-only (no Ctrl) → None even on the otherwise-bound letter keys.
+    assert_eq!(
+        EditorKeyCommand::from_key_press(KeyCode::KeyZ, false, true),
+        None
+    );
+    assert_eq!(
+        EditorKeyCommand::from_key_press(KeyCode::KeyY, false, true),
+        None
+    );
+    assert_eq!(
+        EditorKeyCommand::from_key_press(KeyCode::KeyS, false, true),
+        None
+    );
+}
+
+#[test]
+fn ctrl_shift_combinations_are_unbound() {
+    use rge_input::KeyCode;
+
+    // Explicit guard against the pre-fix bug: the previous implementation
+    // mapped Ctrl+Shift+Z to Undo (because it only inspected `ctrl`).
+    // The dispatch contract is "exactly Ctrl-without-Shift for all three
+    // bindings"; Ctrl+Shift+Z is reserved for a future redo-alias that a
+    // wider input-binding layer will own. Until that lands, all three
+    // Ctrl+Shift+{Z,Y,S} combinations must explicitly return None so a
+    // user pressing Ctrl+Shift+Z sees neither Undo nor a phantom Redo.
+
+    assert_eq!(
+        EditorKeyCommand::from_key_press(KeyCode::KeyZ, true, true),
+        None,
+        "Ctrl+Shift+Z must be unbound (reserved for future redo-alias)"
+    );
+    assert_eq!(
+        EditorKeyCommand::from_key_press(KeyCode::KeyY, true, true),
+        None,
+        "Ctrl+Shift+Y must be unbound"
+    );
+    assert_eq!(
+        EditorKeyCommand::from_key_press(KeyCode::KeyS, true, true),
+        None,
+        "Ctrl+Shift+S must be unbound (reserved for future \"Save As\")"
+    );
 }
 
 #[test]

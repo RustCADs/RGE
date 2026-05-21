@@ -132,25 +132,34 @@ pub enum EditorKeyCommand {
 }
 
 impl EditorKeyCommand {
-    /// Map a translated [`KeyCode`] plus a Ctrl-pressed flag to an
-    /// [`EditorKeyCommand`]. Returns `None` for any other key combination
-    /// (including non-Ctrl bare keypresses) so the keyboard branch in
+    /// Map a translated [`KeyCode`] plus the relevant modifier flags
+    /// (`ctrl` and `shift`) to an [`EditorKeyCommand`]. Returns `None` for
+    /// any other key combination so the keyboard branch in
     /// [`EditorShell::window_event`] can ignore unbound keys cheaply.
     ///
-    /// Bind-set today (mirrors common editor conventions):
+    /// Bind-set today (mirrors common editor conventions; **exactly**
+    /// Ctrl-without-Shift for all three bindings):
     ///
     /// | Combination | Command |
     /// |---|---|
-    /// | `Ctrl+Z` | [`EditorKeyCommand::Undo`] |
-    /// | `Ctrl+Y` | [`EditorKeyCommand::Redo`] |
-    /// | `Ctrl+S` | [`EditorKeyCommand::MarkSaved`] |
+    /// | `Ctrl+Z` (no Shift) | [`EditorKeyCommand::Undo`] |
+    /// | `Ctrl+Y` (no Shift) | [`EditorKeyCommand::Redo`] |
+    /// | `Ctrl+S` (no Shift) | [`EditorKeyCommand::MarkSaved`] |
     ///
-    /// `Ctrl+Shift+Z` is NOT mapped today. The standard "redo" alias is
+    /// `Ctrl+Shift+Z` is **not** mapped today (the standard "redo" alias is
     /// part of a wider input-binding configurability layer that is out of
-    /// scope for this dispatch.
+    /// scope for this dispatch). The Shift guard is explicit so that
+    /// future bindings (e.g. `Ctrl+Shift+S` for "Save As", `Ctrl+Shift+Z`
+    /// for "Redo") slot in additively without behavioural collision with
+    /// the no-Shift bind set above.
+    ///
+    /// The `alt` modifier is intentionally ignored — Alt may be combined
+    /// with Ctrl for tool-specific actions (e.g. drag-modifier) that don't
+    /// route through the Command Bus. If future bus-bound commands need
+    /// Alt-disambiguation, extend this signature additively.
     #[must_use]
-    pub fn from_key_press(key: KeyCode, ctrl: bool) -> Option<Self> {
-        if !ctrl {
+    pub fn from_key_press(key: KeyCode, ctrl: bool, shift: bool) -> Option<Self> {
+        if !ctrl || shift {
             return None;
         }
         Some(match key {
@@ -981,7 +990,8 @@ impl ApplicationHandler<()> for EditorShell {
                 // input integration is started by this dispatch.
                 if let Some(InputEvent::KeyDown(key)) = translate_keyboard(&event) {
                     let ctrl = self.modifiers.control_key();
-                    if let Some(cmd) = EditorKeyCommand::from_key_press(key, ctrl) {
+                    let shift = self.modifiers.shift_key();
+                    if let Some(cmd) = EditorKeyCommand::from_key_press(key, ctrl, shift) {
                         self.handle_key_command(cmd);
                     }
                 }
