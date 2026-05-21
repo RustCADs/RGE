@@ -58,7 +58,7 @@ pub mod viewport;
 pub mod world;
 
 pub use camera::{pick_face_at, CameraView, EditorCameraState};
-pub use lifecycle::EditorShell;
+pub use lifecycle::{EditorKeyCommand, EditorShell};
 pub use play_state::{PlayState, PlayStateError, PlayStateTransition};
 pub use play_toolbar::{PlayToolbar, ToolbarButton, ToolbarButtonId};
 pub use render_input::{RenderHandoff, RenderInput, RenderInputOwned};

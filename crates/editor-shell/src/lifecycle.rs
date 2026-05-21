@@ -58,20 +58,43 @@
 //! byte-identically and the public API is unchanged. Methods reachable
 //! from the cross-file `impl EditorShell { … }` blocks are marked
 //! `pub(crate)` (a private-to-crate boundary, no public-API delta).
+//!
+//! # 2026-05-21 Phase 9 keyboard → CommandBus wire-up
+//!
+//! Adds the [`EditorKeyCommand`] enum, the `command_bus` + `modifiers`
+//! fields on [`EditorShell`], the four narrow shell command methods
+//! (`submit_action` / `undo_command` / `redo_command` / `mark_saved_command`)
+//! plus the [`EditorShell::handle_key_command`] dispatcher, and two new
+//! arms in `window_event` (`ModifiersChanged` / `KeyboardInput`). The
+//! added material is ~190 LoC and naturally cohesive; a follow-up split
+//! into `crates/editor-shell/src/commands.rs` is appropriate once a
+//! second editor-side command source (e.g. menu handlers) lands, at
+//! which point the keyboard + menu paths share a module.
+//
+// SPLIT-EXEMPTION: Phase 9 keyboard → CommandBus wire-up adds ~190 LoC
+// of cohesive command-bus integration material (EditorKeyCommand enum,
+// shell methods, two window_event arms). Split into a dedicated
+// `commands.rs` module is the right move once a second command source
+// (menu, toolbar binding) materializes — the keyboard + menu paths
+// share a dispatcher then. Bounded dispatch policy is to not split
+// pre-emptively for a single consumer.
 
 use std::sync::Arc;
 use std::time::Instant;
 
 use rge_cad_core::CadGraph;
 use rge_cad_projection::{BRepHandle, CadProjection};
+use rge_editor_actions::{Action, BusError, CommandBus};
 use rge_gfx::{
     Camera as GfxCamera, DirectionalLight, GfxContext, IndexBuffer, LitMesh, LitMeshPipeline,
     Material, SurfaceContext,
 };
+use rge_input::{translate_keyboard, InputEvent, KeyCode};
 use rge_kernel_ecs::{EntityId as KernelEntityId, World as KernelWorld};
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::ActiveEventLoop;
+use winit::keyboard::ModifiersState;
 use winit::window::{Window, WindowId};
 
 use crate::audit::{AuditEvent, AuditLedger};
@@ -88,6 +111,56 @@ use crate::world::World;
 /// Default progress-line interval (frames). Mirrors rustforge's
 /// `PROGRESS_FRAME_INTERVAL` — once per ~second at 60Hz.
 const PROGRESS_FRAME_INTERVAL: u64 = 60;
+
+/// Editor-side keyboard command bound to the Command Bus.
+///
+/// The set is intentionally minimal — only the three undo/redo/save bindings
+/// the Phase 9 keyboard → CommandBus integration dispatch ships. Future
+/// editor keybinds (Play/Stop, selection clear, tool switch) extend this enum
+/// rather than growing parallel command channels.
+///
+/// Mapping from physical keys is performed by [`Self::from_key_press`]; the
+/// dispatch into the bus by [`EditorShell::handle_key_command`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditorKeyCommand {
+    /// `Ctrl+Z` — revert the most recent action on the Command Bus.
+    Undo,
+    /// `Ctrl+Y` — re-apply the next action on the Command Bus.
+    Redo,
+    /// `Ctrl+S` — mark the current bus cursor as the saved point.
+    MarkSaved,
+}
+
+impl EditorKeyCommand {
+    /// Map a translated [`KeyCode`] plus a Ctrl-pressed flag to an
+    /// [`EditorKeyCommand`]. Returns `None` for any other key combination
+    /// (including non-Ctrl bare keypresses) so the keyboard branch in
+    /// [`EditorShell::window_event`] can ignore unbound keys cheaply.
+    ///
+    /// Bind-set today (mirrors common editor conventions):
+    ///
+    /// | Combination | Command |
+    /// |---|---|
+    /// | `Ctrl+Z` | [`EditorKeyCommand::Undo`] |
+    /// | `Ctrl+Y` | [`EditorKeyCommand::Redo`] |
+    /// | `Ctrl+S` | [`EditorKeyCommand::MarkSaved`] |
+    ///
+    /// `Ctrl+Shift+Z` is NOT mapped today. The standard "redo" alias is
+    /// part of a wider input-binding configurability layer that is out of
+    /// scope for this dispatch.
+    #[must_use]
+    pub fn from_key_press(key: KeyCode, ctrl: bool) -> Option<Self> {
+        if !ctrl {
+            return None;
+        }
+        Some(match key {
+            KeyCode::KeyZ => Self::Undo,
+            KeyCode::KeyY => Self::Redo,
+            KeyCode::KeyS => Self::MarkSaved,
+            _ => return None,
+        })
+    }
+}
 
 /// The editor host. Owns:
 ///
@@ -252,6 +325,30 @@ pub struct EditorShell {
     /// is keyed on `width`/`height` and the descriptor flows verbatim
     /// into pool free-list identity.
     pub(crate) compiled_frame_graph: Option<rge_gfx::CompiledFrameGraph>,
+
+    // ---- Phase 9 CommandBus integration -----------------------------------
+    //
+    // The bus mediates all undoable editor mutations into the kernel
+    // [`rge_kernel_ecs::World`] held inside the wrapper [`crate::world::World`]
+    // (`shell.world.kernel_mut()`). Per PLAN §6.16 the bus is the **single
+    // mediation layer** for editor mutations; per editor-actions §1 the
+    // `Action` trait is `(&mut rge_kernel_ecs::World)`-only. CAD-graph and
+    // projection mutations are intentionally NOT on the bus today — they
+    // wait for a future "CAD-state into ECS" design dispatch with its own
+    // preflight (see `plans/BASELINE.md` editor-usability preflight, §F →
+    // SpawnCuboidAt rejection note).
+    /// Bus owned by the shell so a single editor session has one undo
+    /// history, one audit-ledger cursor, and one save-mark across all
+    /// keyboard / future-menu / future-toolbar command sources. Constructed
+    /// fresh in both `with_world` and `with_world_projection_graph`.
+    command_bus: CommandBus,
+
+    /// Latest [`ModifiersState`] from `WindowEvent::ModifiersChanged`. winit
+    /// 0.30 delivers `KeyEvent` without modifier flags (only `physical_key`
+    /// + `logical_key` + `state`); the modifier state must be tracked
+    /// separately on the receiving side. Used by [`Self::window_event`] to
+    /// detect Ctrl+Z / Ctrl+Y / Ctrl+S without a broad input refactor.
+    modifiers: ModifiersState,
 }
 
 impl EditorShell {
@@ -297,6 +394,8 @@ impl EditorShell {
             texture_pool: None,
             buffer_pool: None,
             compiled_frame_graph: None,
+            command_bus: CommandBus::new(),
+            modifiers: ModifiersState::empty(),
         }
     }
 
@@ -368,6 +467,8 @@ impl EditorShell {
             texture_pool: None,
             buffer_pool: None,
             compiled_frame_graph: None,
+            command_bus: CommandBus::new(),
+            modifiers: ModifiersState::empty(),
         }
     }
 
@@ -384,6 +485,92 @@ impl EditorShell {
     /// integration test that builds the 100-entity scene.
     pub fn world_mut(&mut self) -> &mut World {
         &mut self.world
+    }
+
+    // ---- Phase 9 CommandBus integration -------------------------------------
+    //
+    // Narrow surface that adapts the World-only bus to the editor-shell
+    // wrapper `World`. Every public bus operation here delegates to the
+    // inner `rge_kernel_ecs::World` via `self.world.kernel_mut()` — the bus
+    // never sees the wrapper directly, preserving the editor-actions
+    // `Action::apply(&self, world: &mut rge_kernel_ecs::World)` contract.
+
+    /// Submit an [`Action`] through the Command Bus. Returns the bus's
+    /// error verbatim (so callers can distinguish coalesce / ledger /
+    /// apply failures); the keyboard handler wraps this and swallows
+    /// `NothingToUndo`/`NothingToRedo` on `Self::handle_key_command`.
+    ///
+    /// # Errors
+    ///
+    /// Propagates [`BusError`] from [`CommandBus::submit`].
+    pub fn submit_action(&mut self, action: Box<dyn Action>) -> Result<(), BusError> {
+        self.command_bus.submit(action, self.world.kernel_mut())
+    }
+
+    /// Undo the most recent action via the Command Bus.
+    ///
+    /// # Errors
+    ///
+    /// Propagates [`BusError`] from [`CommandBus::undo`]. `NothingToUndo`
+    /// is returned (not panicked); the keyboard handler ignores it.
+    pub fn undo_command(&mut self) -> Result<(), BusError> {
+        self.command_bus.undo(self.world.kernel_mut())
+    }
+
+    /// Redo the next action via the Command Bus.
+    ///
+    /// # Errors
+    ///
+    /// Propagates [`BusError`] from [`CommandBus::redo`]. `NothingToRedo`
+    /// is returned (not panicked); the keyboard handler ignores it.
+    pub fn redo_command(&mut self) -> Result<(), BusError> {
+        self.command_bus.redo(self.world.kernel_mut())
+    }
+
+    /// Mark the current bus cursor as the saved point. Drives
+    /// `CommandBus::is_dirty()` to `false` until the next submit / undo /
+    /// redo moves the cursor away from this position.
+    pub fn mark_saved_command(&mut self) {
+        self.command_bus.mark_saved();
+    }
+
+    /// Borrow the Command Bus for read-only introspection (tests, future
+    /// status-bar dirty indicator). Mutations route through `submit_action`
+    /// / `undo_command` / `redo_command` / `mark_saved_command` — never
+    /// through this accessor.
+    #[must_use]
+    pub fn command_bus(&self) -> &CommandBus {
+        &self.command_bus
+    }
+
+    /// Dispatch a single editor key command. Public so headless tests can
+    /// drive the bus without synthesizing winit `KeyEvent`s; production
+    /// usage routes through the `WindowEvent::KeyboardInput` branch in
+    /// [`Self::window_event`].
+    ///
+    /// Swallows `BusError::NothingToUndo` / `NothingToRedo` on empty
+    /// stack (per the user-facing contract: Ctrl+Z on a fresh editor must
+    /// be a no-op, not a diagnostic spam). Other errors are traced.
+    pub fn handle_key_command(&mut self, command: EditorKeyCommand) {
+        match command {
+            EditorKeyCommand::Undo => match self.undo_command() {
+                Ok(()) | Err(BusError::NothingToUndo) => {}
+                Err(e) => tracing::warn!(
+                    target: "rge::editor-shell::lifecycle",
+                    error = ?e,
+                    "Ctrl+Z dispatched but bus returned non-NothingToUndo error"
+                ),
+            },
+            EditorKeyCommand::Redo => match self.redo_command() {
+                Ok(()) | Err(BusError::NothingToRedo) => {}
+                Err(e) => tracing::warn!(
+                    target: "rge::editor-shell::lifecycle",
+                    error = ?e,
+                    "Ctrl+Y dispatched but bus returned non-NothingToRedo error"
+                ),
+            },
+            EditorKeyCommand::MarkSaved => self.mark_saved_command(),
+        }
     }
 
     /// Current `PlayState`.
@@ -771,6 +958,32 @@ impl ApplicationHandler<()> for EditorShell {
                 use winit::event::{ElementState, MouseButton};
                 if state == ElementState::Pressed && button == MouseButton::Left {
                     self.handle_left_click();
+                }
+            }
+            WindowEvent::ModifiersChanged(new_modifiers) => {
+                // Phase 9 CommandBus integration: track modifier state so
+                // the `KeyboardInput` branch below can detect Ctrl+Z /
+                // Ctrl+Y / Ctrl+S without scanning `KeyEvent`s for the
+                // physical Ctrl key itself. winit 0.30 delivers the full
+                // `ModifiersState` here on every modifier transition.
+                self.modifiers = new_modifiers.state();
+            }
+            WindowEvent::KeyboardInput { event, .. } => {
+                // Phase 9 CommandBus integration. Press-only (KeyDown):
+                // we don't act on KeyUp for the undo / redo / save
+                // bindings — these are discrete commands. Future
+                // tool-modifier keybinds (e.g. hold Shift to constrain)
+                // would consume KeyUp separately.
+                //
+                // Use `rge_input::translate_keyboard` to map winit's
+                // physical-key surface to our v0 `KeyCode` set. This is
+                // a pure helper — no `Input<T>` resource, no broader
+                // input integration is started by this dispatch.
+                if let Some(InputEvent::KeyDown(key)) = translate_keyboard(&event) {
+                    let ctrl = self.modifiers.control_key();
+                    if let Some(cmd) = EditorKeyCommand::from_key_press(key, ctrl) {
+                        self.handle_key_command(cmd);
+                    }
                 }
             }
             _ => {}

@@ -22,7 +22,16 @@ tracing           = { workspace = true }
 serde             = { workspace = true, optional = true }
 ron               = { workspace = true, optional = true }
 rge-editor-state  = { path = "../editor-state" }
+rge-editor-actions = { path = "../editor-actions" }
 rge-kernel-ecs    = { path = "../../kernel/ecs" }
+# Phase 9 keyboard → CommandBus integration: editor-shell consumes the
+# `translate_keyboard` winit-event-to-`KeyCode` adapter from `rge-input`.
+# editor-shell is editor-tier (NOT renderer-tier and NOT editor-ui per
+# forbidden-dep rule 4 which targets `editor-ui` exclusively), so the
+# editor-shell → input edge is permitted under the 9-lint architecture
+# gate. Scoped to the keyboard helper only — no Input<T> ECS resource,
+# no broader input integration.
+rge-input         = { path = "../input" }
 # Render-backed face-selection sub-β: production dep on cad-projection so
 # `editor-shell::camera::CameraView::screen_to_world_ray` returns the
 # existing picker's `cad_projection::picking::Ray` shape directly. Tier-2
