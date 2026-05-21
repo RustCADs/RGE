@@ -357,6 +357,148 @@ pub fn make_pbr_material_glb() -> Vec<u8> {
     rge_io_gltf::export_glb(&scene, &cache).expect("export pbr material")
 }
 
+/// Materialise the UV-cube fixture if not already on disk.
+pub fn uv_cube_fixture_path() -> PathBuf {
+    let mut p = fixtures_dir();
+    std::fs::create_dir_all(&p).expect("create fixtures dir");
+    p.push("uv_cube.glb");
+    if !p.exists() {
+        let bytes = make_uv_cube_glb();
+        std::fs::write(&p, bytes).expect("write uv_cube.glb");
+    }
+    p
+}
+
+/// Dispatch M1 — build a UV-mapped cube GLB. Identical geometry to
+/// [`make_cube_glb`] (24 verts, 12 tris, 6 faces) but each face's
+/// 4 vertices carry the canonical `(0,0) → (1,0) → (1,1) → (0,1)`
+/// UV unwrap. No texture image — M1 is the UV-substrate dispatch;
+/// M2 will pair this geometry with an embedded image.
+///
+/// Material has `base_color_texture: None` and a distinguishable
+/// magenta `base_color` so the dispatch-K base_color path stays
+/// observable when launching the editor against this fixture.
+pub fn make_uv_cube_glb() -> Vec<u8> {
+    let mut cache = MemoryCache::new();
+    let mesh = uv_cube_mesh();
+    let mat = MaterialAsset {
+        name: "uv-cube-mat".into(),
+        base_color: [0.9, 0.4, 0.9, 1.0],
+        ..Default::default()
+    };
+    let mh = cache.insert_mesh(mesh);
+    let mat_h = cache.insert_material(mat);
+
+    let mut scene = Scene::new();
+    scene.spawn(EntityComponents {
+        name: "uv_cube".into(),
+        transform: Transform::IDENTITY,
+        parent: Entity::ROOT,
+        mesh: Some(mh),
+        material: Some(mat_h),
+        skeleton: None,
+    });
+
+    rge_io_gltf::export_glb(&scene, &cache).expect("export uv cube")
+}
+
+/// Cube mesh with per-face UV unwrap. Mirrors [`cube_mesh`]'s
+/// per-face split shape (24 verts, 12 tris) but adds a
+/// `texcoords: Vec<[f32; 2]>` populated with the canonical
+/// `(0,0) → (1,0) → (1,1) → (0,1)` quad mapping for every face.
+fn uv_cube_mesh() -> MeshAsset {
+    let mut positions = Vec::with_capacity(24);
+    let mut normals = Vec::with_capacity(24);
+    let mut texcoords = Vec::with_capacity(24);
+    let mut indices = Vec::with_capacity(36);
+
+    // Same face layout as `cube_mesh`. Indices reference the just-
+    // pushed 4 vertices via `base + 0..3`.
+    let faces: [([f32; 3], [[f32; 3]; 4]); 6] = [
+        (
+            [1.0, 0.0, 0.0],
+            [
+                [0.5, -0.5, -0.5],
+                [0.5, 0.5, -0.5],
+                [0.5, 0.5, 0.5],
+                [0.5, -0.5, 0.5],
+            ],
+        ),
+        (
+            [-1.0, 0.0, 0.0],
+            [
+                [-0.5, -0.5, 0.5],
+                [-0.5, 0.5, 0.5],
+                [-0.5, 0.5, -0.5],
+                [-0.5, -0.5, -0.5],
+            ],
+        ),
+        (
+            [0.0, 1.0, 0.0],
+            [
+                [-0.5, 0.5, -0.5],
+                [-0.5, 0.5, 0.5],
+                [0.5, 0.5, 0.5],
+                [0.5, 0.5, -0.5],
+            ],
+        ),
+        (
+            [0.0, -1.0, 0.0],
+            [
+                [-0.5, -0.5, 0.5],
+                [-0.5, -0.5, -0.5],
+                [0.5, -0.5, -0.5],
+                [0.5, -0.5, 0.5],
+            ],
+        ),
+        (
+            [0.0, 0.0, 1.0],
+            [
+                [-0.5, -0.5, 0.5],
+                [0.5, -0.5, 0.5],
+                [0.5, 0.5, 0.5],
+                [-0.5, 0.5, 0.5],
+            ],
+        ),
+        (
+            [0.0, 0.0, -1.0],
+            [
+                [0.5, -0.5, -0.5],
+                [-0.5, -0.5, -0.5],
+                [-0.5, 0.5, -0.5],
+                [0.5, 0.5, -0.5],
+            ],
+        ),
+    ];
+
+    // Canonical per-face UV unwrap: the 4 verts of each face span the
+    // unit square in order (0,0)(1,0)(1,1)(0,1) — top-left to
+    // bottom-left going clockwise viewed from outside the cube.
+    let face_uvs: [[f32; 2]; 4] = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
+
+    for (n, verts) in &faces {
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "fixture cube has 6 quads × 4 verts = 24 positions max — well under u32::MAX"
+        )]
+        let base = positions.len() as u32;
+        for (v, uv) in verts.iter().zip(face_uvs.iter()) {
+            positions.push(*v);
+            normals.push(*n);
+            texcoords.push(*uv);
+        }
+        indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+    }
+
+    MeshAsset {
+        positions,
+        normals,
+        texcoords,
+        indices,
+        material_index: Some(0),
+    }
+}
+
 /// Procedural unit cube. Per-face split so each triangle gets a flat normal
 /// (normals match the face orientation and don't share verts across faces).
 fn cube_mesh() -> MeshAsset {

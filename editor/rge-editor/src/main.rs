@@ -368,7 +368,23 @@ fn load_all_glb_meshes(path: &std::path::Path) -> Result<(Vec<RenderMesh>, Vec<[
             "applied accumulated glTF TRS + base_color"
         );
 
-        render_meshes.push(RenderMesh::from_buffers(&baked, &mesh_asset.indices, None));
+        // Dispatch M1 — thread `MeshAsset.texcoords` through to
+        // `RenderMesh::from_buffers_with_uvs`. UVs are 2D and unaffected
+        // by the dispatch-J world matrix, so they pass through
+        // untransformed. Empty texcoords (glTF primitive without
+        // TEXCOORD_0) → `None` → output `RenderMesh.texcoords` empty,
+        // and gfx's adapter falls back to `[0, 0]` per vertex.
+        let uvs: Option<&[[f32; 2]]> = if mesh_asset.texcoords.is_empty() {
+            None
+        } else {
+            Some(&mesh_asset.texcoords)
+        };
+        render_meshes.push(RenderMesh::from_buffers_with_uvs(
+            &baked,
+            &mesh_asset.indices,
+            None,
+            uvs,
+        ));
         base_colors.push(*base_color);
     }
 
@@ -1128,6 +1144,60 @@ mod tests {
         );
 
         drop(std::fs::remove_file(&path));
+    }
+
+    // -----------------------------------------------------------------------
+    // Dispatch M1 — UV propagation tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn load_all_glb_meshes_propagates_uvs_when_present() {
+        // The uv_cube.glb fixture (dispatch M1) carries
+        // TEXCOORD_0; `load_all_glb_meshes` must thread those UVs
+        // through to `RenderMesh::texcoords`. Vertex-tripled output:
+        // 12 input tris × 3 = 36 UVs.
+        let path = fixtures_path().join("uv_cube.glb");
+        if skip_if_fixture_missing(&path) {
+            return;
+        }
+        let (meshes, _base_colors) = load_all_glb_meshes(&path).expect("load uv_cube.glb");
+        assert_eq!(meshes.len(), 1);
+        assert_eq!(
+            meshes[0].texcoords.len(),
+            meshes[0].positions.len(),
+            "texcoords aligned 1:1 with positions after vertex tripling"
+        );
+        assert_eq!(
+            meshes[0].texcoords.len(),
+            36,
+            "12 input tris × 3 output verts = 36 UVs"
+        );
+        // Spot-check: the first triangle's first vertex must carry
+        // the first face's (0, 0) corner UV. Cube_mesh in io-gltf's
+        // `tests/common/mod.rs` lays out per-face UVs as
+        // `(0,0) → (1,0) → (1,1) → (0,1)`, and the first input tri
+        // covers (vert0, vert1, vert2).
+        assert_eq!(meshes[0].texcoords[0], [0.0, 0.0]);
+        assert_eq!(meshes[0].texcoords[1], [1.0, 0.0]);
+        assert_eq!(meshes[0].texcoords[2], [1.0, 1.0]);
+    }
+
+    #[test]
+    fn load_all_glb_meshes_leaves_texcoords_empty_when_absent() {
+        // cube.glb has NO TEXCOORD_0; the resulting RenderMesh's
+        // `texcoords` field must be empty. The gfx adapter then
+        // falls back to `[0, 0]` per vertex.
+        let path = fixtures_path().join("cube.glb");
+        if skip_if_fixture_missing(&path) {
+            return;
+        }
+        let (meshes, _) = load_all_glb_meshes(&path).expect("load cube.glb");
+        assert_eq!(meshes.len(), 1);
+        assert!(
+            meshes[0].texcoords.is_empty(),
+            "cube.glb has no UVs; got {} texcoords",
+            meshes[0].texcoords.len()
+        );
     }
 
     #[test]

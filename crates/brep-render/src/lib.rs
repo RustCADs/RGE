@@ -81,6 +81,14 @@ pub struct RenderMesh {
     /// Matches the input slice's shape exactly when present; `None`
     /// when the input is unlabeled.
     pub face_labels: Option<Vec<u64>>,
+    /// Dispatch M1 — one UV per output vertex (vertex-tripled in
+    /// lockstep with [`Self::positions`] / [`Self::normals`]). Empty
+    /// when the input had no UVs — covers CAD-projection (which never
+    /// supplies UVs) and glTF primitives lacking `TEXCOORD_0`. When
+    /// non-empty the length matches `positions.len()` exactly, so the
+    /// gfx adapter can index by output-vertex without a separate
+    /// length check.
+    pub texcoords: Vec<[f32; 2]>,
 }
 
 // ---------------------------------------------------------------------------
@@ -119,6 +127,12 @@ fn length(a: [f32; 3]) -> f32 {
 impl RenderMesh {
     /// Build a flat-shaded [`RenderMesh`] from raw triangle-soup buffers.
     ///
+    /// Backward-compat wrapper around
+    /// [`RenderMesh::from_buffers_with_uvs`] that passes `uvs = None`.
+    /// CAD-projection callers (which never carry per-vertex UVs)
+    /// continue to use this entry point and produce a `RenderMesh`
+    /// with `texcoords: Vec::new()`.
+    ///
     /// - Triangle count = `indices.len() / 3`.
     /// - Vertex count = `3 * triangle_count` (vertex tripling).
     /// - Per-triangle normal: `(v1-v0) × (v2-v0)` then normalized;
@@ -127,6 +141,7 @@ impl RenderMesh {
     /// - `face_labels = face_labels_in.map(<slice>::to_vec)` — preserved
     ///   1:1 in order.
     /// - Output `indices` are dense `[0, 1, 2, ..., 3n-1]`.
+    /// - `texcoords` is empty (dispatch M1 default).
     ///
     /// # Panics
     ///
@@ -139,11 +154,50 @@ impl RenderMesh {
         indices: &[u32],
         face_labels: Option<&[u64]>,
     ) -> Self {
+        Self::from_buffers_with_uvs(positions, indices, face_labels, None)
+    }
+
+    /// Dispatch M1 — UV-aware variant of [`Self::from_buffers`].
+    ///
+    /// When `uvs = Some(slice)`, `slice.len()` must equal
+    /// `positions.len()` (one input UV per input position; vertex-
+    /// tripling produces one output UV per output vertex, matching
+    /// the positions/normals shape). The resulting
+    /// [`RenderMesh::texcoords`] is a dense
+    /// `Vec<[f32; 2]>` of length `3 * triangle_count`, indexable in
+    /// lockstep with `positions`.
+    ///
+    /// When `uvs = None`, `texcoords` is left empty — backward-
+    /// compatible with the dispatch-pre-M1 contract, and downstream
+    /// adapters (gfx `vertex_lit_from_render_mesh`) fall back to a
+    /// placeholder `[0.0, 0.0]` per output vertex.
+    ///
+    /// # Panics
+    ///
+    /// - Same conditions as [`Self::from_buffers`] (non-mult-3 index
+    ///   count, OOB position index).
+    /// - When `uvs = Some(slice)` and `slice.len() != positions.len()`,
+    ///   with a clear message naming both lengths.
+    #[must_use]
+    pub fn from_buffers_with_uvs(
+        positions: &[[f32; 3]],
+        indices: &[u32],
+        face_labels: Option<&[u64]>,
+        uvs: Option<&[[f32; 2]]>,
+    ) -> Self {
         assert!(
             indices.len() % 3 == 0,
-            "RenderMesh::from_buffers: indices.len() must be a multiple of 3 (got {})",
+            "RenderMesh::from_buffers_with_uvs: indices.len() must be a multiple of 3 (got {})",
             indices.len()
         );
+        if let Some(uvs_slice) = uvs {
+            assert!(
+                uvs_slice.len() == positions.len(),
+                "RenderMesh::from_buffers_with_uvs: uvs.len() ({}) must equal positions.len() ({})",
+                uvs_slice.len(),
+                positions.len()
+            );
+        }
 
         let triangle_count = indices.len() / 3;
         let vertex_count = triangle_count * 3;
@@ -151,6 +205,10 @@ impl RenderMesh {
         let mut out_positions: Vec<[f32; 3]> = Vec::with_capacity(vertex_count);
         let mut out_normals: Vec<[f32; 3]> = Vec::with_capacity(vertex_count);
         let mut out_indices: Vec<u32> = Vec::with_capacity(vertex_count);
+        let mut out_texcoords: Vec<[f32; 2]> = match uvs {
+            Some(_) => Vec::with_capacity(vertex_count),
+            None => Vec::new(),
+        };
 
         for (tri_idx, tri) in indices.chunks_exact(3).enumerate() {
             let i0 = tri[0] as usize;
@@ -177,6 +235,11 @@ impl RenderMesh {
             out_normals.push(normal);
             out_normals.push(normal);
             out_normals.push(normal);
+            if let Some(uvs_slice) = uvs {
+                out_texcoords.push(uvs_slice[i0]);
+                out_texcoords.push(uvs_slice[i1]);
+                out_texcoords.push(uvs_slice[i2]);
+            }
             let base = (tri_idx * 3) as u32;
             out_indices.push(base);
             out_indices.push(base + 1);
@@ -192,6 +255,7 @@ impl RenderMesh {
             normals: out_normals,
             indices: out_indices,
             face_labels: out_labels,
+            texcoords: out_texcoords,
         }
     }
 }
@@ -391,5 +455,105 @@ mod tests {
         // Two triangles per face → 12 face_labels in canonical order.
         let labels = vec![0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5_u64];
         (positions, indices, labels)
+    }
+
+    // -----------------------------------------------------------------------
+    // Dispatch M1 — UV propagation tests
+    // -----------------------------------------------------------------------
+
+    /// `from_buffers` (backward-compat wrapper) produces an empty
+    /// `texcoords` vec — verifies the CAD-projection path stays
+    /// UV-less and downstream gfx falls back to `[0, 0]`.
+    #[test]
+    fn from_buffers_produces_empty_texcoords() {
+        let positions = vec![[0.0_f32, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
+        let indices = vec![0_u32, 1, 2];
+        let mesh = RenderMesh::from_buffers(&positions, &indices, None);
+        assert!(mesh.texcoords.is_empty());
+        assert_eq!(mesh.positions.len(), 3);
+    }
+
+    /// `from_buffers_with_uvs(uvs = None)` produces output identical
+    /// to `from_buffers` — same texcoords-empty contract.
+    #[test]
+    fn from_buffers_with_uvs_none_matches_from_buffers() {
+        let positions = vec![[0.0_f32, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
+        let indices = vec![0_u32, 1, 2];
+        let no_uvs = RenderMesh::from_buffers_with_uvs(&positions, &indices, None, None);
+        let legacy = RenderMesh::from_buffers(&positions, &indices, None);
+        assert_eq!(no_uvs, legacy);
+        assert!(no_uvs.texcoords.is_empty());
+    }
+
+    /// `from_buffers_with_uvs(uvs = Some(slice))` vertex-triples UVs
+    /// in lockstep with positions/normals. For a single triangle, the
+    /// output `texcoords` is `[uvs[i0], uvs[i1], uvs[i2]]`.
+    #[test]
+    fn from_buffers_with_uvs_vertex_triples_uvs_in_lockstep() {
+        let positions = vec![[0.0_f32, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
+        let indices = vec![0_u32, 1, 2];
+        let uvs = vec![[0.0_f32, 0.0], [1.0, 0.0], [0.0, 1.0]];
+        let mesh = RenderMesh::from_buffers_with_uvs(&positions, &indices, None, Some(&uvs));
+        assert_eq!(mesh.texcoords.len(), 3);
+        assert_eq!(mesh.texcoords[0], [0.0, 0.0]);
+        assert_eq!(mesh.texcoords[1], [1.0, 0.0]);
+        assert_eq!(mesh.texcoords[2], [0.0, 1.0]);
+    }
+
+    /// `from_buffers_with_uvs` triples UVs across multiple triangles
+    /// matching the index reordering. For an indexed quad (2 tris
+    /// sharing vertices), the output texcoords vec is 6 entries with
+    /// duplicated UVs at the shared positions.
+    #[test]
+    fn from_buffers_with_uvs_preserves_per_index_uv_across_multiple_triangles() {
+        // 4 input verts arranged as a quad in the XY plane; 2 tris
+        // index (0,1,2) + (0,2,3). Each input vertex carries a
+        // distinct UV.
+        let positions = vec![
+            [0.0_f32, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [1.0, 1.0, 0.0],
+            [0.0, 1.0, 0.0],
+        ];
+        let indices = vec![0_u32, 1, 2, 0, 2, 3];
+        let uvs = vec![[0.0_f32, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
+        let mesh = RenderMesh::from_buffers_with_uvs(&positions, &indices, None, Some(&uvs));
+        assert_eq!(mesh.texcoords.len(), 6);
+        // Tri 0: verts (0, 1, 2) → uvs[(0,1,2)]
+        assert_eq!(mesh.texcoords[0], [0.0, 0.0]);
+        assert_eq!(mesh.texcoords[1], [1.0, 0.0]);
+        assert_eq!(mesh.texcoords[2], [1.0, 1.0]);
+        // Tri 1: verts (0, 2, 3) → uvs[(0,2,3)]. The (0) and (2)
+        // verts are shared with tri 0; their UVs are duplicated.
+        assert_eq!(mesh.texcoords[3], [0.0, 0.0]);
+        assert_eq!(mesh.texcoords[4], [1.0, 1.0]);
+        assert_eq!(mesh.texcoords[5], [0.0, 1.0]);
+    }
+
+    /// `from_buffers_with_uvs` panics with a clear message when
+    /// `uvs.len() != positions.len()`. Caller invariant violation.
+    #[test]
+    #[should_panic(expected = "uvs.len() (2) must equal positions.len() (3)")]
+    fn from_buffers_with_uvs_panics_on_uv_length_mismatch() {
+        let positions = vec![[0.0_f32, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
+        let indices = vec![0_u32, 1, 2];
+        let uvs = vec![[0.0_f32, 0.0], [1.0, 0.0]]; // 2 UVs vs 3 positions
+        let _ = RenderMesh::from_buffers_with_uvs(&positions, &indices, None, Some(&uvs));
+    }
+
+    /// Output `texcoords` length equals output vertex count (3 per
+    /// input triangle), not input position count. Verifies the
+    /// vertex-tripling invariant for UVs.
+    #[test]
+    fn from_buffers_with_uvs_output_texcoords_match_output_vertex_count() {
+        let (positions, indices, _) = synthetic_cuboid_buffers();
+        // Synthesize one UV per input vertex (8 inputs → 8 UVs).
+        let uvs: Vec<[f32; 2]> = (0..positions.len())
+            .map(|i| [i as f32 / 8.0, 0.5])
+            .collect();
+        let mesh = RenderMesh::from_buffers_with_uvs(&positions, &indices, None, Some(&uvs));
+        // Cuboid: 12 input tris → 36 output verts → 36 output UVs.
+        assert_eq!(mesh.positions.len(), 36);
+        assert_eq!(mesh.texcoords.len(), 36);
     }
 }

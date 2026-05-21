@@ -57,27 +57,41 @@ use crate::vertex_lit::VertexLit;
 // CPU-side adapter — `RenderMesh` → `Vec<VertexLit>`
 // ---------------------------------------------------------------------------
 
-/// CPU-side conversion from a [`rge_brep_render::RenderMesh`] (positions +
-/// normals + face_labels + indices) into the [`VertexLit`] layout
-/// `LitMesh::from_indexed` expects.
+/// CPU-side conversion from a [`rge_brep_render::RenderMesh`] (positions
+/// + normals + face_labels + indices + optional texcoords) into the
+/// [`VertexLit`] layout `LitMesh::from_indexed` expects.
 ///
-/// `RenderMesh` carries position + normal but no UV — this helper emits
-/// the placeholder UV `[0.0, 0.0]` for every output vertex (see
-/// [`LitMesh::from_render_mesh`] for the v0 contract rationale).
+/// Dispatch M1 — when `render_mesh.texcoords` is non-empty (length
+/// matches `positions.len()` per brep-render's invariant), each output
+/// vertex gets its corresponding `[u, v]` lookup. When empty (CAD
+/// projection path, glTF primitives without `TEXCOORD_0`), the helper
+/// falls back to the documented placeholder UV `[0.0, 0.0]` —
+/// preserving the dispatch-pre-M1 behaviour for callers that never
+/// supplied UVs.
 ///
 /// Trusts brep-render's invariants: `positions.len() == normals.len()`
-/// (per `RenderMesh::from_buffers`'s "vertex tripling" output shape).
-/// No defensive length-checking — same posture as the picker and
-/// brep-render itself.
+/// (per `from_buffers` / `from_buffers_with_uvs`'s "vertex tripling"
+/// output shape) and `texcoords.is_empty() || texcoords.len() ==
+/// positions.len()`. No defensive length-checking — same posture as
+/// the picker and brep-render itself.
 fn vertex_lit_from_render_mesh(render_mesh: &RenderMesh) -> Vec<VertexLit> {
+    let has_uvs = !render_mesh.texcoords.is_empty();
     render_mesh
         .positions
         .iter()
         .zip(render_mesh.normals.iter())
-        .map(|(&position, &normal)| VertexLit {
-            position,
-            normal,
-            uv: [0.0, 0.0],
+        .enumerate()
+        .map(|(i, (&position, &normal))| {
+            let uv = if has_uvs {
+                render_mesh.texcoords[i]
+            } else {
+                [0.0, 0.0]
+            };
+            VertexLit {
+                position,
+                normal,
+                uv,
+            }
         })
         .collect()
 }
@@ -1024,6 +1038,7 @@ mod tests {
             normals,
             indices,
             face_labels,
+            texcoords: Vec::new(),
         }
     }
 
@@ -1089,6 +1104,46 @@ mod tests {
         }
     }
 
+    /// Dispatch M1 — `vertex_lit_from_render_mesh` reads
+    /// `render_mesh.texcoords[i]` per output vertex when the field
+    /// is non-empty (length matches positions). Verifies UVs flow
+    /// through to `VertexLit.uv` instead of the dispatch-pre-M1
+    /// hardcoded `[0, 0]`.
+    #[test]
+    fn vertex_lit_from_render_mesh_uses_render_mesh_uvs_when_present() {
+        let mesh = RenderMesh {
+            positions: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            normals: vec![[0.0, 0.0, 1.0]; 3],
+            indices: vec![0, 1, 2],
+            face_labels: None,
+            texcoords: vec![[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]],
+        };
+        let vertices = vertex_lit_from_render_mesh(&mesh);
+        assert_eq!(vertices.len(), 3);
+        assert_eq!(vertices[0].uv, [0.0, 0.0]);
+        assert_eq!(vertices[1].uv, [1.0, 0.0]);
+        assert_eq!(vertices[2].uv, [0.0, 1.0]);
+    }
+
+    /// Dispatch M1 backward-compat — `vertex_lit_from_render_mesh`
+    /// falls back to `[0.0, 0.0]` per vertex when `texcoords` is
+    /// empty. Preserves the CAD-projection / no-UV glTF path.
+    #[test]
+    fn vertex_lit_from_render_mesh_falls_back_to_zero_zero_when_texcoords_empty() {
+        let mesh = RenderMesh {
+            positions: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            normals: vec![[0.0, 0.0, 1.0]; 3],
+            indices: vec![0, 1, 2],
+            face_labels: None,
+            texcoords: vec![], // empty — pre-M1 default
+        };
+        let vertices = vertex_lit_from_render_mesh(&mesh);
+        assert_eq!(vertices.len(), 3);
+        for v in &vertices {
+            assert_eq!(v.uv, [0.0, 0.0]);
+        }
+    }
+
     #[test]
     fn from_render_mesh_returns_error_for_empty_input() {
         let ctx = ctx_or_skip!();
@@ -1097,6 +1152,7 @@ mod tests {
             normals: vec![],
             indices: vec![],
             face_labels: None,
+            texcoords: vec![],
         };
 
         let result = LitMesh::from_render_mesh(&ctx, &empty_mesh);
