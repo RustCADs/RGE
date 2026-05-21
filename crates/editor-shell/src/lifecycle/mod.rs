@@ -312,17 +312,27 @@ pub struct EditorShell {
     /// render path doesn't re-query.
     pub(crate) cad_entity: Option<KernelEntityId>,
 
-    /// Dispatch G — render-only mesh, populated by
-    /// [`Self::with_render_mesh`]. **Mutually exclusive with the CAD
-    /// fields above**: a shell is either CAD-driven (cuboid demo path)
-    /// OR render-only (glTF-import path), never both. Render path
-    /// `init_render_state_post_surface` sources the [`RenderMesh`]
-    /// for GPU upload from whichever side is populated; face-pick
-    /// already short-circuits when `projection` is `None`.
+    /// Dispatch G + I — pre-built render-only meshes, populated by
+    /// [`Self::with_render_meshes`] (or the single-mesh wrapper
+    /// [`Self::with_render_mesh`]). **Mutually exclusive with the
+    /// CAD fields above**: a shell is either CAD-driven (cuboid demo
+    /// path) OR render-only (glTF-import path), never both. Render
+    /// path `init_render_state_post_surface` sources the
+    /// [`RenderMesh`] sequence for GPU upload from this vec when
+    /// non-empty; face-pick already short-circuits when `projection`
+    /// is `None`.
     ///
-    /// v0 holds exactly ONE mesh — the first primitive of the loaded
-    /// glTF/GLB file. Multi-primitive support is a separate dispatch.
-    pub(crate) prebuilt_render_mesh: Option<RenderMesh>,
+    /// Dispatch I extends the single-mesh dispatch-G storage
+    /// (`Option<RenderMesh>`) to a `Vec<RenderMesh>` so a glTF/GLB
+    /// file with multiple primitives renders all of them, not just
+    /// the first. Each entry maps 1:1 to a `LitMesh` in
+    /// [`Self::meshes`] after the GPU upload step.
+    ///
+    /// Empty when:
+    /// - CAD-driven path is in use (`with_world_projection_graph`).
+    /// - `with_render_meshes(vec![])` was called (defensive — the
+    ///   binary rejects zero-mesh glTF files before reaching here).
+    pub(crate) prebuilt_render_meshes: Vec<RenderMesh>,
 
     /// winit window the surface is bound to (kept alive for the surface's
     /// `'static` lifetime). `None` until `resumed`.
@@ -346,8 +356,24 @@ pub struct EditorShell {
     /// Directional light UBO. `None` until `resumed`.
     pub(crate) light: Option<DirectionalLight>,
 
-    /// GPU-uploaded mesh for the cuboid entity. `None` until `resumed`.
-    pub(crate) cuboid_mesh: Option<LitMesh>,
+    /// GPU-uploaded meshes drawn by [`crate::render_path::EditorShell::encode_main_pass`].
+    ///
+    /// - **CAD cuboid path** (`with_world_projection_graph`) pushes
+    ///   exactly ONE [`LitMesh`] (the projected cuboid) here during
+    ///   `init_render_state_post_surface`.
+    /// - **Render-only glTF path** (`with_render_meshes`) pushes N
+    ///   meshes — one per [`rge_io_gltf::MeshAsset`] in the loaded
+    ///   scene.
+    /// - **Pre-`resumed` / headless paths** leave the Vec empty;
+    ///   `encode_main_pass` skips drawing when the Vec is empty.
+    ///
+    /// The sub-ε highlight overlay (used only by the CAD path) reuses
+    /// `meshes[0]`'s vertex buffer with the
+    /// [`Self::highlight_index_buffer`]; glTF mode never sets the
+    /// highlight buffer so the overlay path is never reached for
+    /// imported meshes. See [`crate::render_path::EditorShell::encode_main_pass`]
+    /// for the per-mesh draw loop.
+    pub(crate) meshes: Vec<LitMesh>,
 
     /// Most recent cursor position from `WindowEvent::CursorMoved`, in
     /// **physical pixels** (winit 0.30 `CursorMoved.position` convention,
@@ -510,7 +536,7 @@ impl EditorShell {
             gfx_camera: None,
             material: None,
             light: None,
-            cuboid_mesh: None,
+            meshes: Vec::new(),
             cursor_pos: None,
             highlight_material: None,
             highlight_index_buffer: None,
@@ -521,7 +547,7 @@ impl EditorShell {
             modifiers: ModifiersState::empty(),
             egui_host: None,
             inspector_handoff: None,
-            prebuilt_render_mesh: None,
+            prebuilt_render_meshes: Vec::new(),
         }
     }
 
@@ -590,7 +616,7 @@ impl EditorShell {
             gfx_camera: None,
             material: None,
             light: None,
-            cuboid_mesh: None,
+            meshes: Vec::new(),
             cursor_pos: None,
             highlight_material: None,
             highlight_index_buffer: None,
@@ -601,41 +627,76 @@ impl EditorShell {
             modifiers: ModifiersState::empty(),
             egui_host: None,
             inspector_handoff: None,
-            prebuilt_render_mesh: None,
+            prebuilt_render_meshes: Vec::new(),
         }
     }
 
-    /// Construct an [`EditorShell`] with a render-only mesh (no CAD).
-    /// **Dispatch G entry point** for `rge-editor --glb <path>`.
+    /// Construct an [`EditorShell`] with a single render-only mesh
+    /// (no CAD). **Dispatch G entry point**, kept as a backward-compat
+    /// wrapper around the dispatch-I multi-mesh
+    /// [`Self::with_render_meshes`].
     ///
-    /// The supplied [`RenderMesh`] is typically built by the editor
-    /// binary from a glTF/GLB file via `rge_io_gltf::import_glb` +
-    /// `RenderMesh::from_buffers(positions, indices, None)`. The mesh
-    /// is **render-only**:
+    /// All caveats and doctrinal notes documented on
+    /// [`Self::with_render_meshes`] apply — this method just routes a
+    /// single-mesh input through the same construction path. Useful
+    /// for callers (tests, future single-mesh ingestion paths) that
+    /// don't want to spell out `vec![mesh]` at the call site.
+    #[must_use]
+    pub fn with_render_mesh(mesh: RenderMesh) -> Self {
+        Self::with_render_meshes(vec![mesh])
+    }
+
+    /// Construct an [`EditorShell`] with N render-only meshes (no CAD).
+    /// **Dispatch I entry point** for `rge-editor --glb <path>` —
+    /// renders every mesh primitive of the loaded glTF/GLB file, not
+    /// just the first one.
+    ///
+    /// The supplied [`RenderMesh`] sequence is typically built by the
+    /// editor binary from a glTF/GLB file via `rge_io_gltf::import_glb`
+    /// + per-primitive `RenderMesh::from_buffers(positions, indices,
+    /// None)` (in scene-entity order). Each mesh becomes one
+    /// [`rge_gfx::LitMesh`] during render init; the render pass
+    /// draws them in order through a single pipeline + bind-group
+    /// state.
+    ///
+    /// # Render-only semantics
+    ///
+    /// All caveats apply (same as the dispatch-G single-mesh
+    /// constructor):
     ///
     /// - No CAD operator graph; `cad_graph` is `None`.
     /// - No CAD projection; `projection` is `None`.
     /// - No CAD ECS world; `cad_world` is `None`.
-    /// - No B-Rep face labels; face-pick silently no-ops (the existing
-    ///   `handle_left_click` guards return early when `projection` is
-    ///   `None`).
-    /// - No save / undo for the loaded mesh (it isn't part of any
-    ///   operator history).
+    /// - No B-Rep face labels — face-pick silently no-ops via the
+    ///   existing `handle_left_click` projection-None guard.
+    /// - No save / undo for any loaded mesh.
+    /// - No materials / textures — all meshes render against the
+    ///   hardcoded white-1×1 Lambert+Phong material.
+    /// - No glTF node transforms — every mesh renders at the local
+    ///   origin regardless of its glTF placement.
     ///
     /// The wrapper [`crate::world::World`] is still constructed with a
     /// `TimeScale::default()` resource so the inspector snapshot's
     /// time-scale field reads as `1.00x` and the playback shortcuts
-    /// (`Space` / `Escape`) still work — they drive PIE state machine
-    /// transitions that are orthogonal to the rendered mesh.
+    /// (`Space` / `Escape`) still work.
     ///
-    /// # v0 single-mesh contract
+    /// # Camera framing
     ///
-    /// This constructor holds exactly ONE [`RenderMesh`]. The
-    /// `rge-editor` binary's `--glb` path extracts the first
-    /// [`rge_io_gltf::MeshAsset`] from the imported scene and
-    /// converts it. Multi-primitive / multi-mesh glTF files are
-    /// loaded as their first primitive ONLY for v0. Multi-mesh
-    /// support is a separate dispatch.
+    /// The camera frames the **union AABB** over every supplied
+    /// mesh's positions via [`compute_aabb_union`] +
+    /// [`isometric_camera_for_bounds`]. If the union is empty or
+    /// non-finite (e.g. every mesh was malformed; in practice
+    /// `RenderMesh::from_buffers` would have panicked), the camera
+    /// falls back to [`EditorCameraState::default()`].
+    ///
+    /// # Zero-mesh policy (defensive)
+    ///
+    /// An empty `meshes` Vec is accepted defensively:
+    /// `init_render_state` will no-op when both CAD fields AND the
+    /// prebuilt-mesh Vec are empty (matching the W03 "no scene
+    /// attached" path). The `rge-editor` binary REJECTS zero-mesh
+    /// glTF files before reaching this constructor, so in production
+    /// this branch should never fire.
     ///
     /// # Doctrinal note
     ///
@@ -648,26 +709,17 @@ impl EditorShell {
     /// meshes live entirely in the editor's render path, never
     /// crossing into the CAD authority surface.
     #[must_use]
-    pub fn with_render_mesh(mesh: RenderMesh) -> Self {
+    pub fn with_render_meshes(meshes: Vec<RenderMesh>) -> Self {
         // Install `TimeScale` as a resource on the editor wrapper world
         // so the inspector + playback shortcuts work identically to
         // the CAD-driven path. Same `world` construction shape as
         // `with_world_projection_graph` minus the CAD plumbing.
         let mut world = World::new();
         world.kernel_mut().insert_resource(TimeScale::default());
-        // Dispatch H — auto-frame the camera against the mesh's AABB.
-        // Falls back to the default editor camera when the bounds are
-        // empty or non-finite (e.g. a corrupt or zero-vertex glTF —
-        // `RenderMesh::from_buffers` would reject most of these, but
-        // the defensive fallback keeps the editor running even when
-        // upstream validation slips).
-        //
-        // The framing applies ONLY to the render-only mesh path. The
-        // default-cuboid `with_world_projection_graph` constructor
-        // continues to use `EditorCameraState::default()` (the
-        // hardcoded `eye = (3, 3, 3)` matched to a 1×1×1 cube), so
-        // its visual behavior is byte-identical pre/post dispatch.
-        let editor_camera = match compute_aabb(&mesh.positions) {
+        // Dispatch I — auto-frame the camera against the UNION of all
+        // supplied meshes' AABBs. Falls back to the default editor
+        // camera when the union is empty / non-finite.
+        let editor_camera = match compute_aabb_union(&meshes) {
             Some((min, max)) => isometric_camera_for_bounds(min, max),
             None => EditorCameraState::default(),
         };
@@ -695,7 +747,7 @@ impl EditorShell {
             gfx_camera: None,
             material: None,
             light: None,
-            cuboid_mesh: None,
+            meshes: Vec::new(),
             cursor_pos: None,
             highlight_material: None,
             highlight_index_buffer: None,
@@ -706,7 +758,7 @@ impl EditorShell {
             modifiers: ModifiersState::empty(),
             egui_host: None,
             inspector_handoff: None,
-            prebuilt_render_mesh: Some(mesh),
+            prebuilt_render_meshes: meshes,
         }
     }
 
@@ -1085,6 +1137,41 @@ pub(crate) fn compute_aabb(positions: &[[f32; 3]]) -> Option<Aabb> {
         max = max.max(v);
     }
     Some((min, max))
+}
+
+/// Compute the **union** axis-aligned bounding box across multiple
+/// triangle-soup meshes — used by dispatch-I's
+/// [`EditorShell::with_render_meshes`] to frame a camera that
+/// captures EVERY primitive of a multi-mesh glTF, not just one.
+///
+/// Returns `None` when:
+/// - the input slice is empty, OR
+/// - **every** mesh yields a `None` from [`compute_aabb`] (i.e. all
+///   meshes had empty positions or non-finite coordinates).
+///
+/// A mix of valid + invalid meshes is treated as "use the valid
+/// ones": malformed entries are skipped, and the returned bounds
+/// span only the meshes that compute_aabb accepted. This matches the
+/// dispatch-G defensive posture: an editor that loaded a partly-
+/// corrupt glTF should still frame whatever IS renderable rather
+/// than collapse to the default camera or panic.
+#[must_use]
+pub(crate) fn compute_aabb_union(meshes: &[rge_brep_render::RenderMesh]) -> Option<Aabb> {
+    let mut min = glam::Vec3::splat(f32::INFINITY);
+    let mut max = glam::Vec3::splat(f32::NEG_INFINITY);
+    let mut any_valid = false;
+    for mesh in meshes {
+        if let Some((mn, mx)) = compute_aabb(&mesh.positions) {
+            min = min.min(mn);
+            max = max.max(mx);
+            any_valid = true;
+        }
+    }
+    if any_valid {
+        Some((min, max))
+    } else {
+        None
+    }
 }
 
 /// Build an [`EditorCameraState`] that frames the given AABB from the

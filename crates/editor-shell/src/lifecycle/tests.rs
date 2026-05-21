@@ -237,10 +237,13 @@ fn with_render_mesh_constructs_shell_without_cad() {
         shell.cad_entity.is_none(),
         "render-only shell must NOT pre-resolve a CAD entity"
     );
-    // The prebuilt mesh IS populated.
-    assert!(
-        shell.prebuilt_render_mesh.is_some(),
-        "render-only shell must hold the prebuilt RenderMesh"
+    // The prebuilt mesh IS populated. Dispatch I: storage is now
+    // `Vec<RenderMesh>` — a single-mesh constructor must produce a
+    // Vec of length 1.
+    assert_eq!(
+        shell.prebuilt_render_meshes.len(),
+        1,
+        "single-mesh constructor must hold exactly 1 prebuilt RenderMesh"
     );
 }
 
@@ -552,6 +555,147 @@ fn with_render_mesh_face_pick_no_op_when_no_projection() {
         "the projection-None guard in handle_left_click is what makes face-pick a no-op"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Dispatch I — `compute_aabb_union` + `with_render_meshes` (multi-mesh)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn compute_aabb_union_empty_slice_returns_none() {
+    // No meshes → no union; caller falls back to default camera.
+    let meshes: Vec<rge_brep_render::RenderMesh> = Vec::new();
+    assert!(super::compute_aabb_union(&meshes).is_none());
+}
+
+#[test]
+fn compute_aabb_union_single_mesh_matches_compute_aabb() {
+    // Backward-compat: a Vec of one mesh must yield bounds identical
+    // to what `compute_aabb` would return on that mesh's positions
+    // alone. Pins the dispatch-H invariant that the single-mesh
+    // wrapper produces the same camera as before.
+    let positions: Vec<[f32; 3]> = vec![[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]];
+    let mesh = rge_brep_render::RenderMesh::from_buffers(&positions, &[0, 1, 0], None);
+    let union = super::compute_aabb_union(std::slice::from_ref(&mesh)).expect("valid");
+    let single = super::compute_aabb(&mesh.positions).expect("valid");
+    assert_eq!(union.0, single.0);
+    assert_eq!(union.1, single.1);
+}
+
+#[test]
+fn compute_aabb_union_two_disjoint_meshes_spans_both() {
+    // Two meshes at different positions — the union covers both.
+    let p1: Vec<[f32; 3]> = vec![[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]];
+    let p2: Vec<[f32; 3]> = vec![[5.0, 5.0, 5.0], [10.0, 10.0, 10.0]];
+    let m1 = rge_brep_render::RenderMesh::from_buffers(&p1, &[0, 1, 0], None);
+    let m2 = rge_brep_render::RenderMesh::from_buffers(&p2, &[0, 1, 0], None);
+    let (min, max) = super::compute_aabb_union(&[m1, m2]).expect("valid");
+    assert_eq!(min, glam::Vec3::new(0.0, 0.0, 0.0));
+    assert_eq!(max, glam::Vec3::new(10.0, 10.0, 10.0));
+}
+
+#[test]
+fn compute_aabb_union_skips_empty_meshes() {
+    // A mix of valid + empty meshes: union spans only the valid one.
+    let empty_positions: Vec<[f32; 3]> = vec![];
+    let valid_positions: Vec<[f32; 3]> = vec![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]];
+    let empty = rge_brep_render::RenderMesh::from_buffers(&empty_positions, &[], None);
+    let valid = rge_brep_render::RenderMesh::from_buffers(&valid_positions, &[0, 1, 0], None);
+    let (min, max) = super::compute_aabb_union(&[empty, valid]).expect("valid");
+    assert_eq!(min, glam::Vec3::new(1.0, 2.0, 3.0));
+    assert_eq!(max, glam::Vec3::new(4.0, 5.0, 6.0));
+}
+
+#[test]
+fn compute_aabb_union_all_empty_returns_none() {
+    // All meshes empty → no valid bounds → None (caller falls back).
+    let e1: Vec<[f32; 3]> = vec![];
+    let e2: Vec<[f32; 3]> = vec![];
+    let m1 = rge_brep_render::RenderMesh::from_buffers(&e1, &[], None);
+    let m2 = rge_brep_render::RenderMesh::from_buffers(&e2, &[], None);
+    assert!(super::compute_aabb_union(&[m1, m2]).is_none());
+}
+
+#[test]
+fn with_render_meshes_stores_all_meshes() {
+    let m1 = rge_brep_render::RenderMesh::from_buffers(
+        &[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+        &[0, 1, 2],
+        None,
+    );
+    let m2 = rge_brep_render::RenderMesh::from_buffers(
+        &[[10.0, 10.0, 10.0], [11.0, 10.0, 10.0], [10.0, 11.0, 10.0]],
+        &[0, 1, 2],
+        None,
+    );
+    let shell = EditorShell::with_render_meshes(vec![m1, m2]);
+    assert_eq!(
+        shell.prebuilt_render_meshes.len(),
+        2,
+        "multi-mesh constructor must hold all supplied RenderMeshes"
+    );
+}
+
+#[test]
+fn with_render_meshes_camera_targets_union_center() {
+    // Two meshes at disjoint positions. The camera must target their
+    // UNION center, not just the first mesh's center — otherwise the
+    // second mesh sits outside the view.
+    let p1: Vec<[f32; 3]> = vec![[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]];
+    let p2: Vec<[f32; 3]> = vec![[9.0, 9.0, 9.0], [10.0, 10.0, 10.0]];
+    let m1 = rge_brep_render::RenderMesh::from_buffers(&p1, &[0, 1, 0], None);
+    let m2 = rge_brep_render::RenderMesh::from_buffers(&p2, &[0, 1, 0], None);
+    let shell = EditorShell::with_render_meshes(vec![m1, m2]);
+    // Union: min = (0,0,0), max = (10,10,10), center = (5,5,5).
+    assert_eq!(shell.editor_camera.target, glam::Vec3::new(5.0, 5.0, 5.0));
+}
+
+#[test]
+fn with_render_meshes_empty_falls_back_to_default_camera() {
+    // Defensive: empty Vec → no union → fall back to default camera
+    // (matching dispatch-H's None-AABB fallback).
+    let shell = EditorShell::with_render_meshes(vec![]);
+    let default_cam = crate::camera::EditorCameraState::default();
+    assert_eq!(shell.editor_camera.eye, default_cam.eye);
+    assert_eq!(shell.editor_camera.target, default_cam.target);
+    assert!(shell.prebuilt_render_meshes.is_empty());
+}
+
+#[test]
+fn with_render_mesh_backward_compat_routes_through_multi_mesh() {
+    // The dispatch-G single-mesh wrapper must produce the same shell
+    // as the equivalent dispatch-I call. Pins the wrapper contract.
+    let positions: Vec<[f32; 3]> = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
+    let indices: Vec<u32> = vec![0, 1, 2];
+    let mesh = rge_brep_render::RenderMesh::from_buffers(&positions, &indices, None);
+    let mesh_clone = rge_brep_render::RenderMesh::from_buffers(&positions, &indices, None);
+
+    let single = EditorShell::with_render_mesh(mesh);
+    let multi = EditorShell::with_render_meshes(vec![mesh_clone]);
+
+    assert_eq!(single.prebuilt_render_meshes.len(), 1);
+    assert_eq!(multi.prebuilt_render_meshes.len(), 1);
+    assert_eq!(single.editor_camera.target, multi.editor_camera.target);
+    assert_eq!(single.editor_camera.eye, multi.editor_camera.eye);
+}
+
+#[test]
+fn with_render_meshes_face_pick_still_no_op_in_multi_mesh_mode() {
+    // Multi-mesh mode is still render-only: face-pick has no
+    // projection to query, so it silently no-ops the same way the
+    // single-mesh dispatch-G path did.
+    let positions: Vec<[f32; 3]> = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
+    let m1 = rge_brep_render::RenderMesh::from_buffers(&positions, &[0, 1, 2], None);
+    let m2 = rge_brep_render::RenderMesh::from_buffers(&positions, &[0, 1, 2], None);
+    let shell = EditorShell::with_render_meshes(vec![m1, m2]);
+    assert!(shell.projection.is_none());
+    assert_eq!(shell.coord().face_selection.len(), 0);
+}
+
+// ---------------------------------------------------------------------------
+// Dispatch F — fresh shell defensive tests (pre-existing, kept after the
+// dispatch-I section so they run last in the file alongside other
+// defensive checks).
+// ---------------------------------------------------------------------------
 
 #[test]
 fn fresh_shell_reports_pointer_not_over_viewport() {

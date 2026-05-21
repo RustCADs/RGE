@@ -126,76 +126,92 @@ fn parse_args(args: &[String]) -> Result<Cli, CliError> {
 }
 
 // ---------------------------------------------------------------------------
-// glTF → RenderMesh
+// glTF → Vec<RenderMesh>
 // ---------------------------------------------------------------------------
 
-/// Load a glTF/GLB file and convert its FIRST mesh primitive into a
-/// flat-shaded [`RenderMesh`].
+/// Load a glTF/GLB file and convert **every** mesh primitive in its
+/// scene to a flat-shaded [`RenderMesh`], returning them in
+/// scene-entity order.
 ///
-/// # v0 single-mesh contract
+/// # Dispatch I — multi-mesh contract
 ///
-/// The function imports the file via [`import_glb`], then iterates
-/// the resulting [`rge_io_gltf::Scene`]'s entities in order and picks
-/// the FIRST entity whose `mesh: Option<MeshHandle>` is `Some`. The
-/// corresponding [`rge_io_gltf::MeshAsset`] in the cache is converted
-/// via [`RenderMesh::from_buffers`] using its `positions` + `indices`
-/// (face_labels = None — glTF meshes have no B-Rep topology, so the
-/// editor's face-pick path will silently no-op on this mesh).
+/// Imports the file via [`import_glb`] and then iterates the
+/// resulting [`rge_io_gltf::Scene`]'s entities in id order. Every
+/// entity carrying `mesh: Some(MeshHandle)` contributes one
+/// [`RenderMesh`] to the returned `Vec`. Pure-transform entities
+/// (`mesh: None` — e.g. armature roots, bones) are skipped.
 ///
-/// Multi-primitive / multi-entity scenes are partially ignored at v0:
-/// only the first one renders. A future "load all meshes" dispatch
-/// will iterate the full scene.
+/// Multi-primitive meshes are expanded into per-primitive entities
+/// at import time by `rge_io_gltf::scene_builder::visit_node`, so
+/// iterating `Scene.entities` already yields per-primitive
+/// granularity — we don't need to unpack mesh groups ourselves.
+///
+/// `face_labels = None` for every mesh — glTF data has no B-Rep
+/// topology, so the editor's face-pick path silently no-ops in
+/// render-only mode (the existing `handle_left_click`
+/// projection-None guard fires).
+///
+/// # Order
+///
+/// Output Vec order matches `Scene.iter()` order, which matches the
+/// glTF document's node order (per the `scene_builder` contract).
+/// This is the same order the editor's render pass draws meshes in
+/// (`EditorShell::meshes` is populated in this order by
+/// `init_render_state_post_surface`), so what you load is what you
+/// render in document order.
 ///
 /// # Errors
 ///
 /// - File-system / parse errors propagate from `import_glb` as a
-///   string message (the binary prints them to stderr and exits 1).
-/// - "no meshes in scene" if no entity in the imported scene carries
-///   a mesh handle.
-/// - "mesh cache lookup failed" if the import populated a handle that
-///   doesn't resolve in the cache (would indicate an io-gltf bug;
-///   never expected in practice).
-fn load_first_glb_mesh(path: &std::path::Path) -> Result<RenderMesh, String> {
+///   string message.
+/// - "no meshes in scene" if no entity carries a mesh handle. Empty
+///   `Vec` is NOT returned silently — the binary surfaces this as a
+///   hard error so the user knows the file is empty.
+/// - "mesh cache lookup failed" if a mesh handle isn't in the cache
+///   (would indicate an io-gltf bug; never expected in practice).
+fn load_all_glb_meshes(path: &std::path::Path) -> Result<Vec<RenderMesh>, String> {
     let mut cache = MemoryCache::new();
     let scene = import_glb(path, &mut cache).map_err(|e| format!("glTF import: {e}"))?;
 
-    // Find the first mesh-bearing entity in the scene. `scene.iter`
-    // yields `(Entity, &EntityComponents)` in entity-id order which
-    // matches the glTF document's node order per the io-gltf
-    // scene_builder contract.
-    let mesh_handle = scene
-        .iter()
-        .find_map(|(_, comps)| comps.mesh)
-        .ok_or_else(|| {
-            format!(
-                "no meshes in glTF scene at {} (file has {} entities, none with a mesh)",
-                path.display(),
-                scene.len()
-            )
-        })?;
+    // Collect every (entity, mesh_handle) pair in scene-id order. This
+    // mirrors the dispatch-I tightening: every drawable primitive
+    // gets rendered, not just the first.
+    let mesh_handles: Vec<_> = scene.iter().filter_map(|(_, comps)| comps.mesh).collect();
+    if mesh_handles.is_empty() {
+        return Err(format!(
+            "no meshes in glTF scene at {} (file has {} entities, none with a mesh)",
+            path.display(),
+            scene.len()
+        ));
+    }
 
-    let mesh_asset = cache
-        .get_mesh(&mesh_handle)
-        .ok_or_else(|| "io-gltf returned a mesh handle that isn't in its cache".to_string())?;
+    let mut render_meshes: Vec<RenderMesh> = Vec::with_capacity(mesh_handles.len());
+    let mut total_vertices = 0usize;
+    let mut total_triangles = 0usize;
+    for handle in &mesh_handles {
+        let mesh_asset = cache
+            .get_mesh(handle)
+            .ok_or_else(|| "io-gltf returned a mesh handle that isn't in its cache".to_string())?;
+        total_vertices += mesh_asset.vertex_count();
+        total_triangles += mesh_asset.triangle_count();
+        render_meshes.push(RenderMesh::from_buffers(
+            &mesh_asset.positions,
+            &mesh_asset.indices,
+            None,
+        ));
+    }
 
     tracing::info!(
         target: "rge::editor",
         path = %path.display(),
         scene_entities = scene.len(),
-        mesh_vertex_count = mesh_asset.vertex_count(),
-        mesh_triangle_count = mesh_asset.triangle_count(),
-        "loaded first glTF mesh primitive (render-only, no CAD)"
+        mesh_count = mesh_handles.len(),
+        total_vertices,
+        total_triangles,
+        "loaded all glTF mesh primitives (render-only, no CAD)"
     );
 
-    // `face_labels = None` — glTF meshes have no B-Rep topology, so
-    // we don't lie to the editor by inventing labels. The pick path
-    // silently no-ops in render-only mode (see `with_render_mesh`
-    // doc + the existing `handle_left_click` projection-None guard).
-    Ok(RenderMesh::from_buffers(
-        &mesh_asset.positions,
-        &mesh_asset.indices,
-        None,
-    ))
+    Ok(render_meshes)
 }
 
 // ---------------------------------------------------------------------------
@@ -285,15 +301,15 @@ fn main() -> ExitCode {
     // ---- Branch on --glb flag ----------------------------------------
     let mut shell = match cli.glb_path.as_ref() {
         Some(path) => {
-            // Dispatch G — render-only mesh from glTF.
-            let render_mesh = match load_first_glb_mesh(path) {
-                Ok(mesh) => mesh,
+            // Dispatch G + I — render-only mesh(es) from glTF.
+            let render_meshes = match load_all_glb_meshes(path) {
+                Ok(meshes) => meshes,
                 Err(e) => {
                     eprintln!("rge-editor: failed to load --glb {}: {e}", path.display());
                     return ExitCode::FAILURE;
                 }
             };
-            EditorShell::with_render_mesh(render_mesh)
+            EditorShell::with_render_meshes(render_meshes)
         }
         None => {
             // Default — cuboid demo (byte-identical to pre-dispatch-G).

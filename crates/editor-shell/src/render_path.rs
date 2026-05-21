@@ -199,7 +199,7 @@ impl EditorShell {
         // `--glb` path (no CAD, prebuilt RenderMesh present) to
         // proceed through GPU init.
         let has_cad_scene = self.cad_world.is_some() && self.cad_entity.is_some();
-        let has_prebuilt_mesh = self.prebuilt_render_mesh.is_some();
+        let has_prebuilt_mesh = !self.prebuilt_render_meshes.is_empty();
         if !has_cad_scene && !has_prebuilt_mesh {
             return Ok(());
         }
@@ -478,38 +478,48 @@ impl EditorShell {
         let buffer_pool = BufferPool::new();
         let compiled_frame_graph = build_lit_mesh_compiled_frame_graph(width, height);
 
-        // Step 6 — source the [`RenderMesh`] from either the CAD
-        // projection (cuboid demo path) OR the prebuilt mesh field
-        // (`--glb` render-only path).
+        // Step 6 — source the [`RenderMesh`] sequence from either the
+        // CAD projection (cuboid demo path: one mesh) OR the
+        // prebuilt-mesh Vec (`--glb` render-only path: N meshes).
         //
-        // Dispatch G: branches based on which side was populated at
-        // construction. The two sides are mutually exclusive per the
-        // `with_render_mesh` / `with_world_projection_graph`
+        // Dispatch G / I: branches based on which side was populated
+        // at construction. The two sides are mutually exclusive per
+        // the `with_render_meshes` / `with_world_projection_graph`
         // constructors — neither stores both. The early-return guard
-        // in [`Self::init_render_state`] ensures at least one side is
-        // populated by the time we reach here.
-        let render_mesh = if let Some(prebuilt) = self.prebuilt_render_mesh.as_ref() {
-            // `--glb` mode: the mesh was built by the editor binary
-            // from glTF MeshAsset data. Clone is cheap relative to
-            // the GPU upload cost; the field stays available for
-            // diagnostics / future re-upload (e.g. on device-lost).
-            prebuilt.clone()
+        // in [`Self::init_render_state`] ensures at least one side
+        // contributes a mesh by the time we reach here.
+        let render_meshes: Vec<rge_brep_render::RenderMesh> = if !self
+            .prebuilt_render_meshes
+            .is_empty()
+        {
+            // `--glb` mode: meshes were built by the editor
+            // binary from glTF MeshAsset data. Clone each into a
+            // local Vec; the upload step below converts each to
+            // a `LitMesh`. Cloning is cheap relative to GPU
+            // upload cost; the prebuilt field stays populated
+            // for diagnostics / future re-upload (e.g. on
+            // device-lost reconstruction).
+            self.prebuilt_render_meshes.clone()
         } else {
             let entity = self.cad_entity.expect(
-                "init_render_state_post_surface: cad_entity must be Some when prebuilt mesh is None — caller bails on neither",
-            );
+                    "init_render_state_post_surface: cad_entity must be Some when prebuilt meshes is empty — caller bails on neither",
+                );
             let projection = self.projection.as_ref().expect(
-                "init_render_state_post_surface: projection must be Some when prebuilt mesh is None — caller bails on neither",
-            );
+                    "init_render_state_post_surface: projection must be Some when prebuilt meshes is empty — caller bails on neither",
+                );
             let cad_world = self.cad_world.as_ref().expect(
-                "init_render_state_post_surface: cad_world must be Some when prebuilt mesh is None — caller bails on neither",
-            );
-            projection
+                    "init_render_state_post_surface: cad_world must be Some when prebuilt meshes is empty — caller bails on neither",
+                );
+            vec![projection
                 .render_mesh_for(entity, cad_world)
-                .ok_or_else(|| "render_mesh_for returned None for the cuboid entity".to_string())?
+                .ok_or_else(|| "render_mesh_for returned None for the cuboid entity".to_string())?]
         };
-        let cuboid_mesh = LitMesh::from_render_mesh(&gfx_ctx, &render_mesh)
-            .map_err(|e| format!("LitMesh::from_render_mesh: {e:?}"))?;
+        let mut uploaded_meshes: Vec<LitMesh> = Vec::with_capacity(render_meshes.len());
+        for (idx, mesh) in render_meshes.iter().enumerate() {
+            let lit = LitMesh::from_render_mesh(&gfx_ctx, mesh)
+                .map_err(|e| format!("LitMesh::from_render_mesh[{idx}]: {e:?}"))?;
+            uploaded_meshes.push(lit);
+        }
 
         // Stash all post-surface fields. Winit-bound bits (window,
         // surface_ctx) are owned by the caller and stashed there.
@@ -519,7 +529,7 @@ impl EditorShell {
         self.material = Some(material);
         self.highlight_material = Some(highlight_material);
         self.light = Some(light);
-        self.cuboid_mesh = Some(cuboid_mesh);
+        self.meshes = uploaded_meshes;
         self.texture_pool = Some(texture_pool);
         self.buffer_pool = Some(buffer_pool);
         self.compiled_frame_graph = Some(compiled_frame_graph);
@@ -624,16 +634,33 @@ impl EditorShell {
         true
     }
 
-    /// Encode the cuboid + sub-ε highlight overlay render pass into the
-    /// caller-provided `encoder`. Pure encode — does NOT create the
-    /// encoder, does NOT submit, does NOT present. Used by both
-    /// [`Self::render_frame_to_target`] (the harness wrapper) and
-    /// [`Self::render_frame`] (the production path, which appends the
-    /// Phase 9 egui pass into the same encoder before submitting).
+    /// Encode the cuboid (or N glTF meshes) + sub-ε highlight overlay
+    /// render pass into the caller-provided `encoder`. Pure encode —
+    /// does NOT create the encoder, does NOT submit, does NOT
+    /// present. Used by both [`Self::render_frame_to_target`] (the
+    /// harness wrapper) and [`Self::render_frame`] (the production
+    /// path, which appends the Phase 9 egui pass into the same
+    /// encoder before submitting).
     ///
     /// Returns `false` when any of the required render-state fields
-    /// (`pipeline` / `gfx_camera` / `light` / `material` / `cuboid_mesh`)
-    /// is `None` — matching the pre-extraction skip-frame contract.
+    /// (`pipeline` / `gfx_camera` / `light` / `material`) is `None`,
+    /// or when [`Self::meshes`] is empty — matching the pre-dispatch-I
+    /// skip-frame contract (CAD path: one mesh; glTF path: ≥1 mesh).
+    ///
+    /// # Dispatch-I multi-mesh draw loop
+    ///
+    /// The pipeline + camera + light + material bind groups bind ONCE
+    /// per frame; the loop over [`Self::meshes`] performs one
+    /// `set_vertex_buffer` + `set_index_buffer` + `draw_indexed` per
+    /// mesh. This is the standard "N draws, same pipeline state"
+    /// shape — minimal per-mesh overhead, no extra render passes.
+    ///
+    /// Highlight overlay (sub-ε) stays CAD-only by construction:
+    /// `highlight_index_buffer` is set only by `handle_left_click`
+    /// in CAD mode (face-pick is a no-op for glTF assets). The
+    /// overlay binds `meshes[0]`'s vertex buffer with a tinted
+    /// material; in glTF mode the overlay is never wired up so the
+    /// `if let Some(...)` skips it entirely.
     pub(crate) fn encode_main_pass(
         &self,
         encoder: &mut wgpu::CommandEncoder,
@@ -652,9 +679,9 @@ impl EditorShell {
         let Some(material) = self.material.as_ref() else {
             return false;
         };
-        let Some(mesh) = self.cuboid_mesh.as_ref() else {
+        if self.meshes.is_empty() {
             return false;
-        };
+        }
 
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -699,21 +726,40 @@ impl EditorShell {
             pass.set_bind_group(0, gfx_camera.bind_group(), &[]);
             pass.set_bind_group(1, light.bind_group(), &[]);
             pass.set_bind_group(2, material.bind_group(), &[]);
-            pass.set_vertex_buffer(0, mesh.vertex_buffer().buffer().slice(..));
 
-            if let Some(ib) = mesh.index_buffer() {
-                pass.set_index_buffer(ib.buffer().slice(..), ib.index_format());
-                pass.draw_indexed(0..ib.index_count(), 0, 0..1);
-            } else {
-                pass.draw(0..mesh.vertex_buffer().vertex_count(), 0..1);
+            // Dispatch I — loop over every mesh. Pipeline + bind
+            // groups stay bound for the whole sequence; only the
+            // vertex / index buffers swap per mesh.
+            //
+            // The CAD-cuboid path puts exactly ONE mesh here (`meshes
+            // = [cuboid_lit_mesh]`) so this loop runs once and the
+            // behaviour is byte-identical to the pre-dispatch-I
+            // single-draw path. The `--glb` path puts N meshes here,
+            // one per glTF primitive entity, and the loop draws them
+            // in scene-entity order.
+            for mesh in &self.meshes {
+                pass.set_vertex_buffer(0, mesh.vertex_buffer().buffer().slice(..));
+                if let Some(ib) = mesh.index_buffer() {
+                    pass.set_index_buffer(ib.buffer().slice(..), ib.index_format());
+                    pass.draw_indexed(0..ib.index_count(), 0, 0..1);
+                } else {
+                    pass.draw(0..mesh.vertex_buffer().vertex_count(), 0..1);
+                }
             }
 
             // Sub-ε — selection highlight overlay. Reuses the same
             // `LitMeshPipeline` + camera/light bind groups + vertex
             // buffer; only swaps the @group(2) material bind group and
             // the index buffer. Purely additive: when either field is
-            // `None`, the if-let skips the overlay and the main cuboid
-            // renders unchanged.
+            // `None`, the if-let skips the overlay and the main mesh
+            // (CAD cuboid) renders unchanged.
+            //
+            // The overlay's vertex buffer comes from `meshes[0]`
+            // (the only mesh in CAD mode); in glTF mode the highlight
+            // fields are never set (face-pick is a no-op there) so
+            // this branch is silently skipped. The `[0]` index is safe
+            // because the `self.meshes.is_empty()` guard above
+            // ensured at least one mesh exists.
             //
             // Post sub-β: the depth attachment is now populated (see
             // the `depth_stencil_attachment` block above) and the
@@ -729,6 +775,8 @@ impl EditorShell {
                 self.highlight_material.as_ref(),
                 self.highlight_index_buffer.as_ref(),
             ) {
+                let primary_mesh = &self.meshes[0];
+                pass.set_vertex_buffer(0, primary_mesh.vertex_buffer().buffer().slice(..));
                 pass.set_bind_group(2, highlight_mat.bind_group(), &[]);
                 pass.set_index_buffer(highlight_ib.buffer().slice(..), highlight_ib.index_format());
                 pass.draw_indexed(0..highlight_ib.index_count(), 0, 0..1);
@@ -759,7 +807,7 @@ impl EditorShell {
         // CAD scene OR a prebuilt render-only mesh. Headless tests
         // can exercise either path.
         let has_cad_scene = self.cad_world.is_some() && self.cad_entity.is_some();
-        let has_prebuilt_mesh = self.prebuilt_render_mesh.is_some();
+        let has_prebuilt_mesh = !self.prebuilt_render_meshes.is_empty();
         if !has_cad_scene && !has_prebuilt_mesh {
             return Ok(());
         }
