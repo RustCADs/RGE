@@ -63,6 +63,13 @@
 
 use std::sync::Arc;
 
+// Re-export selected egui types so editor-shell (and other consumers
+// of this host crate) don't need to declare a direct `egui` dep just
+// to reference these constants. Limit the surface to types editor-shell
+// actually needs: `ViewportId` for the constructor and
+// `egui_winit::EventResponse` for the input adapter return type.
+pub use egui::ViewportId;
+pub use egui_winit::EventResponse;
 use winit::event::WindowEvent;
 use winit::window::Window;
 
@@ -99,14 +106,8 @@ pub struct EguiHost {
 
     /// GPU renderer for egui draw lists. Allocates wgpu buffers,
     /// textures, and a pipeline at construction; the per-frame
-    /// `update_buffers` + `render` call sites land in dispatch B.
-    ///
-    /// `#[allow(dead_code)]` is intentional for dispatch A: the field
-    /// is constructed (its pipeline + bind groups are eagerly built by
-    /// `Renderer::new`, which is what we want to validate the
-    /// integration shape) but is not read again until dispatch B's
-    /// render-pass invocation. Dispatch B removes this allow.
-    #[allow(dead_code)]
+    /// `update_buffers` + `render` call sites are driven by
+    /// [`EguiHost::render`].
     renderer: egui_wgpu::Renderer,
 
     /// Most-recent physical-pixel surface dimensions, in
@@ -286,5 +287,134 @@ impl EguiHost {
     #[must_use]
     pub fn pixels_per_point(&self) -> f32 {
         self.pixels_per_point
+    }
+
+    /// Render one egui frame. Records an egui render pass on the
+    /// provided `encoder` with `LoadOp::Load` against `color_view`,
+    /// preserving whatever the caller drew before. The pass has no
+    /// depth attachment (egui is a 2D overlay; depth tests don't apply).
+    ///
+    /// # Flow (per the egui 0.34 + egui-wgpu 0.34 lifecycle)
+    ///
+    /// 1. Take winit-translated input from [`egui_winit::State::take_egui_input`].
+    /// 2. Run the caller-provided UI closure via
+    ///    [`egui::Context::run_ui`] to produce a [`egui::FullOutput`].
+    /// 3. Apply platform output ([`egui_winit::State::handle_platform_output`])
+    ///    — cursor changes, IME, accessibility tree, etc.
+    /// 4. Free textures egui marked for deletion this frame.
+    /// 5. Upload new texture deltas to the renderer.
+    /// 6. Tessellate `FullOutput::shapes` into clipped primitives.
+    /// 7. Build a fresh [`egui_wgpu::ScreenDescriptor`] from the
+    ///    cached surface size + the frame's effective
+    ///    `pixels_per_point`.
+    /// 8. Update GPU buffers via [`egui_wgpu::Renderer::update_buffers`]
+    ///    on the caller's encoder.
+    /// 9. Begin a render pass with `LoadOp::Load`, render egui's
+    ///    primitives, end the pass.
+    ///
+    /// # Why no `Result`
+    ///
+    /// egui's per-frame paths are all infallible; failure modes are
+    /// either consumed internally (texture upload errors trace via
+    /// `tracing::error!`) or surface as panics from invalid wgpu state.
+    /// A future dispatch may add a `Result` if recoverable per-frame
+    /// failure modes emerge (e.g., texture pool exhaustion).
+    ///
+    /// # User-callback ignored bits
+    ///
+    /// [`egui_wgpu::Renderer::update_buffers`] returns
+    /// `Vec<wgpu::CommandBuffer>` from any `CallbackTrait` paint
+    /// callbacks egui's UI code may have registered. Today this crate
+    /// doesn't expose paint callbacks (no dispatch wires them yet);
+    /// the returned vec is empty in practice and we drop it.
+    pub fn render(
+        &mut self,
+        window: &Window,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        color_view: &wgpu::TextureView,
+        run_ui: impl FnMut(&mut egui::Ui),
+    ) {
+        // Step 1: drain winit-translated input from `egui_winit::State`.
+        let raw_input = self.state.take_egui_input(window);
+
+        // Step 2: run the caller's UI closure. `run_ui` (the API; not
+        // the parameter) is the non-deprecated 0.34 path; the older
+        // `Context::run` carries a `#[deprecated]` annotation.
+        let full_output = self.context.run_ui(raw_input, run_ui);
+
+        // Step 3: apply platform-side output (cursor icon, IME, etc.).
+        // Clone PlatformOutput because handle_platform_output takes it
+        // by value but we need `full_output.shapes` later.
+        self.state
+            .handle_platform_output(window, full_output.platform_output);
+
+        // Step 4: free textures egui marked for deletion in this frame.
+        // MUST run before update_texture per egui-wgpu docs (so that a
+        // texture id can be freed + re-allocated in the same frame).
+        for id in &full_output.textures_delta.free {
+            self.renderer.free_texture(id);
+        }
+
+        // Step 5: upload texture deltas (new + updated textures).
+        for (id, image_delta) in &full_output.textures_delta.set {
+            self.renderer
+                .update_texture(device, queue, *id, image_delta);
+        }
+
+        // Step 6: tessellate shapes into clipped primitives.
+        let pixels_per_point = full_output.pixels_per_point;
+        let primitives = self
+            .context
+            .tessellate(full_output.shapes, pixels_per_point);
+
+        // Step 7: screen descriptor for this frame.
+        let screen_descriptor = egui_wgpu::ScreenDescriptor {
+            size_in_pixels: self.surface_size,
+            pixels_per_point,
+        };
+
+        // Step 8: update GPU buffers on the caller's encoder.
+        // `update_buffers` returns user paint-callback command buffers;
+        // we don't use those today (no callback registrations).
+        let _user_cmd_bufs =
+            self.renderer
+                .update_buffers(device, queue, encoder, &primitives, &screen_descriptor);
+
+        // Step 9: begin render pass + render + drop (ends the pass).
+        //
+        // Note on `LoadOp::Load`: the editor's cuboid + highlight pass
+        // already wrote to this color_view in the same encoder; we
+        // preserve those pixels and let egui paint on top.
+        //
+        // `forget_lifetime()` converts the `RenderPass<'_>` (borrowing
+        // the encoder) into `RenderPass<'static>` so that
+        // [`egui_wgpu::Renderer::render`]'s `&mut RenderPass<'static>`
+        // signature accepts it. The pass still borrows the encoder
+        // internally; dropping the pass ends it as usual.
+        {
+            let pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("rge-editor-egui-host.egui-pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: color_view,
+                    resolve_target: None,
+                    depth_slice: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            let mut pass = pass.forget_lifetime();
+            self.renderer
+                .render(&mut pass, &primitives, &screen_descriptor);
+            // pass drops here → render pass ends → encoder available
+            // for the caller's queue.submit() to flush all commands.
+        }
     }
 }

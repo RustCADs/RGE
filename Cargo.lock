@@ -4443,6 +4443,7 @@ dependencies = [
  "rge-cad-core",
  "rge-cad-projection",
  "rge-editor-actions",
+ "rge-editor-egui-host",
  "rge-editor-state",
  "rge-gfx",
  "rge-input",

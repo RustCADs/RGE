@@ -228,6 +228,36 @@ impl EditorShell {
         self.window = Some(window);
         self.surface_ctx = Some(surface_ctx);
 
+        // Phase 9 egui host integration (dispatch B) — construct the
+        // headless `EguiHost` now that wgpu + winit primitives are all
+        // in `self`. The host's render pass runs LATER inside
+        // [`Self::render_frame`] between the cuboid+highlight pass and
+        // `queue.submit()`. Construction itself is infallible; failure
+        // to construct would be a wgpu pipeline-validation panic that
+        // would have already torn down the render init above.
+        //
+        // `depth_format = None` because egui is a 2D overlay drawn on
+        // top of the cuboid; it needs no depth tests. `msaa_samples = 1`
+        // matches the editor's single-sample frame-graph
+        // (`render_path::build_lit_mesh_compiled_frame_graph` uses
+        // `sample_count = 1`).
+        if let (Some(gfx_ctx), Some(surface_ctx), Some(window)) = (
+            self.gfx_ctx.as_ref(),
+            self.surface_ctx.as_ref(),
+            self.window.as_ref(),
+        ) {
+            let surface_format = surface_ctx.config().format;
+            let host = rge_editor_egui_host::EguiHost::new(
+                gfx_ctx.device(),
+                surface_format,
+                None,
+                1,
+                Arc::clone(window),
+                rge_editor_egui_host::ViewportId::ROOT,
+            );
+            self.egui_host = Some(host);
+        }
+
         // Kick off the first redraw so the cuboid appears.
         if let Some(w) = self.window.as_ref() {
             w.request_redraw();
@@ -292,18 +322,66 @@ impl EditorShell {
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
-        // Phase D — encode body delegated to the shared helper. Both
-        // production and the crate-local `render_frame_e2e_perf`
-        // harness drive the same encode/submit path; only the color
-        // target view + present policy differ.
-        if !self.render_frame_to_target(&target_view, &depth_view) {
-            // Encode-body field state uninitialised — drop the
-            // surface frame without presenting and propagate the
-            // pre-extraction `return false` contract.
+        // Phase D — create the per-frame encoder. Production drives
+        // BOTH the cuboid pass AND the optional Phase 9 egui pass into
+        // a single encoder + single submit; the harness in
+        // `render_frame_e2e_perf.rs` still uses
+        // [`Self::render_frame_to_target`] which internally creates
+        // its own encoder + submits (egui-free measurement path).
+        let Some(gfx_ctx_for_encode) = self.gfx_ctx.as_ref() else {
+            return false;
+        };
+        let mut encoder =
+            gfx_ctx_for_encode
+                .device()
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("rge-editor.frame.encoder"),
+                });
+
+        // Phase E — encode the cuboid + sub-ε highlight pass.
+        if !self.encode_main_pass(&mut encoder, &target_view, &depth_view) {
             return false;
         }
 
-        // Phase E — present + schedule next redraw.
+        // Phase F — optional egui pass into the same encoder.
+        // `LoadOp::Load` preserves the cuboid pixels; egui paints on
+        // top. The UI closure is empty for dispatch B: this dispatch
+        // proves host lifecycle + render + input plumbing only, not
+        // visible inspector content (that's dispatch C). When
+        // `egui_host` is `None` (existing tests + pre-resumed shell
+        // state) the egui pass is skipped entirely — byte-identical
+        // pre-host behaviour.
+        //
+        // Borrow-split: `self.egui_host.as_mut()`, `self.window.as_ref()`,
+        // and `self.gfx_ctx.as_ref()` all touch disjoint fields. The
+        // Rust borrow checker (NLL) ends the `gfx_ctx_for_encode`
+        // immutable borrow at the end of the preceding statement;
+        // taking a fresh `&mut self.egui_host` here is therefore safe.
+        if let (Some(host), Some(window_ref), Some(gfx_ctx)) = (
+            self.egui_host.as_mut(),
+            self.window.as_ref(),
+            self.gfx_ctx.as_ref(),
+        ) {
+            host.render(
+                window_ref,
+                gfx_ctx.device(),
+                gfx_ctx.queue(),
+                &mut encoder,
+                &target_view,
+                |_ui| {
+                    // Dispatch B: empty UI. Dispatch C wires DockState
+                    // + Inspector content here.
+                },
+            );
+        }
+
+        // Phase G — submit + present + schedule next redraw.
+        let Some(gfx_ctx_for_submit) = self.gfx_ctx.as_ref() else {
+            return false;
+        };
+        gfx_ctx_for_submit
+            .queue()
+            .submit(std::iter::once(encoder.finish()));
         frame.present();
         window.request_redraw();
         true
@@ -468,6 +546,18 @@ impl EditorShell {
     /// `render_frame` performed: clear-color, depth-stencil with
     /// `Clear(1.0)`, three bind-group binds, one `draw_indexed` for the
     /// main cuboid plus the optional sub-ε highlight overlay.
+    /// Cuboid-only render wrapper used by the
+    /// `render_frame_e2e_perf` test harness. Creates its own encoder,
+    /// calls [`Self::encode_main_pass`], submits, and returns. Does
+    /// NOT include the Phase 9 egui pass — the harness measures
+    /// cuboid-render perf in isolation.
+    ///
+    /// `#[cfg_attr(not(test), allow(dead_code))]` because the lib
+    /// build no longer reaches this function in production (Phase 9
+    /// production goes through [`Self::render_frame`] which calls
+    /// `encode_main_pass` + optional egui pass on the same encoder).
+    /// Test builds reach it via `render_frame_e2e_perf.rs`.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn render_frame_to_target(
         &self,
         target_view: &wgpu::TextureView,
@@ -476,6 +566,35 @@ impl EditorShell {
         let Some(gfx_ctx) = self.gfx_ctx.as_ref() else {
             return false;
         };
+        let mut encoder =
+            gfx_ctx
+                .device()
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("rge-editor.frame.encoder"),
+                });
+        if !self.encode_main_pass(&mut encoder, target_view, depth_view) {
+            return false;
+        }
+        gfx_ctx.queue().submit(std::iter::once(encoder.finish()));
+        true
+    }
+
+    /// Encode the cuboid + sub-ε highlight overlay render pass into the
+    /// caller-provided `encoder`. Pure encode — does NOT create the
+    /// encoder, does NOT submit, does NOT present. Used by both
+    /// [`Self::render_frame_to_target`] (the harness wrapper) and
+    /// [`Self::render_frame`] (the production path, which appends the
+    /// Phase 9 egui pass into the same encoder before submitting).
+    ///
+    /// Returns `false` when any of the required render-state fields
+    /// (`pipeline` / `gfx_camera` / `light` / `material` / `cuboid_mesh`)
+    /// is `None` — matching the pre-extraction skip-frame contract.
+    pub(crate) fn encode_main_pass(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        target_view: &wgpu::TextureView,
+        depth_view: &wgpu::TextureView,
+    ) -> bool {
         let Some(pipeline) = self.pipeline.as_ref() else {
             return false;
         };
@@ -492,12 +611,6 @@ impl EditorShell {
             return false;
         };
 
-        let mut encoder =
-            gfx_ctx
-                .device()
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("rge-editor.frame.encoder"),
-                });
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("rge-editor.frame"),
@@ -577,7 +690,6 @@ impl EditorShell {
             }
         }
 
-        gfx_ctx.queue().submit(std::iter::once(encoder.finish()));
         true
     }
 

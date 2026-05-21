@@ -23,6 +23,13 @@ serde             = { workspace = true, optional = true }
 ron               = { workspace = true, optional = true }
 rge-editor-state  = { path = "../editor-state" }
 rge-editor-actions = { path = "../editor-actions" }
+# Phase 9 egui host integration — dispatch B: editor-shell hosts the
+# egui+egui_dock pass in its render loop via the headless
+# `rge-editor-egui-host` library landed in dispatch A. This edge is
+# `editor-shell → editor-egui-host`; the reverse direction is
+# forbidden (would create a cycle and foreclose the planned host
+# direction). The host crate has zero edge to editor-shell by design.
+rge-editor-egui-host = { path = "../editor-egui-host" }
 rge-kernel-ecs    = { path = "../../kernel/ecs" }
 # Phase 9 keyboard → CommandBus integration: editor-shell consumes the
 # `translate_keyboard` winit-event-to-`KeyCode` adapter from `rge-input`.

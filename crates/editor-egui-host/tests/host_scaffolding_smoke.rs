@@ -66,6 +66,31 @@ fn public_api_surface_is_present() {
     let _ = EguiHost::context as fn(&EguiHost) -> &egui::Context;
     let _ = EguiHost::surface_size as fn(&EguiHost) -> [u32; 2];
     let _ = EguiHost::pixels_per_point as fn(&EguiHost) -> f32;
+
+    // `render` takes a closure parameter — function-pointer coercion
+    // would require fixing the closure type. Instead assert presence
+    // via a noop function that mirrors the impl's signature shape; if
+    // `EguiHost::render` is renamed or the signature drifts, this fails
+    // to compile.
+    fn _render_signature_sentinel(
+        host: &mut EguiHost,
+        window: &winit::window::Window,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        color_view: &wgpu::TextureView,
+    ) {
+        host.render(window, device, queue, encoder, color_view, |_ui| {});
+    }
+    let _ = _render_signature_sentinel
+        as fn(
+            &mut EguiHost,
+            &winit::window::Window,
+            &wgpu::Device,
+            &wgpu::Queue,
+            &mut wgpu::CommandEncoder,
+            &wgpu::TextureView,
+        );
 }
 
 // ---------------------------------------------------------------------------

@@ -93,6 +93,29 @@
 //! so no `pub(crate)` promotion was needed for the move. The
 //! extraction drops this file under the 1000-LoC `// SPLIT-EXEMPTION`
 //! threshold, so the previous exemption annotation has been removed.
+//!
+//! # 2026-05-21 Phase 9 egui host integration (dispatch B)
+//!
+//! Adds the `egui_host: Option<EguiHost>` field on [`EditorShell`],
+//! constructs it after wgpu+winit init in [`crate::render_path::EditorShell::init_render_state`],
+//! routes winit events through `EguiHost::on_window_event` BEFORE the
+//! existing editor branches, gates the `KeyboardInput` + `MouseInput`
+//! branches on `!egui_consumed` (so egui owns events when it has
+//! focus), and forwards resize updates to the host. The egui render
+//! pass itself lives in [`crate::render_path::EditorShell::render_frame`]
+//! (between the cuboid+highlight pass and `queue.submit()`, same
+//! encoder, same surface view, `LoadOp::Load`).
+//
+// SPLIT-EXEMPTION: After landing the Phase 9 egui host wire-up
+// (dispatch B), this file is ~1024 LoC — just over the threshold.
+// The egui-host integration is naturally cohesive with the existing
+// lifecycle (window_event input routing, resumed init, render_frame
+// composition all live here); extracting it would scatter cohesive
+// material across two files. A follow-up cohesion-debt dispatch can
+// extract `window_event`'s match arms into a dedicated `events.rs`
+// sibling once the host adds DockState/TabBody (dispatch C) and the
+// arm count grows further; pre-emptive extraction for the current
+// arm set would be cosmetic.
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -100,6 +123,7 @@ use std::time::Instant;
 use rge_cad_core::CadGraph;
 use rge_cad_projection::{BRepHandle, CadProjection};
 use rge_editor_actions::CommandBus;
+use rge_editor_egui_host::EguiHost;
 use rge_gfx::{
     Camera as GfxCamera, DirectionalLight, GfxContext, IndexBuffer, LitMesh, LitMeshPipeline,
     Material, SurfaceContext,
@@ -326,6 +350,25 @@ pub struct EditorShell {
     /// separately on the receiving side. Used by [`Self::window_event`] to
     /// detect Ctrl+Z / Ctrl+Y / Ctrl+S without a broad input refactor.
     modifiers: ModifiersState,
+
+    // ---- Phase 9 egui host integration (dispatch B) -----------------------
+    //
+    // The egui+egui_dock host that paints editor UI on top of the wgpu
+    // cuboid pass. Constructed lazily in [`Self::init_render_state`]
+    // alongside the wgpu surface + winit window; `None` until that
+    // callback runs. Existing tests that build `EditorShell::new()` /
+    // `EditorShell::with_world(world)` and never enter the winit event
+    // loop see `egui_host == None` and observe byte-identical pre-host
+    // lifecycle behavior — the render path falls back to "cuboid-only"
+    // when `egui_host.is_none()`.
+    //
+    // Per the egui host integration preflight (recorded in
+    // `plans/BASELINE.md`): editor-shell depends on
+    // `rge-editor-egui-host`, never the reverse. This field is the
+    // single point of host ownership; future dispatches that wire
+    // `DockState<TabBody>` + inspector content land THERE (in the host
+    // crate), not on additional fields here.
+    pub(crate) egui_host: Option<EguiHost>,
 }
 
 impl EditorShell {
@@ -382,6 +425,7 @@ impl EditorShell {
             compiled_frame_graph: None,
             command_bus: CommandBus::new(),
             modifiers: ModifiersState::empty(),
+            egui_host: None,
         }
     }
 
@@ -459,6 +503,7 @@ impl EditorShell {
             compiled_frame_graph: None,
             command_bus: CommandBus::new(),
             modifiers: ModifiersState::empty(),
+            egui_host: None,
         }
     }
 
@@ -810,6 +855,35 @@ impl ApplicationHandler<()> for EditorShell {
         //   — egui-overlay routing + IR-rebuild + close-persist stripped.
         //     PIE-aware tick driver replaces the rustforge unconditional
         //     `app.run_for_ticks(1)` call.
+        //
+        // Phase 9 dispatch B: route winit events through `egui_host`
+        // BEFORE the editor branches. The host's
+        // `egui_winit::State::on_window_event` adapter updates egui's
+        // internal input state (cursor, focus, IME, modifier tracking)
+        // and returns `EventResponse { consumed, repaint }`:
+        //   - `consumed == true` means an egui widget claimed the event
+        //     (text field keystroke, button click). The editor's
+        //     application-level handler (face-pick, Ctrl+Z) should
+        //     skip this event. KEY + MOUSE branches gate on
+        //     `!egui_consumed`.
+        //   - `consumed == false` means no egui widget claimed it; the
+        //     editor handles normally.
+        //   - `repaint == true` means egui's visual state changed and
+        //     wants a redraw; we forward `request_redraw()`.
+        // ModifiersChanged + CursorMoved are observed by BOTH egui and
+        // the editor (both subsystems track this state independently);
+        // they are not gated. Resized + RedrawRequested + CloseRequested
+        // are editor-only.
+        let egui_consumed =
+            if let (Some(host), Some(window)) = (self.egui_host.as_mut(), self.window.as_ref()) {
+                let response = host.on_window_event(window, &event);
+                if response.repaint {
+                    window.request_redraw();
+                }
+                response.consumed
+            } else {
+                false
+            };
         match event {
             WindowEvent::CloseRequested => {
                 tracing::info!(
@@ -851,6 +925,21 @@ impl ApplicationHandler<()> for EditorShell {
                 self.resize_render_path(&render_input, new_size.width, new_size.height);
                 // `owned` (Arc) drops here; the handoff slot retains
                 // its own reference for the next acquire.
+                //
+                // Phase 9 dispatch B: forward the new surface size +
+                // scale factor to the egui host so its
+                // `ScreenDescriptor` for the next frame reflects the
+                // resize. `host.resize` is a pure-data update — no
+                // wgpu surface reconfigure (the editor's surface_ctx
+                // already did that via `resize_render_path`).
+                if let (Some(host), Some(window)) = (self.egui_host.as_mut(), self.window.as_ref())
+                {
+                    host.resize(
+                        new_size.width,
+                        new_size.height,
+                        window.scale_factor() as f32,
+                    );
+                }
             }
             WindowEvent::RedrawRequested => {
                 self.tick_redraw();
@@ -886,8 +975,14 @@ impl ApplicationHandler<()> for EditorShell {
                 // Sub-δ.2 single-select left-click. Other buttons /
                 // Released events are no-ops in v0; right / middle /
                 // scroll / drag / hover are non-goals (later dispatches).
+                //
+                // Phase 9 dispatch B: gate on `!egui_consumed` so clicks
+                // on an egui panel/widget don't also fall through to
+                // viewport face-pick. The host's hit-test consumes the
+                // click when it lands on a widget; otherwise it falls
+                // through to here.
                 use winit::event::{ElementState, MouseButton};
-                if state == ElementState::Pressed && button == MouseButton::Left {
+                if !egui_consumed && state == ElementState::Pressed && button == MouseButton::Left {
                     self.handle_left_click();
                 }
             }
@@ -910,11 +1005,18 @@ impl ApplicationHandler<()> for EditorShell {
                 // physical-key surface to our v0 `KeyCode` set. This is
                 // a pure helper — no `Input<T>` resource, no broader
                 // input integration is started by this dispatch.
-                if let Some(InputEvent::KeyDown(key)) = translate_keyboard(&event) {
-                    let ctrl = self.modifiers.control_key();
-                    let shift = self.modifiers.shift_key();
-                    if let Some(cmd) = EditorKeyCommand::from_key_press(key, ctrl, shift) {
-                        self.handle_key_command(cmd);
+                //
+                // Phase 9 dispatch B: gate on `!egui_consumed` so
+                // keystrokes typed into an egui text field don't ALSO
+                // trigger Command Bus shortcuts (e.g. Ctrl+Z in a text
+                // field undoes text edits, not the global undo stack).
+                if !egui_consumed {
+                    if let Some(InputEvent::KeyDown(key)) = translate_keyboard(&event) {
+                        let ctrl = self.modifiers.control_key();
+                        let shift = self.modifiers.shift_key();
+                        if let Some(cmd) = EditorKeyCommand::from_key_press(key, ctrl, shift) {
+                            self.handle_key_command(cmd);
+                        }
                     }
                 }
             }
