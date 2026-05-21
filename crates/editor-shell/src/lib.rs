@@ -56,6 +56,8 @@ mod render_path;
 pub mod snapshot;
 pub mod time_scale;
 pub mod viewport;
+#[cfg(test)]
+mod visual_smoke;
 pub mod world;
 
 pub use camera::{pick_face_at, CameraView, EditorCameraState};
