@@ -904,7 +904,13 @@ impl EditorShell {
     /// The caller supplies the offscreen color target's format / width
     /// / height so the pipeline + frame-graph + camera aspect match
     /// what the harness will hand to [`Self::render_frame_to_target`].
-    #[cfg(test)]
+    /// Dispatch N2 — gate extended from `#[cfg(test)]` to
+    /// `#[cfg(any(test, feature = "test-harness"))]` so the
+    /// `visual_test_harness` module's pub fn can call this from
+    /// external consumers when the feature is enabled. The body and
+    /// `pub(crate)` visibility are unchanged; this method stays a
+    /// crate-internal API, just compiled in two more configurations.
+    #[cfg(any(test, feature = "test-harness"))]
     pub(crate) fn init_render_state_headless(
         &mut self,
         target_format: wgpu::TextureFormat,

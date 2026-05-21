@@ -39,10 +39,10 @@
 //!   is the editor-shell-level integration verifier.
 
 use rge_brep_render::RenderMesh;
-use rge_gfx::{HeadlessTarget, ReadbackBuffer};
+use rge_gfx::ReadbackBuffer;
 
 use crate::lifecycle::EditorShell;
-use crate::render_path::DepthViewOutcome;
+use crate::visual_test_harness;
 
 /// Offscreen target format. `Rgba8Unorm` (linear) matches
 /// `HeadlessTarget`'s hardcoded format; the lit shader writes linear
@@ -235,72 +235,22 @@ fn build_untextured_cube_shell() -> EditorShell {
     )
 }
 
-/// Drive one `init_render_state_headless` → allocate
-/// `HeadlessTarget` → `acquire_depth_view` →
-/// `render_frame_to_target` → `ReadbackBuffer::from_target`
-/// sequence and return the readback buffer.
+/// Drive one full headless render frame via
+/// [`visual_test_harness::render_one_frame_to_readback`] and return
+/// the pixel buffer.
 ///
-/// `GfxContext` is not `Clone`; borrows of `shell.gfx_ctx` are scoped
-/// around the `&mut self` calls so the borrow checker keeps the
-/// `init` / `acquire_depth_view` paths (mut) and the
-/// `HeadlessTarget::new` / `ReadbackBuffer::from_target` paths
-/// (shared) disjoint.
-///
-/// Panics on any uninitialised mid-pipeline state — measurement
-/// integrity guard mirroring `render_frame_e2e_perf::tick_one_frame`.
+/// Thin panic-on-error wrapper around the harness so the N1 tests
+/// keep the "measurement integrity guard" posture they had before
+/// the N2 refactor. Test failures stay short and informative —
+/// `render_one_frame_to_readback` returns a `Result<_, String>` with
+/// failure-prefix discrimination that the wrapper unwraps.
 fn render_one_frame_to_readback(
     shell: &mut EditorShell,
     width: u32,
     height: u32,
 ) -> ReadbackBuffer {
-    shell
-        .init_render_state_headless(TARGET_FORMAT, width, height)
-        .expect("init_render_state_headless");
-
-    // Scope 1 — create the offscreen target via a temporary shared
-    // borrow on `shell.gfx_ctx`. Drops before the mut borrow below.
-    let target = {
-        let gfx_ctx = shell
-            .gfx_ctx
-            .as_ref()
-            .expect("init_render_state_headless populates gfx_ctx");
-        HeadlessTarget::new(gfx_ctx, width, height).expect("HeadlessTarget")
-    };
-
-    // Mut borrow — rotates the transient texture pool and builds the
-    // resource map. Then immediately drop into the immutable
-    // `render_frame_to_target` call.
-    let depth_view = match shell.acquire_depth_view() {
-        DepthViewOutcome::Acquired(view) => view,
-        DepthViewOutcome::RecoverableSkip => {
-            panic!(
-                "acquire_depth_view returned RecoverableSkip mid-smoke; \
-                 build_resource_map failed against the offscreen color target"
-            );
-        }
-        DepthViewOutcome::Uninitialized => {
-            panic!(
-                "acquire_depth_view returned Uninitialized after \
-                 init_render_state_headless populated gfx_ctx / pools / compiled_frame_graph"
-            );
-        }
-    };
-
-    let rendered = shell.render_frame_to_target(target.view(), &depth_view);
-    assert!(
-        rendered,
-        "render_frame_to_target returned false — pipeline/camera/light/material/mesh missing"
-    );
-
-    // Scope 2 — readback. `acquire_depth_view`'s mut borrow has
-    // ended; `target` outlives both scopes (texture is COPY_SRC, the
-    // pixels are submitted in the queue and visible to a second
-    // command buffer for the readback copy).
-    let gfx_ctx = shell
-        .gfx_ctx
-        .as_ref()
-        .expect("init_render_state_headless populates gfx_ctx");
-    ReadbackBuffer::from_target(gfx_ctx, &target).expect("ReadbackBuffer::from_target")
+    visual_test_harness::render_one_frame_to_readback(shell, TARGET_FORMAT, width, height)
+        .expect("render_one_frame_to_readback")
 }
 
 // ---------------------------------------------------------------------------

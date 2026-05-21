@@ -75,6 +75,15 @@ default = []
 # test. Off by default so `cargo check -p rge-editor-shell` does not pull
 # serde transitives into the dep tree of every downstream crate.
 fixture-ron = ["serde", "ron"]
+# Dispatch N2 — feature-gates the headless visual-test harness so
+# external integration tests (rge-editor/tests, future visual-
+# acceptance harnesses) can drive `init_render_state_headless` →
+# `render_frame_to_target` → `ReadbackBuffer` without expanding the
+# production public API. Off by default; `rge-editor`'s dev-deps
+# enable it for `cargo test`. The `pub(crate)` methods stay
+# `pub(crate)` — only the harness's single pub fn is added to the
+# external surface, gated by this feature.
+test-harness = []
 
 [dev-dependencies]
 serde       = { workspace = true }

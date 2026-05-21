@@ -1319,6 +1319,270 @@ mod tests {
     // -----------------------------------------------------------------------
 
     // -----------------------------------------------------------------------
+    // Dispatch N2 — end-to-end GLB visual acceptance
+    //
+    // Loads existing fixtures through the REAL `load_all_glb_meshes`
+    // path → builds `EditorShell::with_render_meshes_and_base_colors_and_textures`
+    // → renders one headless frame via the editor-shell visual-test
+    // harness → asserts pixel signatures. Closes the M2/M3/K
+    // acceptance gap that logs alone cannot verify.
+    //
+    // Tests skip gracefully when no GPU adapter is available
+    // (`Err("init_render_state_headless: ...")` containing
+    // `"NoAdapter"`) — matches the gfx-test `ctx_or_skip!` posture.
+    // -----------------------------------------------------------------------
+
+    /// Background-clear color components in linear `Rgba8Unorm` space.
+    /// Mirrors `crate::editor_shell::render_path::DEFAULT_CLEAR` which
+    /// is `(0.12, 0.12, 0.14)` in float, then `round * 255 = (30, 30,
+    /// 36)`. Pinned here as constants so the N2 tests don't reach
+    /// into editor-shell's render_path internals.
+    const BG_R: i32 = 30;
+    const BG_G: i32 = 30;
+    const BG_B: i32 = 36;
+    /// Per-channel delta from `DEFAULT_CLEAR` that classifies a pixel
+    /// as "on the cube" rather than background. Loose enough for
+    /// driver rounding + Phong ambient; tight enough to reject
+    /// background pixels.
+    const CUBE_THRESHOLD: i32 = 30;
+    /// Visual-test target dimensions. Square aspect so the auto-frame
+    /// (`compute_aabb_union` + `isometric_camera_for_bounds`) centers
+    /// the cube symmetrically.
+    const VISUAL_W: u32 = 256;
+    const VISUAL_H: u32 = 256;
+
+    /// Common end-to-end render pipeline: load a glTF fixture through
+    /// the production loader, build an `EditorShell`, render one
+    /// headless frame, return the readback buffer (or `None` to skip
+    /// when no GPU adapter is available).
+    ///
+    /// Translates `Vec<Option<TextureInfo>>` → `Vec<Option<(u32, u32,
+    /// Vec<u8>)>>` exactly the way `main()` does, so the test exercises
+    /// the same boundary the production binary crosses.
+    fn render_fixture_end_to_end(fixture_name: &str) -> Option<rge_gfx::ReadbackBuffer> {
+        let path = fixtures_path().join(fixture_name);
+        if skip_if_fixture_missing(&path) {
+            return None;
+        }
+        let (meshes, base_colors, textures) = load_all_glb_meshes(&path)
+            .unwrap_or_else(|e| panic!("load_all_glb_meshes({fixture_name}): {e}"));
+        let textures_for_shell: Vec<Option<(u32, u32, Vec<u8>)>> = textures
+            .into_iter()
+            .map(|t| t.map(|t| (t.width, t.height, t.pixels)))
+            .collect();
+        let mut shell = EditorShell::with_render_meshes_and_base_colors_and_textures(
+            meshes,
+            base_colors,
+            textures_for_shell,
+        );
+        match rge_editor_shell::visual_test_harness::render_one_frame_to_readback(
+            &mut shell,
+            wgpu::TextureFormat::Rgba8Unorm,
+            VISUAL_W,
+            VISUAL_H,
+        ) {
+            Ok(buf) => Some(buf),
+            Err(e) if e.contains("NoAdapter") || e.contains("no GPU") => {
+                eprintln!("SKIP: no GPU adapter — {fixture_name} ({e})");
+                None
+            }
+            Err(e) => panic!("render_one_frame_to_readback({fixture_name}): {e}"),
+        }
+    }
+
+    /// Walk the central horizontal row, classify pixels as cube /
+    /// background by channel delta from `DEFAULT_CLEAR`, and return
+    /// `(cube_pixel_count, min_r, max_r, min_g, max_g, min_b, max_b,
+    /// sum_r, sum_g, sum_b)` aggregates over the on-cube subset. The
+    /// per-channel sums let callers compute averages for dominance
+    /// assertions; min/max for spread.
+    fn scan_central_row(buf: &rge_gfx::ReadbackBuffer) -> RowScanStats {
+        let y = VISUAL_H / 2;
+        let mut s = RowScanStats {
+            cube_pixel_count: 0,
+            min_r: u8::MAX,
+            max_r: 0,
+            min_g: u8::MAX,
+            max_g: 0,
+            min_b: u8::MAX,
+            max_b: 0,
+            sum_r: 0,
+            sum_g: 0,
+            sum_b: 0,
+        };
+        for x in 0..VISUAL_W {
+            let p = buf.pixel(x, y).expect("row pixel exists");
+            let dr = (i32::from(p.0) - BG_R).abs();
+            let dg = (i32::from(p.1) - BG_G).abs();
+            let db = (i32::from(p.2) - BG_B).abs();
+            if dr > CUBE_THRESHOLD || dg > CUBE_THRESHOLD || db > CUBE_THRESHOLD {
+                s.cube_pixel_count += 1;
+                s.min_r = s.min_r.min(p.0);
+                s.max_r = s.max_r.max(p.0);
+                s.min_g = s.min_g.min(p.1);
+                s.max_g = s.max_g.max(p.1);
+                s.min_b = s.min_b.min(p.2);
+                s.max_b = s.max_b.max(p.2);
+                s.sum_r += u32::from(p.0);
+                s.sum_g += u32::from(p.1);
+                s.sum_b += u32::from(p.2);
+            }
+        }
+        s
+    }
+
+    struct RowScanStats {
+        cube_pixel_count: u32,
+        min_r: u8,
+        max_r: u8,
+        min_g: u8,
+        max_g: u8,
+        min_b: u8,
+        max_b: u8,
+        sum_r: u32,
+        sum_g: u32,
+        sum_b: u32,
+    }
+
+    impl RowScanStats {
+        fn avg_r(&self) -> u32 {
+            if self.cube_pixel_count == 0 {
+                0
+            } else {
+                self.sum_r / self.cube_pixel_count
+            }
+        }
+        fn avg_g(&self) -> u32 {
+            if self.cube_pixel_count == 0 {
+                0
+            } else {
+                self.sum_g / self.cube_pixel_count
+            }
+        }
+        fn avg_b(&self) -> u32 {
+            if self.cube_pixel_count == 0 {
+                0
+            } else {
+                self.sum_b / self.cube_pixel_count
+            }
+        }
+    }
+
+    /// **Canonical N2 acceptance gate.** Loads textured_uv_cube.glb
+    /// through the production `load_all_glb_meshes` path, renders
+    /// headlessly via the editor-shell harness, and asserts that the
+    /// central row's on-cube pixels show red/blue channel spread
+    /// `>50` — proving the 4×4 checkerboard's per-fragment UV
+    /// sampling is active end-to-end (M1 UV propagation + M2 texture
+    /// binding + M3 normal preservation all flowing through the real
+    /// loader and the real shell construction path).
+    #[test]
+    fn textured_uv_cube_renders_with_visible_color_variance_end_to_end() {
+        let Some(buf) = render_fixture_end_to_end("textured_uv_cube.glb") else {
+            return;
+        };
+        let s = scan_central_row(&buf);
+        assert!(
+            s.cube_pixel_count > 8,
+            "expected central row to hit the textured cube at multiple pixels; got {}",
+            s.cube_pixel_count
+        );
+        let red_spread = i32::from(s.max_r) - i32::from(s.min_r);
+        let blue_spread = i32::from(s.max_b) - i32::from(s.min_b);
+        assert!(
+            red_spread > 50 || blue_spread > 50,
+            "textured_uv_cube.glb end-to-end must show per-fragment color variance \
+             (UV sampling + texture binding active); \
+             cube_pixels={} red_spread={red_spread} blue_spread={blue_spread} \
+             red=[{}, {}] blue=[{}, {}]",
+            s.cube_pixel_count,
+            s.min_r,
+            s.max_r,
+            s.min_b,
+            s.max_b
+        );
+    }
+
+    /// Regression spot-check for the untextured base_color path:
+    /// cube.glb (`base_color = [0.4, 0.6, 0.8, 1.0]`, no texture)
+    /// renders with blue-dominant on-cube pixels. Verifies the
+    /// dispatch-K base_color tint reaches the GPU when no texture is
+    /// bound (1×1 placeholder path).
+    #[test]
+    fn cube_glb_renders_lit_blue_distinct_from_background_end_to_end() {
+        let Some(buf) = render_fixture_end_to_end("cube.glb") else {
+            return;
+        };
+        let s = scan_central_row(&buf);
+        assert!(
+            s.cube_pixel_count > 8,
+            "expected central row to hit the cube at multiple pixels; got {}",
+            s.cube_pixel_count
+        );
+        // base_color = [0.4, 0.6, 0.8, 1.0] (blue-dominant). After
+        // Lambert+Phong shading the channel ordering survives:
+        // avg_b > avg_g > avg_r by a comfortable margin.
+        let avg_r = s.avg_r();
+        let avg_g = s.avg_g();
+        let avg_b = s.avg_b();
+        assert!(
+            avg_b > avg_g && avg_g > avg_r,
+            "cube.glb end-to-end must show blue-dominant on-cube pixels matching \
+             base_color = [0.4, 0.6, 0.8, 1.0]; got avg_rgb=({avg_r}, {avg_g}, {avg_b}) \
+             cube_pixels={}",
+            s.cube_pixel_count
+        );
+        // Additional sanity: the blue channel should clear the
+        // background's blue baseline by a wide margin (no driver
+        // ambiguity).
+        assert!(
+            i32::try_from(avg_b).unwrap_or(0) - BG_B > 30,
+            "cube.glb on-cube blue must clear background by >30 bytes; \
+             got avg_b={avg_b} background_b={BG_B}"
+        );
+    }
+
+    /// Regression spot-check for the L+K combined path: pbr_material.
+    /// glb has `base_color = [0.97, 0.86, 0.32, 1.0]` (gold) AND a
+    /// 1×1 white placeholder texture (from dispatch L's real-PNG
+    /// synthetic). Final tint = white_texture × gold_base_color =
+    /// gold. Asserts on-cube pixels show gold dominance (red and
+    /// green > blue, red ≈ green within tolerance).
+    #[test]
+    fn pbr_material_glb_renders_lit_gold_distinct_from_background_end_to_end() {
+        let Some(buf) = render_fixture_end_to_end("pbr_material.glb") else {
+            return;
+        };
+        let s = scan_central_row(&buf);
+        assert!(
+            s.cube_pixel_count > 8,
+            "expected central row to hit the pbr-material cube at multiple pixels; got {}",
+            s.cube_pixel_count
+        );
+        let avg_r = s.avg_r();
+        let avg_g = s.avg_g();
+        let avg_b = s.avg_b();
+        // Gold = [0.97, 0.86, 0.32]: avg_r > avg_b AND avg_g > avg_b
+        // by a comfortable margin.
+        assert!(
+            avg_r > avg_b && avg_g > avg_b,
+            "pbr_material.glb end-to-end must show gold-dominant on-cube pixels \
+             matching base_color = [0.97, 0.86, 0.32, 1.0]; \
+             got avg_rgb=({avg_r}, {avg_g}, {avg_b}) cube_pixels={}",
+            s.cube_pixel_count
+        );
+        // avg_r should clear avg_b by a substantial margin — gold
+        // has 65 bytes more red than blue at full intensity, and
+        // Phong shading preserves the ordering.
+        let r_minus_b = i32::try_from(avg_r).unwrap_or(0) - i32::try_from(avg_b).unwrap_or(0);
+        assert!(
+            r_minus_b > 30,
+            "pbr_material.glb avg_r should exceed avg_b by >30 bytes; \
+             got avg_r={avg_r} avg_b={avg_b} (delta={r_minus_b})"
+        );
+    }
+
+    // -----------------------------------------------------------------------
     // Dispatch M3 — normal-matrix baking + input-normal propagation tests
     // -----------------------------------------------------------------------
 

@@ -4404,10 +4404,12 @@ dependencies = [
  "rge-cad-core",
  "rge-cad-projection",
  "rge-editor-shell",
+ "rge-gfx",
  "rge-io-gltf",
  "rge-kernel-ecs",
  "tracing",
  "tracing-subscriber",
+ "wgpu",
  "winit",
 ]
 

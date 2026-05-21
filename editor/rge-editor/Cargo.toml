@@ -36,5 +36,22 @@ winit               = { workspace = true }
 tracing             = { workspace = true }
 tracing-subscriber  = { workspace = true }
 
+[dev-dependencies]
+# Dispatch N2 — enable editor-shell's `test-harness` feature for
+# `cargo test -p rge-editor` only. Production `cargo build` uses the
+# regular dep without the feature, keeping the bin's compile unit
+# free of visual-test-harness symbols. Cargo unifies the regular dep
+# + dev-dep entries during test compilation; the harness module
+# becomes visible to the `#[cfg(test)] mod tests` block where the
+# end-to-end GLB tests live.
+rge-editor-shell = { path = "../../crates/editor-shell", features = ["test-harness"] }
+# rge-gfx + wgpu are transitively present via editor-shell at all
+# times, but the dispatch-N2 tests in main.rs name `rge_gfx::
+# ReadbackBuffer` and `wgpu::TextureFormat` directly. Adding them as
+# dev-deps surfaces those names in the test compile unit without
+# affecting the bin's regular dep tree.
+rge-gfx          = { path = "../../crates/gfx" }
+wgpu             = { workspace = true }
+
 [lints]
 workspace = true

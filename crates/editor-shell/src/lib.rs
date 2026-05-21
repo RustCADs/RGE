@@ -58,6 +58,8 @@ pub mod time_scale;
 pub mod viewport;
 #[cfg(test)]
 mod visual_smoke;
+#[cfg(any(test, feature = "test-harness"))]
+pub mod visual_test_harness;
 pub mod world;
 
 pub use camera::{pick_face_at, CameraView, EditorCameraState};
