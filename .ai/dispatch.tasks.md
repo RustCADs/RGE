@@ -60,9 +60,18 @@ is the only safeguard against selector drift.
    `glb_source_path` file. Loader stays in `rge-editor`; no
    `editor-shell -> io-gltf` edge. No asset-store integration, no kernel
    cavity fill, no new crate — fits inside `rge-editor` (binary) plus a
-   tiny `editor-shell` watcher hook field if needed. Done-criterion: a
-   manual smoke + one integration test that triggers a watcher event on a
-   tempdir GLB and verifies `handle_asset_reload` fires.
+   tiny `editor-shell` watcher hook field if needed.
+
+   **Done-criterion**: Automatic reload is only a producer of reload
+   requests. The watcher MUST call `handle_asset_reload` for all reload
+   semantics: Editing-state gate, failure retention, atomic
+   render-asset swap, and warn-log. The watcher MUST NOT mutate render
+   assets directly or duplicate reload logic. Watcher responsibilities
+   are limited to: observe filesystem events, debounce, filter to
+   `glb_source_path`, and enqueue/trigger the existing handler.
+   Failure-mode test: malformed-bytes write -> warn-logged Err,
+   previous frame retained, and watcher remains live for the next
+   valid write.
 
 2. **Add a smooth-normal glTF fixture + extend visual acceptance for M3.**
    New io-gltf test fixture where the `NORMAL` accessor encodes per-vertex
