@@ -378,7 +378,7 @@ is the only safeguard against selector drift.
    adapter is unreachable from the editor binary without explicit
    caller opt-in.
 
-6. **Add negative-test coverage for `AssetStoreCache::try_insert_*` failure behavior.**
+6. **[DONE 2026-05-22 via PR #97 / commit `8879ac3`] Add negative-test coverage for `AssetStoreCache::try_insert_*` failure behavior.**
    The #94 adapter
    (`crates/io-gltf/src/asset_store_cache.rs`) introduced a fallible
    `try_insert_*` family (mesh / material / animation / skeleton /
