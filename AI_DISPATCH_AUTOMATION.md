@@ -32,6 +32,7 @@ runs.
 14. Known gotchas & fixes (read this before porting)
 15. Porting to another project
 16. Operational notes
+17. Six-task arc retrospective (2026-05-22)
 
 ---
 
@@ -876,6 +877,129 @@ canonical verify gate.
 - **Resuming:** once a dispatch has an approved + finalized TASK, re-run with
   `-ResumeApprovedTask` to (re-)run only the execution phase without
   re-planning.
+
+## 17. Six-task arc retrospective (2026-05-22)
+
+A six-task arc through `Invoke-AiDispatchAuto.ps1` ran from
+2026-05-21 to 2026-05-22 to validate the autonomous loop across
+distinct task shapes. This appendix records what landed, what
+doctrine changed because of failures, and the current operating
+policy. It is not a status page — read §14 for the
+mechanically-enforced gotchas the arc fed back into.
+
+### 17.1 The arc
+
+| # | Task shape                       | Issue       | PR  | Outcome                                  |
+|---|----------------------------------|-------------|-----|------------------------------------------|
+| 1 | New feature (watcher in editor)  | #85         | #86 | salvaged — infra fixes extracted         |
+| 2 | Test fixture + visual assertion  | #87         | #88 | clean                                    |
+| 3 | Test-only regression coverage    | #89         | #90 | clean                                    |
+| 4 | Read-only architectural audit    | #91 → #92   | #93 | salvaged — scope-preserving halt added   |
+| 5 | Production-source adapter        | #94         | #95 | clean — first source-code dispatch       |
+| 6 | Test-only follow-up coverage     | #96         | #97 | clean                                    |
+
+Task #4 first fired as ISSUE-91 and was salvaged after the
+orchestrator's verify gate caught an unrelated workspace test
+failure that the auto-routed CORRECTION packet would have expanded
+into source edits. Audit content was re-filed and landed as
+ISSUE-92.
+
+### 17.2 Doctrine that changed because of failures
+
+Three lessons are encoded as mechanical gotchas in §14 — read
+those for full reproduction steps. Operational summary:
+
+- **§14.8 — salvage requires removing `ai-auto`.** Title rename
+  alone is insufficient; the selector's "already filed" list is
+  built from `gh issue list --label ai-auto --state all`. When
+  salvaging an autonomous issue you MUST scrub
+  `ai-auto` + `ai-dispatch-failed` + `ai-dispatch-retry`.
+  Discovered on the #91 → #92 re-arm.
+
+- **§14.9 — GPU test serialization.** Test crates that build real
+  `wgpu` resources need a per-binary `test_lock::guard()` mutex
+  with poisoned-recovery; multiple `GfxContext` instances tearing
+  down concurrently triggers Windows `STATUS_ACCESS_VIOLATION`
+  in post-test cleanup. Reference impls live at
+  `editor/rge-editor/src/main.rs::test_lock` and
+  `crates/gfx/src/lib.rs::test_lock`. Discovered during the
+  ISSUE-91 verify gate; the missing guard is what blocked the
+  original task #4 from passing canonical verify.
+
+- **Scope-preserving halt clause for read-only audits.** The
+  orchestrator's canonical verify gate runs even on read-only
+  audits. If verify fails on a target OUTSIDE the audit scope
+  and the auto-routed CORRECTION asks the executor to fix it,
+  the executor MUST halt with `NEEDS_HUMAN` rather than execute
+  the correction. The clause lives in task #4's brief entry in
+  `.ai/dispatch.tasks.md`; precedent (#91 → #92) is documented
+  inline there.
+
+Plus two infra fixes that pre-dated the arc but were validated
+across it: PS 5.1 single-item array unrolling (`return ,$items`
+in `Get-IssuesJson` of `Invoke-AiDispatchAuto.ps1`), and the
+GlbWatcher bare-relative-path bug (`Path::parent() -> Some("")`
+on a filename without a directory prefix).
+
+### 17.3 What each task shape demonstrated
+
+Treat this as the prior for what to expect on the next dispatch
+of the same shape, not as a celebration.
+
+- **Feature + new dep + cross-crate plumbing (#1):** the loop
+  can carry a small feature through plan / execute / verify, but
+  surface-level bugs in the substrate (path handling, async
+  watcher) only surface under salvage, not under the loop's own
+  verify gate. Treat anything novel as a draft that needs
+  reviewer eyes.
+- **Fixture-binary + visual assertion (#2):** fixture-path
+  pinning in the brief (exact filename, not just directory) is
+  necessary; otherwise the selector substitutes a shape it finds
+  easier to generate (cube/quad) and the assertion semantics
+  break by construction.
+- **Test-only regression (#3):** smallest reliable task shape.
+  Clean across all phases without special doctrine.
+- **Read-only audit (#4):** lands cleanly only with the
+  scope-preserving halt clause above. Without it, the verify
+  gate becomes a corrupting force on intent.
+- **Production source (#5):** validated end-to-end in `branch`
+  mode. The opt-in adapter pattern + per-task carve-out for a
+  single dep edge held. First source dispatch the loop carried
+  without salvage; n=1 — not yet a sample size that justifies
+  relaxing policy.
+- **Test-only follow-up to source (#6):** same code area as #5,
+  zero Cargo churn, clean across all phases. Confirms a finished
+  source dispatch can be safely followed by tightening tests in
+  the same file without re-opening adapter design.
+
+### 17.4 Current operating policy
+
+- **`-PublishMode branch` remains the default for production
+  source work.** `-PublishMode main` is reserved for docs and
+  test-only tasks, and only after a dry-run confirms the issue
+  body carries the right hard gates. Production source stays on
+  `branch` until more source dispatches pass review cleanly —
+  n=1 (#94/#95) is not enough.
+- **Verbatim review-gate strings are mandatory** for any task
+  whose scope is bounded by named files, named constants, or
+  named code shapes. The selector copies them into the issue
+  body character-for-character; a packet that lacks any one of
+  them is bounced at review without further reading. Pattern
+  examples live in `.ai/dispatch.tasks.md` (tasks #1–#6 entries
+  all carry them).
+- **One task per dispatch, not a batch.** `-MaxAutonomousTasks`
+  is raised one at a time, not in bulk. Each task gets a dry-run
+  review against an explicit gate checklist before the real run.
+- **The push / PR / review / merge path is human-owned.** The
+  autonomous loop produces a passing branch with
+  `commit_readiness: ready_for_publish`; the human reviews the
+  diff against the brief, pushes the branch, opens the PR, and
+  rebase-merges for linear history. The orchestrator itself
+  does not push.
+- **Brief stays minimal.** `.ai/dispatch.tasks.md` holds only
+  pending tasks plus DONE markers for the consumed ones; do
+  not seed a new task in the same commit as a retrospective or
+  a doctrine update. Mixing them muddles the audit trail.
 
 ---
 
