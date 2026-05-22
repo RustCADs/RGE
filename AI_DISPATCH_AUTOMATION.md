@@ -827,6 +827,24 @@ resources in unit/integration tests MUST follow this pattern, or
 the intermittent access violation will re-emerge under the
 canonical verify gate.
 
+### 14.10 `EXEC_STATUS: blocked` is terminal, not retryable
+
+**Symptom:** a read-only audit or scope-fenced task correctly halts on a
+task-defined boundary (`EXEC_STATUS: blocked`), but the queue treats the
+non-zero loop exit like an accidental execution failure and re-queues the
+same issue for retry.
+
+**Cause:** the inner dispatch loop must exit non-zero for blocked execution
+because no verification or Codex control review may run after a halt
+condition. The queue used to look only at the loop exit code, so it could
+not distinguish an intentional halt from a broken executor run.
+
+**Fix:** `Invoke-AiDispatchQueue.ps1` reads the newest
+`.ai/dispatch-<ID>/claude.execute.round<N>.md` marker and treats
+`EXEC_STATUS: blocked` as terminal human-review work. The branch is still
+committed locally for inspection, but the issue is not automatically
+retried. Accidental `failed` executions remain eligible for the one retry.
+
 ---
 
 ## 15. Porting to another project

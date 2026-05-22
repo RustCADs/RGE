@@ -311,6 +311,53 @@ function Get-ControlVerdict {
     return 'unknown'
 }
 
+function Get-ExecutionStatus {
+    # Claude's execute wrapper writes EXEC_STATUS into claude.execute.round<N>.md.
+    # If that marker is absent, mirror the dispatch loop's fallback to the
+    # canonical EXEC packet footer. A deliberate "blocked" status means a halt
+    # condition fired and should not be retried as if it were an accidental
+    # execution failure.
+    param([string]$RunDir, [string]$DispatchId)
+    $exec = Get-NewestRoundFile -RunDir $RunDir -Filter 'claude.execute.round*.md'
+    if ($exec) {
+        try {
+            $marker = Select-String -LiteralPath $exec.FullName -Pattern '^EXEC_STATUS:\s*(\S+)\s*$' -ErrorAction Stop |
+                Select-Object -Last 1
+            if ($marker -and $marker.Matches.Count -gt 0) {
+                return [string]$marker.Matches[0].Groups[1].Value
+            }
+        } catch {
+            # Fall through to the canonical packet footer below.
+        }
+    }
+
+    if ($DispatchId) {
+        $handoffDir = Join-Path $script:RepoRoot 'ai_handoffs'
+        $packet = Get-ChildItem -LiteralPath $handoffDir -File -Filter "$DispatchId`_EXEC_*.md" -ErrorAction SilentlyContinue |
+            Sort-Object Name |
+            Select-Object -Last 1
+        if ($packet) {
+            try {
+                $text = Get-Content -Raw -LiteralPath $packet.FullName
+                $handoff = [regex]::Match($text, '(?m)^HANDOFF_STATUS:\s*(\S+)\s*$').Groups[1].Value
+                $packetStatus = [regex]::Match($text, '(?m)^STATUS:\s*(\S+)\s*$').Groups[1].Value
+                $exitRaw = [regex]::Match($text, '(?m)^EXIT_CODE:\s*(-?\d+)\s*$').Groups[1].Value
+                $handoffNorm = if ($handoff) { $handoff.ToUpperInvariant() } else { '' }
+                $packetStatusNorm = if ($packetStatus) { $packetStatus.ToUpperInvariant() } else { '' }
+                $exitCode = $null
+                if ($exitRaw) { $exitCode = [int]$exitRaw }
+
+                if ($handoffNorm -eq 'COMPLETE' -and $exitCode -eq 0) { return 'executed' }
+                if ($handoffNorm -in @('BLOCKED', 'NEEDS_HUMAN') -or $packetStatusNorm -in @('BLOCKED', 'NEEDS_HUMAN')) { return 'blocked' }
+                if ($handoffNorm -eq 'FAILED' -or $packetStatusNorm -eq 'FAILED' -or ($null -ne $exitCode -and $exitCode -ne 0)) { return 'failed' }
+            } catch {
+                return 'unknown'
+            }
+        }
+    }
+    return 'unknown'
+}
+
 function Get-ProcessStartTicks {
     param([int]$ProcessId)
     if ($ProcessId -le 0) { return [long]0 }
@@ -799,6 +846,7 @@ try {
     # writes (schema-validated), not by scraping loop stdout. Newest round wins.
     $runDir = Join-Path $script:RepoRoot (Join-Path '.ai' "dispatch-$id")
     $verdict = Get-ControlVerdict -RunDir $runDir
+    $execStatus = Get-ExecutionStatus -RunDir $runDir -DispatchId $id
 
     # --- Write detailed audit log, then commit the branch ------------------
 
@@ -933,9 +981,12 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
     } else { '(no loop output captured)' }
     $runFailed = ($loopExit -ne 0 -or $publishFailed)
     # A publish-pipeline failure is terminal, not retryable: re-running it
-    # risks the diverged-main corruption. Only dispatch-execution failures
-    # (non-zero loop exit) get the one automatic retry.
-    $willRetry = ($runFailed -and -not $isRetry -and -not $publishHardFailed)
+    # risks the diverged-main corruption. A deliberate EXEC_STATUS=blocked is
+    # also terminal: the executor hit a task-defined halt condition, so a retry
+    # would just ask the next run to "fix" a scope boundary it was told to obey.
+    # Only accidental dispatch-execution failures get the one automatic retry.
+    $runBlocked = ($execStatus -eq 'blocked')
+    $willRetry = ($runFailed -and -not $runBlocked -and -not $isRetry -and -not $publishHardFailed)
     if ($willRetry -and $committed) {
         # First failure of a retry-eligible issue: archive the failed branch
         # (it holds the audit-log commit) under .attemptN so the retry can
@@ -952,6 +1003,8 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
     }
     $statusIcon = if (-not $runFailed) {
         'succeeded'
+    } elseif ($runBlocked) {
+        'BLOCKED'
     } elseif ($willRetry) {
         'FAILED (auto-retry queued)'
     } else {
@@ -961,6 +1014,8 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
         "`n- Re-queued for one automatic retry; the next run gets the prior-attempt feedback."
     } elseif ($isRetry -and $runFailed) {
         "`n- This was the retry attempt; the issue is now marked ``$failLabel`` for human review."
+    } elseif ($runBlocked -and $runFailed) {
+        "`n- Executor reported ``EXEC_STATUS: blocked``; no automatic retry was queued."
     } else {
         ''
     }
