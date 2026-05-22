@@ -96,13 +96,22 @@ is the only safeguard against selector drift.
    the central-row pixel distribution differs by more than driver noise.
    Closes the M3 visual evidence gap that logs alone don't certify.
 
-   **Fixture target**: a new binary GLB committed at
-   `crates/io-gltf/tests/fixtures/smooth_normal_quad.glb` — or a
-   similarly named smooth-normal fixture (e.g.
-   `smooth_normal_sphere.glb`, `smooth_normal_cube.glb`) under
-   `crates/io-gltf/tests/fixtures/`. The selector MUST cite this
-   exact directory in the filed issue body; the leaf filename is the
-   executor's choice from the examples above.
+   **Fixture target**: the fixture MUST be committed at the exact
+   path `crates/io-gltf/tests/fixtures/smooth_normal_sphere.glb`.
+   The selector MUST cite this exact path — including the leaf
+   filename `smooth_normal_sphere.glb` — in the filed issue body.
+   No leaf substitution: not `smooth_normal_cube.glb`, not
+   `smooth_normal_quad.glb`, not any other name. The path is part
+   of the review gate, not an executor choice. The fixture MUST use
+   smooth per-vertex normals that differ from triangle face
+   normals; a planar quad is not acceptable, because every vertex's
+   smooth-averaged normal would equal the face normal and the M3
+   visible-difference threshold assertion would fail by
+   construction. A UV-sphere is the canonical shape — imported
+   vertex normals approximate radial smooth normals, while
+   `None`/flat recompute forces per-triangle face normals, giving
+   the largest signal for the central-row pixel-distribution
+   delta.
 
    **Verbatim review-gate strings** — the autonomous selector MUST
    copy these three strings, character-for-character, into the filed
