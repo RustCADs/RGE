@@ -414,6 +414,7 @@ mod tests {
 
     #[test]
     fn new_with_2x2_white_texture() {
+        let _gpu_lock = crate::test_lock::guard();
         let ctx = ctx_or_skip!();
         let mat = Material::new(&ctx, &white_2x2(), 2, 2).expect("material");
         let _bg = mat.bind_group();
@@ -422,6 +423,7 @@ mod tests {
 
     #[test]
     fn data_length_mismatch_errors() {
+        let _gpu_lock = crate::test_lock::guard();
         let ctx = ctx_or_skip!();
         // 2x2 needs 16 bytes; supply 8.
         let err = Material::new(&ctx, &[0u8; 8], 2, 2).unwrap_err();
@@ -436,6 +438,7 @@ mod tests {
 
     #[test]
     fn update_color_does_not_invalidate_bind_group() {
+        let _gpu_lock = crate::test_lock::guard();
         let ctx = ctx_or_skip!();
         let mat = Material::new(&ctx, &white_2x2(), 2, 2).expect("material");
         mat.update_color(

@@ -178,6 +178,7 @@ mod tests {
 
     #[test]
     fn new_succeeds() {
+        let _gpu_lock = crate::test_lock::guard();
         let ctx = ctx_or_skip!();
         let light = DirectionalLight::new(&ctx).expect("light");
         let _bg = light.bind_group();
@@ -186,6 +187,7 @@ mod tests {
 
     #[test]
     fn update_with_normalized_direction() {
+        let _gpu_lock = crate::test_lock::guard();
         let ctx = ctx_or_skip!();
         let light = DirectionalLight::new(&ctx).expect("light");
         let dir = glam::Vec3::new(0.3, -1.0, 0.2).normalize();
@@ -198,6 +200,7 @@ mod tests {
 
     #[test]
     fn bind_group_layout_is_uniform_at_binding_0() {
+        let _gpu_lock = crate::test_lock::guard();
         let ctx = ctx_or_skip!();
         let light = DirectionalLight::new(&ctx).expect("light");
         // Verify the layout is usable in a pipeline layout (proves binding 0

@@ -186,6 +186,7 @@ mod tests {
     // non-overlapping → same aliasing group. Both resources share one Arc.
     #[test]
     fn build_resource_map_dedup_single_group_returns_arc_equal_handles() {
+        let _gpu_lock = crate::test_lock::guard();
         let ctx = ctx_or_skip!();
         // a writes R1; b reads R1 + writes R3 (ends R1 lifetime). c reads
         // R3 + writes R2; d reads R2.
@@ -234,6 +235,7 @@ mod tests {
     // [0,1] → MUST occupy distinct groups per `compile.rs` rules.
     #[test]
     fn build_resource_map_distinct_groups_get_distinct_arcs() {
+        let _gpu_lock = crate::test_lock::guard();
         let ctx = ctx_or_skip!();
         let compiled = build_compiled(vec![
             ("a", vec![], vec![(1, tex_desc()), (2, tex_desc())]),
@@ -273,6 +275,7 @@ mod tests {
     // The two groups are different classes; each routes to its own map.
     #[test]
     fn build_resource_map_mixed_texture_and_buffer_routes_correctly() {
+        let _gpu_lock = crate::test_lock::guard();
         let ctx = ctx_or_skip!();
         let compiled = build_compiled(vec![
             ("a", vec![], vec![(1, tex_desc()), (2, buf_desc())]),

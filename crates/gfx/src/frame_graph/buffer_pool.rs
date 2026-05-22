@@ -202,6 +202,7 @@ mod tests {
     // the pool retained one Arc in active; caller holds the other).
     #[test]
     fn acquire_with_real_device_returns_buffer() {
+        let _gpu_lock = crate::test_lock::guard();
         let ctx = ctx_or_skip!();
         let mut pool = BufferPool::new();
         let arc = pool.acquire(ctx.device(), &sample_descriptor(), AliasingGroupId(0));
@@ -216,6 +217,7 @@ mod tests {
     // free_list). acquire same key → pops X from slot 0's free_list.
     #[test]
     fn acquire_then_full_ring_returns_buffer_to_free_list() {
+        let _gpu_lock = crate::test_lock::guard();
         let ctx = ctx_or_skip!();
         let mut pool = BufferPool::new();
         let desc = sample_descriptor();
@@ -238,6 +240,7 @@ mod tests {
     // per ADR-118 D3 (key includes the group id).
     #[test]
     fn different_groups_with_same_descriptor_get_distinct_buffers() {
+        let _gpu_lock = crate::test_lock::guard();
         let ctx = ctx_or_skip!();
         let mut pool = BufferPool::new();
         let desc = sample_descriptor();
@@ -254,6 +257,7 @@ mod tests {
     // distinct buffers.
     #[test]
     fn different_descriptors_in_same_group_get_distinct_buffers() {
+        let _gpu_lock = crate::test_lock::guard();
         let ctx = ctx_or_skip!();
         let mut pool = BufferPool::new();
         let small = sample_descriptor();

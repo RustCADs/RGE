@@ -125,6 +125,7 @@ mod tests {
 
     #[test]
     fn zero_size_returns_invalid_size_error() {
+        let _gpu_lock = crate::test_lock::guard();
         let ctx = ctx_or_skip!();
         let err = HeadlessTarget::new(&ctx, 0, 0).unwrap_err();
         assert!(matches!(err, TargetError::InvalidSize(0, 0)));
@@ -132,6 +133,7 @@ mod tests {
 
     #[test]
     fn zero_width_returns_invalid_size_error() {
+        let _gpu_lock = crate::test_lock::guard();
         let ctx = ctx_or_skip!();
         let err = HeadlessTarget::new(&ctx, 0, 64).unwrap_err();
         assert!(matches!(err, TargetError::InvalidSize(0, 64)));
@@ -139,6 +141,7 @@ mod tests {
 
     #[test]
     fn zero_height_returns_invalid_size_error() {
+        let _gpu_lock = crate::test_lock::guard();
         let ctx = ctx_or_skip!();
         let err = HeadlessTarget::new(&ctx, 64, 0).unwrap_err();
         assert!(matches!(err, TargetError::InvalidSize(64, 0)));
@@ -146,6 +149,7 @@ mod tests {
 
     #[test]
     fn oversized_returns_invalid_size_error() {
+        let _gpu_lock = crate::test_lock::guard();
         let ctx = ctx_or_skip!();
         let err = HeadlessTarget::new(&ctx, 9000, 9000).unwrap_err();
         assert!(matches!(err, TargetError::InvalidSize(9000, 9000)));
@@ -153,6 +157,7 @@ mod tests {
 
     #[test]
     fn dimensions_round_trip() {
+        let _gpu_lock = crate::test_lock::guard();
         let ctx = ctx_or_skip!();
         let target = HeadlessTarget::new(&ctx, 128, 64).expect("target");
         assert_eq!(target.dimensions(), (128, 64));
@@ -160,6 +165,7 @@ mod tests {
 
     #[test]
     fn format_is_rgba8_unorm() {
+        let _gpu_lock = crate::test_lock::guard();
         let ctx = ctx_or_skip!();
         let target = HeadlessTarget::new(&ctx, 64, 64).expect("target");
         assert_eq!(target.format(), wgpu::TextureFormat::Rgba8Unorm);

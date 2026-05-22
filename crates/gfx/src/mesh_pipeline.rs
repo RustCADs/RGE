@@ -335,6 +335,7 @@ mod tests {
 
     #[test]
     fn cached_constructor_reuses_pipeline_allocation() {
+        let _gpu_lock = crate::test_lock::guard();
         let ctx = ctx_or_skip!();
         let transform = Transform::new(&ctx).expect("transform");
         let mut cache = PipelineCache::<wgpu::RenderPipeline>::new();
@@ -363,6 +364,7 @@ mod tests {
 
     #[test]
     fn cached_constructor_distinct_format_creates_distinct_entry() {
+        let _gpu_lock = crate::test_lock::guard();
         let ctx = ctx_or_skip!();
         let transform = Transform::new(&ctx).expect("transform");
         let mut cache = PipelineCache::<wgpu::RenderPipeline>::new();

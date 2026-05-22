@@ -159,6 +159,7 @@ mod tests {
 
     #[test]
     fn vertex_buffer_empty_returns_error() {
+        let _gpu_lock = crate::test_lock::guard();
         let ctx = ctx_or_skip!();
         let result = VertexBuffer::new(&ctx, &[]);
         assert!(matches!(result, Err(BufferError::Empty)));
@@ -166,6 +167,7 @@ mod tests {
 
     #[test]
     fn index_buffer_empty_returns_error() {
+        let _gpu_lock = crate::test_lock::guard();
         let ctx = ctx_or_skip!();
         let result = IndexBuffer::new(&ctx, &[]);
         assert!(matches!(result, Err(BufferError::Empty)));
@@ -173,6 +175,7 @@ mod tests {
 
     #[test]
     fn index_format_is_uint32() {
+        let _gpu_lock = crate::test_lock::guard();
         let ctx = ctx_or_skip!();
         let ib = IndexBuffer::new(&ctx, &[0u32, 1, 2]).expect("index buffer");
         assert_eq!(ib.index_format(), wgpu::IndexFormat::Uint32);
@@ -180,6 +183,7 @@ mod tests {
 
     #[test]
     fn vertex_buffer_count_matches_input() {
+        let _gpu_lock = crate::test_lock::guard();
         let ctx = ctx_or_skip!();
         let verts = [
             Vertex::new([0.0, 0.0, 0.0], [1.0, 0.0, 0.0]),

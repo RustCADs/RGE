@@ -104,3 +104,46 @@ pub use target::{HeadlessTarget, TargetError};
 pub use transform::{Transform, TransformError};
 pub use vertex::Vertex;
 pub use vertex_lit::VertexLit;
+
+#[cfg(test)]
+pub(crate) mod test_lock {
+    //! Shared serialization guard for GPU/wgpu-bearing unit tests in this
+    //! library test binary.
+    //!
+    //! The canonical workspace verification gate (`cargo test --workspace
+    //! --all-targets --no-fail-fast -j 1`) intermittently abnormally
+    //! exited the `rge-gfx --lib` test binary with Windows
+    //! `STATUS_ACCESS_VIOLATION (0xc0000005)` AFTER all 180 visible tests
+    //! reported `ok`. The cargo test harness runs tests within one binary
+    //! on a thread pool, so multiple `#[test]` functions that build a
+    //! real `GfxContext` via `ctx_or_skip!()` were initialising and
+    //! tearing down their own `wgpu::Device` / `wgpu::Instance` instances
+    //! concurrently inside a single process. Concurrent device lifecycle
+    //! is the failure source -- the access violation surfaces in the
+    //! post-test teardown phase after the test results table has already
+    //! printed.
+    //!
+    //! Tests acquire this guard with
+    //! `let _gpu_lock = crate::test_lock::guard();` BEFORE invoking
+    //! `ctx_or_skip!()`. Because Rust drops local bindings in reverse
+    //! declaration order, the lock outlives the test's `GfxContext`,
+    //! serialising both init AND teardown across the entire test binary.
+    //!
+    //! Any test added later that calls `GfxContext::new_headless()`
+    //! (directly or via `ctx_or_skip!()`) MUST also acquire this guard,
+    //! or the access violation pattern will re-emerge.
+    //!
+    //! Mirrors the `GPU_TEST_LOCK` pattern in `editor/rge-editor/src/
+    //! main.rs` -- same root cause, same fix, scoped per test binary.
+
+    use std::sync::{Mutex, MutexGuard};
+
+    static GPU_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    /// Acquire the GPU-test serialization guard. Poisoned mutexes (a
+    /// prior panicking GPU test) are recovered so a single failure does
+    /// not deadlock the remaining GPU tests in this binary.
+    pub(crate) fn guard() -> MutexGuard<'static, ()> {
+        GPU_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner())
+    }
+}

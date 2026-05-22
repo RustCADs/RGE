@@ -92,6 +92,7 @@ mod tests {
 
     #[test]
     fn from_vertices_has_no_index_buffer() {
+        let _gpu_lock = crate::test_lock::guard();
         let ctx = ctx_or_skip!();
         let mesh = Mesh::from_vertices(&ctx, &sample_verts()).expect("mesh");
         assert!(mesh.index_buffer().is_none());
@@ -100,6 +101,7 @@ mod tests {
 
     #[test]
     fn from_indexed_has_both_buffers() {
+        let _gpu_lock = crate::test_lock::guard();
         let ctx = ctx_or_skip!();
         let indices = [0u32, 1, 2];
         let mesh = Mesh::from_indexed(&ctx, &sample_verts(), &indices).expect("mesh");
@@ -110,6 +112,7 @@ mod tests {
 
     #[test]
     fn from_vertices_empty_returns_error() {
+        let _gpu_lock = crate::test_lock::guard();
         let ctx = ctx_or_skip!();
         assert!(Mesh::from_vertices(&ctx, &[]).is_err());
     }

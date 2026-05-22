@@ -178,6 +178,7 @@ mod tests {
 
     #[test]
     fn new_succeeds() {
+        let _gpu_lock = crate::test_lock::guard();
         let ctx = ctx_or_skip!();
         let cam = Camera::new(&ctx).expect("camera");
         let _bg = cam.bind_group();
@@ -186,6 +187,7 @@ mod tests {
 
     #[test]
     fn update_does_not_invalidate_bind_group() {
+        let _gpu_lock = crate::test_lock::guard();
         let ctx = ctx_or_skip!();
         let cam = Camera::new(&ctx).expect("camera");
         // Update once with a perspective + identity model.
@@ -205,6 +207,7 @@ mod tests {
 
     #[test]
     fn bind_group_layout_is_uniform_at_binding_0() {
+        let _gpu_lock = crate::test_lock::guard();
         let ctx = ctx_or_skip!();
         let cam = Camera::new(&ctx).expect("camera");
         // We can't introspect the layout's entries directly via wgpu's public

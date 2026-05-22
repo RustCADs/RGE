@@ -157,6 +157,7 @@ mod tests {
 
     #[test]
     fn new_succeeds_and_returns_valid_bind_group() {
+        let _gpu_lock = crate::test_lock::guard();
         let ctx = ctx_or_skip!();
         let transform = Transform::new(&ctx).expect("transform");
         // Just checking that bind_group() returns a reference without panicking.
@@ -165,6 +166,7 @@ mod tests {
 
     #[test]
     fn update_does_not_invalidate_bind_group() {
+        let _gpu_lock = crate::test_lock::guard();
         let ctx = ctx_or_skip!();
         let transform = Transform::new(&ctx).expect("transform");
         transform.update(&ctx, glam::Mat4::IDENTITY);

@@ -846,6 +846,7 @@ mod tests {
 
     #[test]
     fn pipeline_compiles() {
+        let _gpu_lock = crate::test_lock::guard();
         let ctx = ctx_or_skip!();
         let camera = Camera::new(&ctx).expect("camera");
         let light = DirectionalLight::new(&ctx).expect("light");
@@ -863,6 +864,7 @@ mod tests {
 
     #[test]
     fn lit_white_quad_center_is_bright() {
+        let _gpu_lock = crate::test_lock::guard();
         let ctx = ctx_or_skip!();
         // Light traveling in -Z direction; quad normal +Z. Lambert max ≈ 1.0.
         let buf = render_lit_quad(
@@ -882,6 +884,7 @@ mod tests {
 
     #[test]
     fn backlit_quad_center_is_ambient_only() {
+        let _gpu_lock = crate::test_lock::guard();
         let ctx = ctx_or_skip!();
         // Light traveling in +Z direction; quad normal +Z; lambert clamps to 0.
         // Output ≈ ambient (0.1) × white * white_light = 0.1 → ~25/255.
@@ -902,6 +905,7 @@ mod tests {
 
     #[test]
     fn checker_texture_produces_two_colors_in_quad() {
+        let _gpu_lock = crate::test_lock::guard();
         let ctx = ctx_or_skip!();
         // Same lit setup; 2x2 checkerboard texture.  With AddressMode::Repeat
         // and FilterMode::Linear, the four texels span the quad — uv (0,0) is
@@ -944,6 +948,7 @@ mod tests {
 
     #[test]
     fn lit_white_quad_alpha_is_opaque() {
+        let _gpu_lock = crate::test_lock::guard();
         let ctx = ctx_or_skip!();
         let buf = render_lit_quad(
             &ctx,
@@ -959,6 +964,7 @@ mod tests {
 
     #[test]
     fn record_lit_pass_with_indexed_mesh_succeeds() {
+        let _gpu_lock = crate::test_lock::guard();
         let ctx = ctx_or_skip!();
         // Same six vertices, but expressed as 4 + index buffer.
         let bl = VertexLit::new([-1.0, -1.0, -2.0], [0.0, 0.0, 1.0], [0.0, 1.0]);
@@ -1044,6 +1050,7 @@ mod tests {
 
     #[test]
     fn from_render_mesh_creates_correct_vertex_count() {
+        let _gpu_lock = crate::test_lock::guard();
         let ctx = ctx_or_skip!();
         let mesh_in = unit_triangle_render_mesh();
         let lit_mesh = LitMesh::from_render_mesh(&ctx, &mesh_in).expect("from_render_mesh");
@@ -1146,6 +1153,7 @@ mod tests {
 
     #[test]
     fn from_render_mesh_returns_error_for_empty_input() {
+        let _gpu_lock = crate::test_lock::guard();
         let ctx = ctx_or_skip!();
         let empty_mesh = RenderMesh {
             positions: vec![],
@@ -1165,6 +1173,7 @@ mod tests {
 
     #[test]
     fn cached_constructor_reuses_pipeline_allocation() {
+        let _gpu_lock = crate::test_lock::guard();
         let ctx = ctx_or_skip!();
         let camera = Camera::new(&ctx).expect("camera");
         let light = DirectionalLight::new(&ctx).expect("light");
@@ -1199,6 +1208,7 @@ mod tests {
 
     #[test]
     fn cached_constructor_distinct_format_creates_distinct_entry() {
+        let _gpu_lock = crate::test_lock::guard();
         let ctx = ctx_or_skip!();
         let camera = Camera::new(&ctx).expect("camera");
         let light = DirectionalLight::new(&ctx).expect("light");
@@ -1244,6 +1254,7 @@ mod tests {
     /// cache slot).
     #[test]
     fn lit_mesh_pipeline_new_with_depth_none_matches_new_via_pso_cache() {
+        let _gpu_lock = crate::test_lock::guard();
         let ctx = ctx_or_skip!();
         let camera = Camera::new(&ctx).expect("camera");
         let light = DirectionalLight::new(&ctx).expect("light");
@@ -1283,6 +1294,7 @@ mod tests {
     /// vertex layout, color format)` triples.
     #[test]
     fn lit_mesh_pipeline_new_with_depth_some_produces_distinct_pso_cache_entry() {
+        let _gpu_lock = crate::test_lock::guard();
         let ctx = ctx_or_skip!();
         let camera = Camera::new(&ctx).expect("camera");
         let light = DirectionalLight::new(&ctx).expect("light");
@@ -1337,6 +1349,7 @@ mod tests {
     /// overlay grows the depth attachment.
     #[test]
     fn record_lit_mesh_pass_with_depth_attachment_succeeds() {
+        let _gpu_lock = crate::test_lock::guard();
         let ctx = ctx_or_skip!();
         let target = HeadlessTarget::new(&ctx, 64, 64).expect("target");
         let camera = Camera::new(&ctx).expect("camera");
