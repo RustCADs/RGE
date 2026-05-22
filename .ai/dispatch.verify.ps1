@@ -135,10 +135,18 @@ Invoke-Step -Label 'cargo deny check' -Exe 'cargo' -Arguments @('deny', 'check')
 # --- 4. Workspace tests (mirrors tests.yml) -- the slow steps --------------
 # --all-targets covers unit + integration tests; --doc covers doctests, which
 # --all-targets deliberately excludes. Both must pass for a green workspace.
+#
+# `-j 1`: Windows/MSVC linker OOMs under default parallelism on this
+# workspace (rustc and link.exe both exceed available memory when several
+# crates link simultaneously -- observed exit codes 0xc0000142 / 1102 /
+# STATUS_STACK_BUFFER_OVERRUN). Serialized workspace tests are slower
+# (~10-15 min) but deterministic for unattended dispatch; flaky parallel
+# linker crashes would otherwise fail this gate intermittently and block
+# every autonomous run.
 Invoke-Step -Label 'cargo test --workspace --all-targets' -Exe 'cargo' `
-    -Arguments @('test', '--workspace', '--all-targets', '--no-fail-fast')
+    -Arguments @('test', '--workspace', '--all-targets', '--no-fail-fast', '-j', '1')
 Invoke-Step -Label 'cargo test --workspace --doc' -Exe 'cargo' `
-    -Arguments @('test', '--workspace', '--doc', '--no-fail-fast')
+    -Arguments @('test', '--workspace', '--doc', '--no-fail-fast', '-j', '1')
 
 Write-Output ''
 Write-Output ('VERIFY OK: all {0} verification step(s) passed.' -f $script:StepIndex)
