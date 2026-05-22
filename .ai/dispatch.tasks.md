@@ -377,3 +377,122 @@ is the only safeguard against selector drift.
    default editor path remains on `MemoryCache` — the opt-in
    adapter is unreachable from the editor binary without explicit
    caller opt-in.
+
+6. **Add negative-test coverage for `AssetStoreCache::try_insert_*` failure behavior.**
+   The #94 adapter
+   (`crates/io-gltf/src/asset_store_cache.rs`) introduced a fallible
+   `try_insert_*` family (mesh / material / animation / skeleton /
+   image) that surfaces backing-cache failures as
+   `GltfError::Cache`. The existing test suite covers two members
+   (`try_insert_mesh_surfaces_backing_error_as_gltf_cache` and
+   `try_insert_image_surfaces_backing_error_as_gltf_cache`) plus
+   one `From<CacheError>` round-trip
+   (`cache_error_bad_asset_id_maps_to_gltf_cache_variant`). That
+   leaves three `try_insert_*` methods uncovered against backing
+   failure, the mirror-update-on-failure assertion only checked
+   for `try_insert_mesh`, and no test for the recovery path. Close
+   those gaps with one additional `#[cfg(test) mod tests` block in
+   the same file, using a deliberately-failing in-memory
+   `ByteCache` test double in the same shape as the existing
+   `FailingBacking` struct.
+
+   **Allowed file surface**:
+   - EDIT: `crates/io-gltf/src/asset_store_cache.rs` — additions
+     to the existing `#[cfg(test)] mod tests` block ONLY. No
+     changes outside that module.
+
+   **Files that MUST NOT be touched**:
+   - Anything OUTSIDE `crates/io-gltf/src/asset_store_cache.rs`
+     except the dispatch's own `ai_handoffs/` packet.
+   - Specifically: `crates/asset-store/**`, `crates/io-image/**`,
+     `editor/**`, `crates/editor-shell/**`, `crates/gfx/**`,
+     `crates/brep-render/**`, `kernel/**`, any other crate.
+   - `Cargo.toml`, `Cargo.lock`, workspace dependency
+     declarations, feature flags.
+   - The non-test code in `asset_store_cache.rs` itself — adapter
+     struct, `impl Cache`, `try_insert_*` bodies, canonical-byte
+     encoders, `From<CacheError> for GltfError`. ALL test-only
+     additions.
+   - Existing tests in the module. Add new tests; do not modify
+     or rename existing ones.
+
+   **Cargo.lock policy**: NO changes. This task adds zero new
+   dependencies; if Cargo.lock shows any diff at all, halt.
+
+   **Halt conditions**:
+   - The test plan requires touching production code in
+     `asset_store_cache.rs` (e.g. a "while I'm here, let me
+     refactor the encoder" — out of scope).
+   - The test plan requires a new dependency (e.g. `mockall`,
+     `pretty_assertions`). Out of scope; use plain
+     `assert!` / `assert_matches!` / `matches!` only.
+   - The test plan requires changes to `crates/asset-store/**`
+     (e.g. extending `CacheError` with a new variant). Out of
+     scope — re-use existing `CacheError::Io` /
+     `CacheError::BadAssetId` for failure simulation.
+   - AssetId-collision simulation is explicitly **out of scope**
+     for this task: collision semantics through the typed-handle
+     bridge are awkward to construct without API design work, and
+     a narrow negative-test task is not the place for that design
+     discussion. If the test plan requires forcing an AssetId
+     collision, halt with `NEEDS_HUMAN`.
+
+   **Verbatim review-gate strings** — the autonomous selector
+   MUST copy these six strings, character-for-character, into the
+   filed GitHub issue body. No paraphrasing, no substitution, no
+   reflowing. A packet that lacks any one of them verbatim is
+   bounced at review:
+
+   ```
+   MUST be test-only additions inside the existing #[cfg(test)] mod tests block of crates/io-gltf/src/asset_store_cache.rs
+   MUST NOT modify any file outside crates/io-gltf/src/asset_store_cache.rs (except the dispatch's own ai_handoffs/ packet)
+   MUST NOT add any new dependency or modify Cargo.toml / Cargo.lock
+   MUST add a try_insert_* negative test for each of the three currently-uncovered families (material, animation, skeleton)
+   MUST assert that the typed mirror is NOT updated when the backing write fails
+   MUST add a recovery test proving a subsequent successful write through the same adapter works after a prior failure
+   ```
+
+   **Done-criterion**:
+   - Three new `try_insert_<family>_surfaces_backing_error_as_gltf_cache`-style
+     tests for the currently-uncovered families: `material`,
+     `animation`, `skeleton`. Each test asserts (a) the call
+     returns `Err(GltfError::Cache(_))`, and (b) the
+     corresponding typed-mirror `HashMap` length stays at 0
+     after the failed insert.
+   - One recovery test (suggested name
+     `try_insert_recovers_after_prior_backing_failure`) that
+     uses a `ByteCache` test double whose failure mode is
+     switchable (e.g. a `Cell<bool>` / `AtomicBool` flag the
+     test toggles). The test:
+       1. Toggles the backing to fail; calls `try_insert_mesh`;
+          asserts `Err(GltfError::Cache(_))` and
+          `adapter.meshes.len() == 0`.
+       2. Toggles the backing to succeed; calls `try_insert_mesh`
+          on the same `MeshAsset`; asserts `Ok(handle)` and
+          `adapter.meshes.len() == 1`.
+       3. Asserts the returned handle equals the asset's
+          `content_hash()` digest (the canonical-bytes contract
+          documented in `asset_store_cache.rs`).
+     The recovery test proves the adapter is not left in a
+     poisoned state by a prior backing failure — every
+     `try_insert_*` is independently transactional w.r.t. the
+     typed mirror.
+   - Verification gates that MUST pass:
+     - `cargo test -p rge-io-gltf --lib --no-fail-fast` → exit 0
+     - `cargo run -q -p rge-tool-architecture-lints -- all` →
+       exit 0
+     - `.ai/dispatch.verify.ps1` → all 6 steps PASS, exit 0
+   - Diff stat: a single file changed
+     (`crates/io-gltf/src/asset_store_cache.rs`) plus the
+     dispatch's own `ai_handoffs/` packet. Zero Cargo.lock
+     changes.
+
+   **Why this is the right next task** (context for the
+   reviewer, NOT required in the filed issue body): #94 was the
+   first real production-source autonomous dispatch and it
+   landed cleanly. Task #6 stays inside the SAME file the loop
+   just successfully edited and stress-tests the new code's
+   robustness without expanding scope — the safest possible
+   next dispatch, matching the post-#94 readiness posture (no
+   `-PublishMode main` yet; selective use only for
+   docs/test-only or very narrow source tasks).
