@@ -96,6 +96,40 @@ is the only safeguard against selector drift.
    the central-row pixel distribution differs by more than driver noise.
    Closes the M3 visual evidence gap that logs alone don't certify.
 
+   **Fixture target**: a new binary GLB committed at
+   `crates/io-gltf/tests/fixtures/smooth_normal_quad.glb` — or a
+   similarly named smooth-normal fixture (e.g.
+   `smooth_normal_sphere.glb`, `smooth_normal_cube.glb`) under
+   `crates/io-gltf/tests/fixtures/`. The selector MUST cite this
+   exact directory in the filed issue body; the leaf filename is the
+   executor's choice from the examples above.
+
+   **Verbatim review-gate strings** — the autonomous selector MUST
+   copy these three strings, character-for-character, into the filed
+   GitHub issue body. No paraphrasing, no substitution, no reflowing
+   into different sentence shapes. The strings are the human review
+   gate; a packet that lacks any one of them verbatim is bounced at
+   review without further reading:
+
+   ```
+   MUST keep scope to fixture/test coverage only
+   MUST NOT change shaders, render pipelines, material APIs, asset-store, or kernel crates
+   MUST add a measurable pixel/readback assertion, not a visual-only claim
+   ```
+
+   **Done-criterion**: One new fixture under
+   `crates/io-gltf/tests/fixtures/` whose imported `NORMAL` accessor
+   produces shading meaningfully different from `from_buffers`'s
+   flat-recompute output. One new pixel/readback test (in
+   `editor-shell::visual_smoke` or `rge-editor::tests`) that renders
+   the fixture twice — once with imported normals (M3 path), once
+   with `None` (flat recompute) — and asserts a numeric central-row
+   pixel-distribution threshold committed in the test source (e.g.
+   mean per-channel delta or pixel-count delta above a named
+   `const` threshold, not a prose claim). Scope strictly fixture +
+   test only: no changes to shaders, render pipelines,
+   `Material`/render API, `rge-asset-store`, or any `kernel/` crate.
+
 3. **Add malformed-GLB reload regression coverage.**
    End-to-end test in `rge-editor::tests` parallel to
    `r_key_reload_on_missing_file_preserves_prior_frame`: start from a
