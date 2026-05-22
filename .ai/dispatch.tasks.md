@@ -496,3 +496,123 @@ is the only safeguard against selector drift.
    next dispatch, matching the post-#94 readiness posture (no
    `-PublishMode main` yet; selective use only for
    docs/test-only or very narrow source tasks).
+
+7. **Read-only preflight: `rge-io-image` cache-surface follow-up after #92/#94.**
+   **NO source edits.** Audit whether `crates/io-image/` has a real
+   cache surface that should route through `rge-asset-store`, or
+   whether its `asset_store_stub` is dead/stale scaffolding that
+   should be deleted or documented as intentionally deferred. This is
+   the explicit follow-up deferred by the #92 audit and task #5 halt
+   conditions: "`rge-io-image` needs changes to make its codec output
+   cacheable" belongs in its own scoping dispatch, not inside the
+   `io-gltf` adapter work.
+
+   **Allowed file surface**:
+   - MAY add exactly one execution report packet:
+     `ai_handoffs/ISSUE-*_EXEC_*.md`, plus its `.meta.json` sidecar
+     if produced by `new-handoff.ps1 -Finalize`.
+   - MAY read `crates/io-image/**`, `crates/asset-store/**`, and
+     `crates/io-gltf/src/asset_store_cache.rs` as precedent only.
+   - MAY read existing #92/#94 handoff packets if needed to keep the
+     follow-up aligned with the audit/adaptor precedent.
+
+   **Files that MUST NOT be touched**:
+   - Any tracked repository file.
+   - Any source file, test file, fixture, Cargo manifest, Cargo.lock,
+     workspace dependency declaration, feature flag, generated file,
+     script, schema, lint file, CI/workflow file, doc, ADR,
+     `Status.md`, `HANDOFF.md`, `change.md`, or existing handoff
+     packet.
+   - Anything under `kernel/**`, `editor/**`,
+     `crates/editor-shell/**`, `crates/gfx/**`,
+     `crates/brep-render/**`, `crates/io-gltf/**` except read-only
+     inspection of `crates/io-gltf/src/asset_store_cache.rs`, or any
+     crate outside the stated audit scope.
+
+   **Five-question preflight answer block**:
+   The EXEC report must contain a section titled exactly
+   `## 5-Question Preflight Answer Block` and answer exactly these
+   headings:
+   - `Q1. Is crates/io-image/src/asset_store_stub.rs reachable today, or pure dead code?`
+   - `Q2. What cache trait or cache-like surface does rge-io-image expose today, if any, and how does it compare to rge-asset-store::Cache?`
+   - `Q3. Is there a meaningful BLAKE3/content-addressed identity for rge-io-image Image outputs analogous to io-gltf asset content_hash()?`
+   - `Q4. Which current call sites would benefit from an asset-store-backed image cache, if any, and is any editor-side cache already sufficient?`
+   - `Q5. What is the smallest safe follow-up dispatch: adapter, stub deletion, no-op-and-document, or design preflight?`
+
+   **Acceptance criteria**:
+   - Q1 cites concrete search evidence for every current reference to
+     `asset_store_stub`, `Cache`, `MemoryCache`, and
+     `rge_asset_store` in `crates/io-image/**`.
+   - Q2 distinguishes the local `asset_store_stub::Cache` shape
+     (`put`/`get`/`has`, `AssetId = Vec<u8>`, infallible methods,
+     synthetic IDs) from `rge_asset_store::Cache` (`Result`,
+     `AssetId`, `Bytes`, `put`/`get`/`evict_lru`, `LocalCache`).
+   - Q3 answers from code, not aspiration: inspect
+     `crates/io-image/src/image_data.rs` and codec modules for an
+     `Image` / pixel-data canonical identity, hash, or equivalent.
+   - Q4 is non-speculative: cite in-repo call sites or state clearly
+     that no real call site currently consumes the stub/cache surface.
+   - Q5 proposes one smallest follow-up with allowed files,
+     must-not-touch surfaces, verification gates, halt conditions, and
+     why it is safer than the alternatives. If no autonomous-friendly
+     follow-up exists, say so and recommend a design preflight instead.
+
+   **Halt conditions**:
+   - Answering the five questions appears to require editing source,
+     tests, docs, generated files, Cargo metadata, scripts, schemas,
+     lints, or existing packets.
+   - The audit requires a second artifact, generated log, scratch file,
+     benchmark output, or packet other than the single EXEC report.
+   - Q2 reveals that `rge-io-image` has no cache trait/cache-like
+     surface that can be evaluated from current code. In that case,
+     halt with `NEEDS_HUMAN` rather than inventing an adapter task.
+   - Q4 reveals no reachable cache consumer and Q5 would have to
+     invent new image-cache product semantics instead of deleting
+     stale scaffolding or documenting deferral. Halt; that is design
+     work, not an autonomous implementation task.
+   - Any tracked file is already dirty in a way that makes the
+     read-only audit ambiguous.
+
+   **Scope-preserving halt clause** - the orchestrator's canonical
+   verify gate (`.ai/dispatch.verify.ps1`) runs after Claude execute
+   even on read-only audits. If verify fails on a target OUTSIDE the
+   audit scope (anything beyond `crates/io-image/`,
+   `crates/asset-store/`, `crates/io-gltf/src/asset_store_cache.rs`,
+   or this dispatch's own `ai_handoffs/` packet), the orchestrator
+   may auto-route a CORRECTION packet asking the executor to fix the
+   failure. When that happens **the executor MUST halt**: write an
+   EXECUTION_REPORT with `EXEC_STATUS: blocked` and
+   `STATUS: NEEDS_HUMAN`, do NOT execute the correction. Read-only
+   intent is the entire reason this task is in the brief; a
+   correction-round source fix to an unrelated test bug expands a
+   read-only audit into a source-fix dispatch and must become its own
+   ticket. Precedent: ISSUE-92 (2026-05-22) validated this path by
+   preserving the W16 audit while routing an unrelated `rge-gfx`
+   verify failure to `NEEDS_HUMAN`.
+
+   **Verbatim review-gate strings** - the autonomous selector MUST
+   copy these six strings, character-for-character, into the filed
+   GitHub issue body. No paraphrasing, no substitution, no reflowing.
+   A packet that lacks any one of them verbatim is bounced at review:
+
+   ```
+   MUST be a read-only preflight; do not edit source, tests, docs, Cargo.toml, Cargo.lock, or existing packets
+   MUST produce a 5-question preflight answer block covering reachability, cache surface, content-addressed identity, real consumers, and smallest follow-up
+   MUST inspect crates/io-image/src/asset_store_stub.rs, crates/io-image/src/lib.rs, crates/io-image/src/image_data.rs, and crates/asset-store/src/cache.rs
+   MUST cross-reference crates/io-gltf/src/asset_store_cache.rs only as adapter precedent, not as permission to edit io-gltf
+   MUST halt if rge-io-image has no real cache trait/cache-like surface or no reachable cache consumer and an adapter would become design work
+   MUST halt rather than fix if verification fails outside crates/io-image/**, crates/asset-store/**, crates/io-gltf/src/asset_store_cache.rs, or this dispatch's ai_handoffs packet
+   ```
+
+   **Done-criterion**:
+   - One `ISSUE-*_EXEC_*.md` report with the exact
+     `## 5-Question Preflight Answer Block` section and Q1-Q5
+     headings above.
+   - No source, test, doc, Cargo, lint, schema, workflow, status, or
+     existing handoff packet edits.
+   - `git status --short --untracked-files=no` is clean before and
+     after writing the EXEC report.
+   - Verification claims are read-only only: document the grep/read
+     commands used for the audit; do not manually run cargo tests,
+     builds, fmt, or `.ai/dispatch.verify.ps1`. The orchestrator will
+     still run its canonical verification gate after execution.
