@@ -41,26 +41,58 @@ prefer Style A until the loop has proven itself.
 
 ## Tasks
 
-Style B — roadmap pointer. Codex selects the work autonomously each tick;
-there is no hand-written task list. Read `HANDOFF.md` and pick the next piece
-of unstarted work from its "Next-job options" / next-jobs section.
+Style A — explicit, ordered, one dispatch per entry. Codex selects the next
+un-filed one (or an earlier blocker per "sequence necessity"). Each entry is
+deliberately narrow — one workflow slice, one file area, one verifiable
+done-criterion. Stale broad pointers ("Next-job options", "scene tree UI",
+"undo/redo", "asset hot-reload") are intentionally excluded: they read as
+sub-projects, not dispatches.
 
-Selection rules, in priority order:
+**Publish mode: `branch` until at least two automated selections land
+cleanly.** Do NOT raise to `-PublishMode main` before that. Reviewer-on-merge
+is the only safeguard against selector drift.
 
-1. Choose the SMALLEST, most self-contained slice available. The HANDOFF
-   options are multi-file; do NOT attempt a whole option in one dispatch.
-   Decompose it: pick one file, one small module, or one operator's worth of
-   work — never a cross-cutting change.
-2. The slice must have a clear done-criterion and a concrete verification
-   command (the file's own tests, or `cargo test -p <crate>`). Prefer
-   additive work (new tests, one bounded function or impl) over refactors.
-3. Skip anything marked BLOCKED, anything needing design sign-off or human
-   arbitration, and anything requiring external accounts or manual UI steps.
-4. Honor the architecture: `OperatorNode` is the canonical IR; renderer-tier
-   crates (`rge-gfx*`) must not depend on game-domain crates. Narrow the
-   scope whenever a choice is unclear.
-5. If no sufficiently small, well-scoped slice exists, select nothing this
-   tick rather than filing a vague task.
+1. **Add automatic `--glb` file watching on top of the R-key reload path.**
+   Use the workspace `notify = "8"` dep (debounce ~200ms, watch the parent
+   directory non-recursively per the `editor-ui::layout::hot_reload`
+   precedent). Drain events at `RedrawRequested`-time and call
+   `EditorShell::handle_asset_reload` for modify events targeting the
+   `glb_source_path` file. Loader stays in `rge-editor`; no
+   `editor-shell -> io-gltf` edge. No asset-store integration, no kernel
+   cavity fill, no new crate — fits inside `rge-editor` (binary) plus a
+   tiny `editor-shell` watcher hook field if needed. Done-criterion: a
+   manual smoke + one integration test that triggers a watcher event on a
+   tempdir GLB and verifies `handle_asset_reload` fires.
 
-One tight area per dispatch. Vague scope is the only thing the loop reliably
-fails on — keep every selected task narrow.
+2. **Add a smooth-normal glTF fixture + extend visual acceptance for M3.**
+   New io-gltf test fixture where the `NORMAL` accessor encodes per-vertex
+   smooth normals (e.g. UV-sphere or rounded cube) that differ
+   meaningfully from `from_buffers`'s flat-recompute output. Add ONE
+   pixel/readback test in `editor-shell::visual_smoke` or
+   `rge-editor::tests` that renders the fixture once with imported
+   normals (M3 path) and once with `None` (flat recompute), and asserts
+   the central-row pixel distribution differs by more than driver noise.
+   Closes the M3 visual evidence gap that logs alone don't certify.
+
+3. **Add malformed-GLB reload regression coverage.**
+   End-to-end test in `rge-editor::tests` parallel to
+   `r_key_reload_on_missing_file_preserves_prior_frame`: start from a
+   valid `cube.glb`, render frame 1, attach a hook pointing at a path
+   whose CONTENT is malformed (truncated bytes, wrong magic, invalid
+   JSON chunk), call `handle_asset_reload`, render frame 2. Assert frame
+   2's pixel signature matches frame 1's within driver tolerance AND
+   that the hook returned `Err` (verify via tracing capture or by
+   exercising the hook directly first). Distinct from missing-file: this
+   is the parser-failure path. No asset-store work, no new crate.
+
+4. **Read-only preflight: W16 `rge-asset-store` integration shape.**
+   **NO source edits.** Audit how `io-gltf::cache_stub::MemoryCache` and
+   `io-image`'s cache surface (if any) relate to the `asset-store::Cache`
+   trait + `LocalCache`. Determine: (a) which io-* crates' caches should
+   route through `rge-asset-store` rather than holding their own
+   `MemoryCache`-style stub; (b) whether `kernel/asset-view` becomes a
+   genuine consumer once io-gltf binds to `rge-asset-store`; (c) the
+   smallest dispatch that swaps one io-* crate's cache to the asset-store
+   `Cache` trait without churning the kernel cavity. Produces a 5-question
+   answer block (per the existing preflight format) — no code, no tests.
+   Caller decides next dispatch from that.
