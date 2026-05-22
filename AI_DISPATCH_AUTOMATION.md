@@ -32,7 +32,7 @@ runs.
 14. Known gotchas & fixes (read this before porting)
 15. Porting to another project
 16. Operational notes
-17. Six-task arc retrospective (2026-05-22)
+17. Seven-task arc retrospective (2026-05-22)
 
 ---
 
@@ -896,9 +896,9 @@ retried. Accidental `failed` executions remain eligible for the one retry.
   `-ResumeApprovedTask` to (re-)run only the execution phase without
   re-planning.
 
-## 17. Six-task arc retrospective (2026-05-22)
+## 17. Seven-task arc retrospective (2026-05-22)
 
-A six-task arc through `Invoke-AiDispatchAuto.ps1` ran from
+A seven-task arc through `Invoke-AiDispatchAuto.ps1` ran from
 2026-05-21 to 2026-05-22 to validate the autonomous loop across
 distinct task shapes. This appendix records what landed, what
 doctrine changed because of failures, and the current operating
@@ -915,6 +915,7 @@ mechanically-enforced gotchas the arc fed back into.
 | 4 | Read-only architectural audit    | #91 → #92   | #93 | salvaged — scope-preserving halt added   |
 | 5 | Production-source adapter        | #94         | #95 | clean — first source-code dispatch       |
 | 6 | Test-only follow-up coverage     | #96         | #97 | clean                                    |
+| 7 | Read-only cache-surface preflight | #98         | #99 | clean blocked audit — no adapter scoped  |
 
 Task #4 first fired as ISSUE-91 and was salvaged after the
 orchestrator's verify gate caught an unrelated workspace test
@@ -922,9 +923,15 @@ failure that the auto-routed CORRECTION packet would have expanded
 into source edits. Audit content was re-filed and landed as
 ISSUE-92.
 
+Task #7 intentionally halted as `STATUS: BLOCKED` /
+`HANDOFF_STATUS: BLOCKED` after proving that `rge-io-image` has a
+stub cache surface but no reachable cache consumer or content-addressed
+`Image` identity. Its audit content landed via PR #99; the queue-runner
+retry bug that surfaced on this clean block is encoded in §14.10.
+
 ### 17.2 Doctrine that changed because of failures
 
-Three lessons are encoded as mechanical gotchas in §14 — read
+Four lessons are encoded as mechanical gotchas in §14 — read
 those for full reproduction steps. Operational summary:
 
 - **§14.8 — salvage requires removing `ai-auto`.** Title rename
@@ -953,6 +960,12 @@ those for full reproduction steps. Operational summary:
   `.ai/dispatch.tasks.md`; precedent (#91 → #92) is documented
   inline there.
 
+- **§14.10 — deliberate blocked executions are not retryable.**
+  `EXEC_STATUS: blocked` means a halt condition fired by design. The
+  queue must commit the branch for human review and stop, not inject
+  "prior failure" feedback into a retry that would pressure the executor
+  to violate scope. Discovered on task #7 (#98 → #99).
+
 Plus two infra fixes that pre-dated the arc but were validated
 across it: PS 5.1 single-item array unrolling (`return ,$items`
 in `Get-IssuesJson` of `Invoke-AiDispatchAuto.ps1`), and the
@@ -977,9 +990,10 @@ of the same shape, not as a celebration.
   break by construction.
 - **Test-only regression (#3):** smallest reliable task shape.
   Clean across all phases without special doctrine.
-- **Read-only audit (#4):** lands cleanly only with the
-  scope-preserving halt clause above. Without it, the verify
-  gate becomes a corrupting force on intent.
+- **Read-only audits (#4, #7):** land cleanly with explicit halt
+  semantics. #4 validated the scope-preserving verify-failure halt;
+  #7 validated the "blocked is terminal, not retryable" queue path.
+  Without those clauses, the loop pressures an audit into source work.
 - **Production source (#5):** validated end-to-end in `branch`
   mode. The opt-in adapter pattern + per-task carve-out for a
   single dep edge held. First source dispatch the loop carried
@@ -1003,7 +1017,7 @@ of the same shape, not as a celebration.
   named code shapes. The selector copies them into the issue
   body character-for-character; a packet that lacks any one of
   them is bounced at review without further reading. Pattern
-  examples live in `.ai/dispatch.tasks.md` (tasks #1–#6 entries
+  examples live in `.ai/dispatch.tasks.md` (tasks #1–#7 entries
   all carry them).
 - **One task per dispatch, not a batch.** `-MaxAutonomousTasks`
   is raised one at a time, not in bulk. Each task gets a dry-run
