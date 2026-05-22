@@ -616,3 +616,144 @@ is the only safeguard against selector drift.
      commands used for the audit; do not manually run cargo tests,
      builds, fmt, or `.ai/dispatch.verify.ps1`. The orchestrator will
      still run its canonical verification gate after execution.
+
+8. **Read-only preflight: GitHub Actions CI failure boundary and gate parity.**
+   **NO source edits.** Audit why GitHub Actions has been red on
+   `main` while the seven-task autonomous arc treated the local
+   `.ai/dispatch.verify.ps1` gate as authoritative. This dispatch is
+   diagnostic only: identify the first failing boundary, classify each
+   workflow's failure mode, compare CI coverage against the local
+   verify gate, and propose the smallest safe follow-up. Do not fix
+   workflow files, Cargo metadata, source, tests, scripts, or docs.
+
+   **Allowed read-only scope**:
+   - MAY read `.github/workflows/**`.
+   - MAY read the workspace root `Cargo.toml`.
+   - MAY read `rust-toolchain.toml` if present.
+   - MAY read `.ai/dispatch.verify.ps1`.
+   - MAY use read-only `git` commands to inspect commit history and
+     diffs, including the commit range between the last green and
+     first red GitHub Actions runs.
+   - MAY use read-only `gh api`, `gh run view`, and `gh workflow`
+     commands to inspect workflow run history, check conclusions, and
+     stream failed-job logs. Do not download artifacts or write logs
+     to disk.
+
+   **Allowed file surface**:
+   - MAY add exactly one execution report packet:
+     `ai_handoffs/ISSUE-*_EXEC_*.md`, plus its `.meta.json` sidecar
+     if produced by `new-handoff.ps1 -Finalize`.
+
+   **Files that MUST NOT be touched**:
+   - Any tracked repository file.
+   - Any source file, test file, fixture, Cargo manifest,
+     `Cargo.lock`, workflow file, script, schema, lint file, doc, ADR,
+     `Status.md`, `HANDOFF.md`, `change.md`, or existing handoff
+     packet.
+   - Anything under `crates/**`, `editor/**`, `kernel/**`,
+     `runtime/**`, `examples/**`, `tools/**`, or any generated
+     directory.
+
+   **Five-question CI preflight answer block**:
+   The EXEC report must contain a section titled exactly
+   `## 5-Question CI Preflight Answer Block` and answer exactly these
+   headings:
+   - `Q1. When did CI start failing, and what changed at that boundary?`
+   - `Q2. What is the error pattern in each failing workflow?`
+   - `Q3. What failure category best explains each workflow: stale config, toolchain drift, missing infrastructure, or real repo breakage?`
+   - `Q4. What does GitHub Actions catch that .ai/dispatch.verify.ps1 does not, and what does local verify catch that CI does not?`
+   - `Q5. What is the smallest safe follow-up dispatch?`
+
+   **Acceptance criteria**:
+   - Q1 verifies, rather than assumes, the last-green and first-red
+     `main` commits. The preliminary human note names last green
+     `058e26d` (2026-05-07); confirm or correct that with GitHub
+     Actions run data. Inspect and summarize the diff between the
+     verified last-green and first-red commits.
+   - Q2 covers every failing workflow in the current CI surface and
+     includes the first 20 relevant lines from one representative
+     failed-job log per workflow. If the raw first 20 log lines are
+     pure setup noise, include the first 20 lines at the failure site
+     and say so.
+   - Q3 classifies each workflow into one of these categories:
+     stale config, toolchain drift, missing infrastructure, or real
+     repo breakage. If a workflow has mixed causes, list the primary
+     cause first and the secondary cause second.
+   - Q4 compares `.github/workflows/**` against
+     `.ai/dispatch.verify.ps1` concretely by command/job, not by
+     prose impression. Identify meaningful blind spots in either
+     direction. If the local gate is not safe as the authoritative
+     gate, say that explicitly.
+   - Q5 proposes exactly one smallest safe follow-up: workflow-file
+     edit, toolchain pin, infrastructure restore, source/test fix,
+     delete-obsolete-workflow cleanup, or no-op-and-document. If no
+     autonomous-friendly follow-up exists, recommend a human-owned
+     design/CI policy dispatch instead.
+
+   **Halt conditions**:
+   - Q3 reveals a real repo breakage requiring source or test edits.
+     Halt with `NEEDS_HUMAN`; the source/test fix must be a separate
+     dispatch after the audit lands.
+   - Q5 would require editing workflow files, Cargo metadata, scripts,
+     source, or tests to answer the audit. Halt; this dispatch is
+     read-only.
+   - Q4 reveals meaningful blind spots in `.ai/dispatch.verify.ps1`
+     that would require a substantive verify-gate rewrite. Halt with
+     `NEEDS_HUMAN` and document the gap.
+   - The audit requires more than one EXEC packet, any generated log
+     file, downloaded artifact, scratch file, or second handoff
+     artifact.
+   - The audit cannot be answered without running local `cargo`
+     commands, `.ai/dispatch.verify.ps1`, formatters, architecture
+     lints, or tests. Halt; this is a documentary read-only audit.
+   - Any tracked file is already dirty in a way that makes the
+     read-only audit ambiguous.
+
+   **Scope-preserving halt clause** - the orchestrator's canonical
+   verify gate (`.ai/dispatch.verify.ps1`) runs after Claude execute
+   even on read-only audits. If verify fails on a target OUTSIDE the
+   audit scope (anything beyond `.github/workflows/**`, root
+   `Cargo.toml`, `rust-toolchain.toml`, `.ai/dispatch.verify.ps1`, or
+   this dispatch's own `ai_handoffs/` packet), the orchestrator may
+   auto-route a CORRECTION packet asking the executor to fix the
+   failure. When that happens **the executor MUST halt**: write an
+   EXECUTION_REPORT with `EXEC_STATUS: blocked` and
+   `STATUS: NEEDS_HUMAN`, do NOT execute the correction. Read-only
+   intent is the entire reason this task is in the brief; a
+   correction-round source fix to an unrelated code/test failure
+   expands a CI audit into a source-fix dispatch and must become its
+   own ticket. Precedent: ISSUE-92 and ISSUE-98 validated that
+   blocked read-only audits are valid deliverables when they preserve
+   scope.
+
+   **Verbatim review-gate strings** - the autonomous selector MUST
+   copy these seven strings, character-for-character, into the filed
+   GitHub issue body. No paraphrasing, no substitution, no reflowing.
+   A packet that lacks any one of them verbatim is bounced at review:
+
+   ```
+   MUST be a read-only CI audit; do not edit workflows, source, tests, docs, Cargo.toml, Cargo.lock, scripts, or existing packets
+   MUST produce a 5-question CI preflight answer block covering failure boundary, workflow error patterns, failure categories, local-vs-CI gate parity, and smallest follow-up
+   MUST inspect .github/workflows/**, root Cargo.toml, rust-toolchain.toml if present, and .ai/dispatch.verify.ps1
+   MUST use read-only GitHub Actions evidence via gh api / gh run view / gh workflow commands, not assumptions from memory
+   MUST include the first 20 relevant lines from one representative failed-job log per failing workflow
+   MUST NOT run local cargo commands, tests, formatters, architecture lints, or .ai/dispatch.verify.ps1
+   MUST halt rather than fix if the audit discovers real repo breakage, verify-gate blind spots requiring rewrite, or any need to edit CI/workflow files
+   ```
+
+   **Done-criterion**:
+   - One `ISSUE-*_EXEC_*.md` report with the exact
+     `## 5-Question CI Preflight Answer Block` section and Q1-Q5
+     headings above.
+   - No source, test, doc, Cargo, workflow, lint, schema, script,
+     status, or existing handoff packet edits.
+   - `git status --short --untracked-files=no` is clean before and
+     after writing the EXEC report.
+   - Verification claims are read-only only: document the `git` and
+     `gh` commands used for the audit; do not manually run cargo
+     tests, builds, fmt, architecture lints, or `.ai/dispatch.verify.ps1`.
+     The orchestrator will still run its canonical verification gate
+     after execution.
+   - Q5 names one smallest next dispatch and includes its proposed
+     allowed files, must-not-touch surfaces, verification gates, and
+     halt conditions, unless the correct outcome is `NEEDS_HUMAN`.
