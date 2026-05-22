@@ -617,7 +617,7 @@ is the only safeguard against selector drift.
      builds, fmt, or `.ai/dispatch.verify.ps1`. The orchestrator will
      still run its canonical verification gate after execution.
 
-8. **Read-only preflight: GitHub Actions CI failure boundary and gate parity.**
+8. **[DONE 2026-05-23 via PR #101 / commit `7d6d9a8`] Read-only preflight: GitHub Actions CI failure boundary and gate parity.**
    **NO source edits.** Audit why GitHub Actions has been red on
    `main` while the seven-task autonomous arc treated the local
    `.ai/dispatch.verify.ps1` gate as authoritative. This dispatch is
