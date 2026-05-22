@@ -497,7 +497,7 @@ is the only safeguard against selector drift.
    `-PublishMode main` yet; selective use only for
    docs/test-only or very narrow source tasks).
 
-7. **Read-only preflight: `rge-io-image` cache-surface follow-up after #92/#94.**
+7. **[DONE 2026-05-22 via PR #99 / commit `012f119`] Read-only preflight: `rge-io-image` cache-surface follow-up after #92/#94.**
    **NO source edits.** Audit whether `crates/io-image/` has a real
    cache surface that should route through `rge-asset-store`, or
    whether its `asset_store_stub` is dead/stale scaffolding that
