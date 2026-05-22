@@ -187,7 +187,7 @@ is the only safeguard against selector drift.
    `EditorShell::handle_asset_reload`, the watcher, or any
    production code.
 
-4. **Read-only preflight: W16 `rge-asset-store` integration shape.**
+4. **[DONE 2026-05-22 via PR #93 / commit `df8ec26`] Read-only preflight: W16 `rge-asset-store` integration shape.**
    **NO source edits.** Audit how `io-gltf::cache_stub::MemoryCache` and
    `io-image`'s cache surface (if any) relate to the `asset-store::Cache`
    trait + `LocalCache`. Determine: (a) which io-* crates' caches should
@@ -198,6 +198,17 @@ is the only safeguard against selector drift.
    `Cache` trait without churning the kernel cavity. Produces a 5-question
    answer block (per the existing preflight format) — no code, no tests.
    Caller decides next dispatch from that.
+
+   **Audit landed**: `ai_handoffs/ISSUE-92_EXEC_2026-05-22_16-52-05+0300.md`
+   on `main` carries the 5-question answer block. Salvaged via #93 after
+   the orchestrator's verify gate caught an unrelated `STATUS_ACCESS_VIOLATION`
+   in `cargo test -p rge-gfx --lib` (now fixed on main in `a533b48`); the
+   scope-preserving halt clause above correctly refused the auto-routed
+   CORRECTION packet that would have expanded scope. Q5 of the audit
+   specifies the smallest follow-up dispatch — an opt-in
+   `crates/io-gltf/src/asset_store_cache.rs` adapter forwarding through
+   `dyn rge_asset_store::Cache`. That follow-up belongs in a fresh task
+   entry (5+) added below when ready to dispatch.
 
    **Scope-preserving halt clause** — the orchestrator's canonical
    verify gate (`.ai/dispatch.verify.ps1`) runs after Claude execute
