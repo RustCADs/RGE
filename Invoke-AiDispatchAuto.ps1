@@ -114,8 +114,17 @@ function Invoke-Tool {
 }
 
 function Get-IssuesJson {
-    # gh issue list --json ... -> array. PS 5.1 ConvertFrom-Json yields a
-    # single non-enumerated object for a JSON array, so wrap before returning.
+    # gh issue list --json ... -> array. Two PS 5.1 unrolling gotchas:
+    #   1. ConvertFrom-Json may yield a single non-enumerated object for a JSON
+    #      array, so the parse result is wrapped with @(...).
+    #   2. `return $array` enumerates into the output stream, so a single-
+    #      element array unrolls to its scalar at the call site. The scalar
+    #      (a PSCustomObject) has no synthetic .Count in PS 5.1, so
+    #      `$queue.Count -gt 0` evaluates `$null -gt 0` = $false and a
+    #      single queued issue is misdetected as an empty queue. The comma
+    #      operator on return prevents enumeration -- `return ,$items` emits
+    #      the array itself as one stream object, so the caller always sees
+    #      an array regardless of element count.
     param([string[]]$GhArgs)
     $r = Invoke-Tool -Exe 'gh' -CmdArgs $GhArgs
     if ($r.Code -ne 0) {
@@ -127,7 +136,7 @@ function Get-IssuesJson {
         catch { Fail "Could not parse gh issue JSON: $($_.Exception.Message)" }
         if ($null -ne $parsed) { $items = @($parsed) }
     }
-    return $items
+    return ,$items
 }
 
 function Get-OpenQueueIssuesRest {
