@@ -1,0 +1,21 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-98",
+    "packet_type": "EXEC",
+    "author": "Executor / Claude",
+    "timestamp": "2026-05-22_23-26-07+0300",
+    "related_files": [
+                          "crates/io-image/src/asset_store_stub.rs — audited (read-only)",
+                          "crates/io-image/src/lib.rs — audited (read-only)",
+                          "crates/io-image/src/image_data.rs — audited (read-only)",
+                          "crates/io-image/Cargo.toml — audited (read-only)",
+                          "crates/asset-store/src/cache.rs — audited (read-only)",
+                          "crates/asset-store/src/lib.rs — audited (read-only)",
+                          "crates/asset-store/src/asset_id.rs — audited (read-only)",
+                          "crates/io-gltf/src/asset_store_cache.rs — audited (read-only, adapter precedent only)"
+                      ],
+    "status": "BLOCKED",
+    "handoff_status": "BLOCKED",
+    "next_role": "PLANNER_AI",
+    "exit_code": 0
+}
