@@ -35,6 +35,11 @@ glam                = "0.30"
 winit               = { workspace = true }
 tracing             = { workspace = true }
 tracing-subscriber  = { workspace = true }
+# ISSUE-85 — notify-backed GLB hot-reload watcher. Used only when
+# `--glb <path>` is active; reuses the existing workspace `notify`
+# version pinned at `crates/editor-ui` and `crates/ui-theme` so no
+# new workspace dep version is introduced.
+notify              = { workspace = true }
 
 [dev-dependencies]
 # Dispatch N2 — enable editor-shell's `test-harness` feature for

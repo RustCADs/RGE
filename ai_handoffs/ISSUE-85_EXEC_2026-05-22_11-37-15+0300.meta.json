@@ -1,0 +1,16 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-85",
+    "packet_type": "EXEC",
+    "author": "Executor / Claude",
+    "timestamp": "2026-05-22_11-37-15+0300",
+    "related_files": [
+                          "editor/rge-editor/src/glb_watcher.rs — new notify-backed watcher module + unit tests",
+                          "editor/rge-editor/src/main.rs — `EditorApp` ApplicationHandler wrapper that drains the watcher into `EditorShell::handle_asset_reload`; new ISSUE-85 integration test",
+                          "editor/rge-editor/Cargo.toml — added the already-declared workspace `notify` dependency"
+                      ],
+    "status": "AWAITING_REVIEW",
+    "handoff_status": "COMPLETE",
+    "next_role": "REVIEWER_AI",
+    "exit_code": 0
+}

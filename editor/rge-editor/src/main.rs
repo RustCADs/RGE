@@ -77,7 +77,13 @@ use rge_cad_projection::{BRepHandle, CadProjection};
 use rge_editor_shell::{AssetReloadHook, EditorShell};
 use rge_io_gltf::{import_glb, Cache, Entity, MemoryCache, Scene, Transform};
 use rge_kernel_ecs::World;
-use winit::event_loop::EventLoop;
+use winit::application::ApplicationHandler;
+use winit::event::WindowEvent;
+use winit::event_loop::{ActiveEventLoop, EventLoop};
+use winit::window::WindowId;
+
+mod glb_watcher;
+use glb_watcher::GlbWatcher;
 
 /// Deterministic owner seed for the demo cuboid's `BRepHandle`. The
 /// 16-byte choice is arbitrary; it just has to be stable so face-ID
@@ -657,6 +663,68 @@ fn build_cuboid_demo_shell() -> EditorShell {
 }
 
 // ---------------------------------------------------------------------------
+// ISSUE-85 — ApplicationHandler wrapper with GLB hot-reload watcher
+// ---------------------------------------------------------------------------
+
+/// Binary-owned wrapper around [`EditorShell`] that intercepts
+/// `WindowEvent::RedrawRequested` to drain pending GLB-watcher reload
+/// requests before the shell processes the redraw. Every other winit
+/// callback delegates straight through to the inner shell — the
+/// wrapper introduces no new lifecycle behavior of its own.
+///
+/// Why a wrapper rather than a hook in editor-shell: keeping the
+/// `notify` dependency and the watcher's request-producer logic in
+/// the binary leaves `editor-shell` free of any file-system surface
+/// (consistent with how the existing R-key path keeps the glTF
+/// loader edge inside `rge-editor`, exposing only the
+/// [`AssetReloadHook`] trait to the shell). The drain is the
+/// **only** place this wrapper deviates from a pure passthrough — it
+/// calls `EditorShell::handle_asset_reload` for the actual reload,
+/// preserving the shell's atomic-swap semantics, PIE gate, and
+/// warn-on-failure posture.
+struct EditorApp {
+    shell: EditorShell,
+    /// Active GLB watcher. `Some` when launched with `--glb <path>`
+    /// AND notify successfully attached to the parent directory;
+    /// `None` for the default cuboid demo path OR when notify
+    /// construction failed at startup (warn-logged, manual R-key
+    /// still works).
+    watcher: Option<GlbWatcher>,
+}
+
+impl ApplicationHandler<()> for EditorApp {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        self.shell.resumed(event_loop);
+    }
+
+    fn suspended(&mut self, event_loop: &ActiveEventLoop) {
+        self.shell.suspended(event_loop);
+    }
+
+    fn window_event(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        window_id: WindowId,
+        event: WindowEvent,
+    ) {
+        // Drain pending watcher requests BEFORE the shell processes
+        // `RedrawRequested` so a successful reload's new
+        // meshes/materials are visible in the very frame this redraw
+        // produces. The drain itself never mutates render assets;
+        // `handle_asset_reload` is the single place all reload work
+        // happens (loader invocation, atomic swap, warn-on-failure).
+        if matches!(event, WindowEvent::RedrawRequested) {
+            if let Some(w) = self.watcher.as_mut() {
+                if w.take_reload_request(std::time::Instant::now()) {
+                    self.shell.handle_asset_reload();
+                }
+            }
+        }
+        self.shell.window_event(event_loop, window_id, event);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // main
 // ---------------------------------------------------------------------------
 
@@ -680,7 +748,7 @@ fn main() -> ExitCode {
     };
 
     // ---- Branch on --glb flag ----------------------------------------
-    let mut shell = match cli.glb_path.as_ref() {
+    let (shell, watcher) = match cli.glb_path.as_ref() {
         Some(path) => {
             // Dispatches G + I + J + K + M1 + M2 — render-only mesh(es)
             // from glTF with TRS hierarchy CPU-baked, per-mesh
@@ -705,24 +773,42 @@ fn main() -> ExitCode {
                 base_colors,
                 textures_for_shell,
             );
-            // Asset hot-reload (R-key) wiring. The hook is a unit
-            // struct that wraps `load_all_glb_meshes`; passing
-            // `path.clone()` preserves the source so the R-key
-            // handler can re-import on demand. Default cuboid demo
-            // never reaches this branch → R-key silently no-ops
-            // there.
+            // Asset hot-reload — both the manual R-key path AND the
+            // ISSUE-85 automatic notify watcher route through the
+            // same `EditorShell::handle_asset_reload` (and the
+            // shared [`GlbLoaderHook`] above). The default cuboid
+            // demo never reaches this branch → both reload sources
+            // silently no-op there.
             shell.attach_glb_reload_source(path.clone(), GlbLoaderHook);
-            shell
+            // ISSUE-85 — start a notify watcher rooted at the
+            // active source's parent directory. Construction
+            // failures (e.g. parent dir not readable) warn-log and
+            // proceed without automatic reload; the user can still
+            // press R to reload manually.
+            let watcher = match GlbWatcher::new(path.clone()) {
+                Ok(w) => Some(w),
+                Err(e) => {
+                    tracing::warn!(
+                        target: "rge::editor",
+                        path = %path.display(),
+                        error = %e,
+                        "failed to start GLB watcher; automatic hot-reload disabled (manual R-key still works)"
+                    );
+                    None
+                }
+            };
+            (shell, watcher)
         }
         None => {
             // Default — cuboid demo (byte-identical to pre-dispatch-G).
-            build_cuboid_demo_shell()
+            (build_cuboid_demo_shell(), None)
         }
     };
 
     // ---- Run winit event loop -----------------------------------------
+    let mut app = EditorApp { shell, watcher };
     let event_loop = EventLoop::new().expect("event loop");
-    if let Err(e) = event_loop.run_app(&mut shell) {
+    if let Err(e) = event_loop.run_app(&mut app) {
         eprintln!("rge-editor: run_app: {e}");
         return ExitCode::FAILURE;
     }
@@ -1812,6 +1898,159 @@ mod tests {
              pre={pre_avg_b} post={} delta={db}",
             post.avg_b()
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // ISSUE-85 — notify-backed GLB watcher → handle_asset_reload integration
+    // -----------------------------------------------------------------------
+    //
+    // The watcher's debounce/filter/coalesce logic is covered by
+    // [`glb_watcher::tests`]. These integration tests prove the
+    // composite path: a synthetic notify event drives a drained
+    // reload request, the request is fed into the same
+    // [`EditorShell::handle_asset_reload`] the R-key path uses, the
+    // shell's failure-then-success flow honours the loader Err
+    // (warn-log + prior state retained) and the subsequent loader
+    // Ok (atomic swap), AND the same `GlbWatcher` instance keeps
+    // producing fresh requests across both rounds.
+
+    #[test]
+    fn watcher_drain_drives_shell_reload_through_failure_and_recovery() {
+        // Skip cleanly on no-GPU CI: the end-to-end success leg
+        // needs `reload_render_assets`, which requires `gfx_ctx`.
+        let Some(mut shell) = build_shell_from_fixture("cube.glb") else {
+            return;
+        };
+        let textured_uv_cube = fixtures_path().join("textured_uv_cube.glb");
+        if skip_if_fixture_missing(&textured_uv_cube) {
+            return;
+        }
+        let Some(buf_pre) = render_shell_one_frame(&mut shell) else {
+            return;
+        };
+        let pre = scan_central_row(&buf_pre);
+        assert!(
+            pre.cube_pixel_count > 8,
+            "pre-reload: expected central row hits; got {}",
+            pre.cube_pixel_count
+        );
+        assert!(
+            pre.avg_b() > pre.avg_g() && pre.avg_g() > pre.avg_r(),
+            "pre-reload should be blue-dominant (cube.glb); got rgb=({}, {}, {})",
+            pre.avg_r(),
+            pre.avg_g(),
+            pre.avg_b()
+        );
+        let pre_avg_b = pre.avg_b();
+
+        // Stage a temp GLB at a path with a real parent directory.
+        // The watcher targets this path; the loader hook reads from
+        // the same path on every call, so the bytes on disk decide
+        // whether the reload succeeds.
+        let tmp_dir = std::env::temp_dir().join(format!(
+            "rge-editor-issue85-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&tmp_dir).expect("mkdir tmp_dir");
+        let staged_path = tmp_dir.join("asset.glb");
+        // Round 1: write malformed bytes — the loader's `import_glb`
+        // will return `Err`.
+        std::fs::write(&staged_path, b"NOT-A-VALID-GLB").expect("write malformed");
+
+        // Wire up the watcher + hook against the staged path. The
+        // hook is the real `GlbLoaderHook` (it does what production
+        // does: `load_all_glb_meshes`).
+        shell.attach_glb_reload_source(staged_path.clone(), GlbLoaderHook);
+        let (mut watcher, tx) = glb_watcher::GlbWatcher::for_test(staged_path.clone());
+
+        // Inject a modify-event burst, drain across the debounce
+        // window, and route the resulting request into the shell.
+        let t0 = std::time::Instant::now();
+        tx.send(Ok(notify::Event {
+            kind: notify::EventKind::Modify(notify::event::ModifyKind::Data(
+                notify::event::DataChange::Content,
+            )),
+            paths: vec![staged_path.clone()],
+            attrs: Default::default(),
+        }))
+        .expect("send modify");
+        assert!(!watcher.take_reload_request(t0), "ingest does not fire");
+        assert!(
+            watcher.take_reload_request(t0 + glb_watcher::DEBOUNCE),
+            "request ready after debounce"
+        );
+        // The shell's `handle_asset_reload` calls back into the
+        // hook → `load_all_glb_meshes` → `import_glb`, which returns
+        // `Err` for malformed bytes. The handler must warn-log and
+        // retain the previously-rendered cube.glb state.
+        shell.handle_asset_reload();
+
+        let Some(buf_after_fail) = render_shell_one_frame(&mut shell) else {
+            return;
+        };
+        let after_fail = scan_central_row(&buf_after_fail);
+        assert!(after_fail.cube_pixel_count > 8);
+        assert!(
+            after_fail.avg_b() > after_fail.avg_g() && after_fail.avg_g() > after_fail.avg_r(),
+            "post-failed-reload should still be blue-dominant (state retained); got rgb=({}, {}, {})",
+            after_fail.avg_r(),
+            after_fail.avg_g(),
+            after_fail.avg_b()
+        );
+        let db = (i32::try_from(after_fail.avg_b()).unwrap_or(0)
+            - i32::try_from(pre_avg_b).unwrap_or(0))
+        .abs();
+        assert!(
+            db <= 5,
+            "pre/after-fail avg_b should match within 5 bytes; pre={pre_avg_b} after={} delta={db}",
+            after_fail.avg_b()
+        );
+
+        // Round 2: overwrite the staged file with valid GLB bytes.
+        // The SAME watcher must produce another reload request, and
+        // `handle_asset_reload` must succeed this time — proven by
+        // the post-frame's checkerboard color variance from the
+        // textured_uv_cube fixture.
+        let valid_bytes = std::fs::read(&textured_uv_cube).expect("read fixture");
+        std::fs::write(&staged_path, &valid_bytes).expect("write valid bytes");
+        let t1 = t0 + glb_watcher::DEBOUNCE + std::time::Duration::from_millis(50);
+        tx.send(Ok(notify::Event {
+            kind: notify::EventKind::Modify(notify::event::ModifyKind::Data(
+                notify::event::DataChange::Content,
+            )),
+            paths: vec![staged_path.clone()],
+            attrs: Default::default(),
+        }))
+        .expect("send modify (round 2)");
+        assert!(!watcher.take_reload_request(t1), "ingest does not fire");
+        assert!(
+            watcher.take_reload_request(t1 + glb_watcher::DEBOUNCE),
+            "second request ready — watcher still live"
+        );
+        shell.handle_asset_reload();
+
+        let Some(buf_after_ok) = render_shell_one_frame(&mut shell) else {
+            return;
+        };
+        let after_ok = scan_central_row(&buf_after_ok);
+        assert!(after_ok.cube_pixel_count > 8);
+        let red_spread = i32::from(after_ok.max_r) - i32::from(after_ok.min_r);
+        let blue_spread = i32::from(after_ok.max_b) - i32::from(after_ok.min_b);
+        assert!(
+            red_spread > 50 || blue_spread > 50,
+            "post-recovery should show checkerboard variance (textured_uv_cube.glb); \
+             cube_pixels={} red_spread={red_spread} blue_spread={blue_spread}",
+            after_ok.cube_pixel_count
+        );
+
+        // Best-effort cleanup. Leaks across panic are tolerable —
+        // temp dirs are GC'd by the OS eventually.
+        drop(std::fs::remove_file(&staged_path));
+        drop(std::fs::remove_dir(&tmp_dir));
     }
 
     // -----------------------------------------------------------------------
