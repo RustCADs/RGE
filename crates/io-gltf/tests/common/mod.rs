@@ -751,3 +751,230 @@ impl TransformXYZ for Transform {
         }
     }
 }
+
+/// ISSUE-87 — materialise the smooth-normal sphere fixture if not
+/// already on disk; return its path.
+pub fn smooth_normal_sphere_fixture_path() -> PathBuf {
+    let mut p = fixtures_dir();
+    std::fs::create_dir_all(&p).expect("create fixtures dir");
+    p.push("smooth_normal_sphere.glb");
+    if !p.exists() {
+        let bytes = make_smooth_normal_sphere_glb();
+        std::fs::write(&p, bytes).expect("write smooth_normal_sphere.glb");
+    }
+    p
+}
+
+/// ISSUE-87 — build a UV-sphere GLB whose per-vertex normals are
+/// the normalized radial vector from the origin (smooth shading).
+/// Each vertex's normal differs from the cross-product flat normal
+/// of every triangle that vertex participates in, so a renderer that
+/// honours the imported `NORMAL` accessor produces visibly different
+/// pixels from a renderer that recomputes flat normals from
+/// positions alone.
+pub fn make_smooth_normal_sphere_glb() -> Vec<u8> {
+    let mut cache = MemoryCache::new();
+    let mesh = smooth_normal_sphere_mesh();
+    let mat = MaterialAsset {
+        name: "smooth-sphere-mat".into(),
+        base_color: [0.7, 0.7, 0.7, 1.0],
+        ..Default::default()
+    };
+    let mh = cache.insert_mesh(mesh);
+    let mat_h = cache.insert_material(mat);
+
+    let mut scene = Scene::new();
+    scene.spawn(EntityComponents {
+        name: "smooth_normal_sphere".into(),
+        transform: Transform::IDENTITY,
+        parent: Entity::ROOT,
+        mesh: Some(mh),
+        material: Some(mat_h),
+        skeleton: None,
+    });
+
+    rge_io_gltf::export_glb(&scene, &cache).expect("export smooth-normal sphere")
+}
+
+/// Latitude-longitude unit sphere (radius 0.5) with per-vertex smooth
+/// normals = `position / radius`. The sphere is sampled at
+/// `SPHERE_STACKS = 12` latitude rings × `SPHERE_SLICES = 18`
+/// longitude slices, with one shared vertex at each pole. Triangles
+/// are wound CCW from outside so that the cross-product flat normal
+/// every triangle would receive under the no-NORMAL fallback points
+/// outward — that way the smooth-vs-flat *direction* difference (not
+/// just an inward/outward flip) is what drives the pixel delta the
+/// rge-editor visual test asserts.
+///
+/// **Triangle render order is sorted back-to-front along the
+/// `(1, 1, 1)` isometric camera direction** (centroid `dot(1,1,1)`
+/// ascending). The editor's lit-mesh pipeline currently uses
+/// `depth_write_enabled: false` (see
+/// `editor-shell::render_path::lit_mesh_depth_state`), so the
+/// last-drawn fragment wins at each screen pixel. Without this
+/// sort, back-facing triangles would overdraw front-facing ones at
+/// the visible silhouette and the whole sphere would render as
+/// ambient-only (no diffuse term). Sorting front-facing triangles
+/// LAST makes the visible side win the overdraw race — without
+/// touching production depth-state code.
+fn smooth_normal_sphere_mesh() -> MeshAsset {
+    use std::f32::consts::PI;
+
+    const STACKS: usize = 12;
+    const SLICES: usize = 18;
+    const RADIUS: f32 = 0.5;
+
+    let mut positions: Vec<[f32; 3]> = Vec::with_capacity(2 + (STACKS - 1) * SLICES);
+    let mut normals: Vec<[f32; 3]> = Vec::with_capacity(2 + (STACKS - 1) * SLICES);
+
+    // North pole vertex (index 0).
+    positions.push([0.0, RADIUS, 0.0]);
+    normals.push([0.0, 1.0, 0.0]);
+
+    // Middle rings: s = 1..STACKS, j = 0..SLICES (one ring vertex per slice).
+    for s in 1..STACKS {
+        #[allow(clippy::cast_precision_loss, reason = "STACKS << f32 mantissa range")]
+        let theta = PI * (s as f32) / (STACKS as f32);
+        let sin_t = theta.sin();
+        let cos_t = theta.cos();
+        for j in 0..SLICES {
+            #[allow(clippy::cast_precision_loss, reason = "SLICES << f32 mantissa range")]
+            let phi = 2.0 * PI * (j as f32) / (SLICES as f32);
+            let nx = sin_t * phi.cos();
+            let ny = cos_t;
+            let nz = sin_t * phi.sin();
+            positions.push([RADIUS * nx, RADIUS * ny, RADIUS * nz]);
+            // Unit-length radial normal — smooth across faces.
+            normals.push([nx, ny, nz]);
+        }
+    }
+
+    // South pole vertex (last index).
+    positions.push([0.0, -RADIUS, 0.0]);
+    normals.push([0.0, -1.0, 0.0]);
+
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "STACKS*SLICES = 216 verts max, well under u32::MAX"
+    )]
+    let south_idx = (positions.len() - 1) as u32;
+    let ring_base: u32 = 1; // first ring (s=1) starts at index 1.
+
+    let mut indices: Vec<u32> = Vec::with_capacity(SLICES * 6 * (STACKS - 1));
+
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "SLICES = 18, well under u32::MAX"
+    )]
+    let slices_u32 = SLICES as u32;
+
+    // Top cap: fan from north pole to ring 0. Wound (pole,
+    // ring0[(j+1)%slices], ring0[j]) so the cross-product flat
+    // normal points outward (+Y at the top).
+    for j in 0..SLICES {
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "j < SLICES = 18, well under u32::MAX"
+        )]
+        let j_u32 = j as u32;
+        let next_j = (j_u32 + 1) % slices_u32;
+        indices.push(0); // north pole
+        indices.push(ring_base + next_j);
+        indices.push(ring_base + j_u32);
+    }
+
+    // Middle bands: for each band between ring s and ring s+1 (s in
+    // 1..STACKS-1), each slice quad becomes two triangles. Standard
+    // (upper-left, upper-right, lower-right) + (upper-left,
+    // lower-right, lower-left) winding so the flat normals point
+    // outward.
+    for s_band in 0..(STACKS - 2) {
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "s_band < STACKS-2 = 10, well under u32::MAX"
+        )]
+        let upper_base = ring_base + (s_band as u32) * slices_u32;
+        let lower_base = upper_base + slices_u32;
+        for j in 0..SLICES {
+            #[allow(
+                clippy::cast_possible_truncation,
+                reason = "j < SLICES = 18, well under u32::MAX"
+            )]
+            let j_u32 = j as u32;
+            let next_j = (j_u32 + 1) % slices_u32;
+            let a = upper_base + j_u32;
+            let b = upper_base + next_j;
+            let c = lower_base + next_j;
+            let d = lower_base + j_u32;
+            // Triangle 1: upper-left, upper-right, lower-right.
+            indices.push(a);
+            indices.push(b);
+            indices.push(c);
+            // Triangle 2: upper-left, lower-right, lower-left.
+            indices.push(a);
+            indices.push(c);
+            indices.push(d);
+        }
+    }
+
+    // Bottom cap: fan from last middle ring to south pole. Wound
+    // (ring_last[j], ring_last[(j+1)%slices], south_pole) so the
+    // flat normal points outward (-Y at the bottom).
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "STACKS-2 = 10, well under u32::MAX"
+    )]
+    let last_ring_base = ring_base + ((STACKS - 2) as u32) * slices_u32;
+    for j in 0..SLICES {
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "j < SLICES = 18, well under u32::MAX"
+        )]
+        let j_u32 = j as u32;
+        let next_j = (j_u32 + 1) % slices_u32;
+        indices.push(last_ring_base + j_u32);
+        indices.push(last_ring_base + next_j);
+        indices.push(south_idx);
+    }
+
+    // Sort triangles back-to-front along the isometric (1,1,1)
+    // camera direction so the visible (+X+Y+Z hemisphere) triangles
+    // draw last, winning the depth_write_enabled=false overdraw race
+    // on the editor's lit-mesh pipeline.
+    let mut tris: Vec<[u32; 3]> = indices
+        .chunks_exact(3)
+        .map(|c| [c[0], c[1], c[2]])
+        .collect();
+    tris.sort_by(|a, b| {
+        let sum_a = positions[a[0] as usize][0]
+            + positions[a[0] as usize][1]
+            + positions[a[0] as usize][2]
+            + positions[a[1] as usize][0]
+            + positions[a[1] as usize][1]
+            + positions[a[1] as usize][2]
+            + positions[a[2] as usize][0]
+            + positions[a[2] as usize][1]
+            + positions[a[2] as usize][2];
+        let sum_b = positions[b[0] as usize][0]
+            + positions[b[0] as usize][1]
+            + positions[b[0] as usize][2]
+            + positions[b[1] as usize][0]
+            + positions[b[1] as usize][1]
+            + positions[b[1] as usize][2]
+            + positions[b[2] as usize][0]
+            + positions[b[2] as usize][1]
+            + positions[b[2] as usize][2];
+        sum_a
+            .partial_cmp(&sum_b)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let sorted_indices: Vec<u32> = tris.into_iter().flatten().collect();
+
+    MeshAsset {
+        positions,
+        normals,
+        texcoords: vec![],
+        indices: sorted_indices,
+        material_index: Some(0),
+    }
+}

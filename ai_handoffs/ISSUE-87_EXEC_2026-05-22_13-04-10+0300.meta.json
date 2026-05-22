@@ -1,0 +1,17 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-87",
+    "packet_type": "EXEC",
+    "author": "Executor / Claude",
+    "timestamp": "2026-05-22_13-04-10+0300",
+    "related_files": [
+                          "crates/io-gltf/tests/fixtures/smooth_normal_sphere.glb — new committed binary fixture (10 528 bytes), procedurally generated UV sphere with smooth NORMAL accessor",
+                          "crates/io-gltf/tests/common/mod.rs — added `smooth_normal_sphere_fixture_path` / `make_smooth_normal_sphere_glb` / `smooth_normal_sphere_mesh`",
+                          "crates/io-gltf/tests/smooth_normal_sphere_test.rs — new fixture materialisation + property test",
+                          "editor/rge-editor/src/main.rs — added the inline ISSUE-87 visual acceptance test inside the existing `#[cfg(test)] mod tests` block"
+                      ],
+    "status": "AWAITING_REVIEW",
+    "handoff_status": "COMPLETE",
+    "next_role": "REVIEWER_AI",
+    "exit_code": 0
+}

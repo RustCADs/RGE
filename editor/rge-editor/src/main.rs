@@ -2205,6 +2205,159 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
+    // ISSUE-87 — smooth-normal sphere imported-vs-flat-recompute readback
+    //
+    // The cube fixture's NORMAL accessor happens to match flat
+    // recompute byte-for-byte, so the existing
+    // `load_all_glb_meshes_preserves_input_normals_when_present`
+    // test only proves the normals reach the RenderMesh — it cannot
+    // distinguish the imported-NORMAL path from the recompute path
+    // visibly. The smooth-normal sphere fixture closes that
+    // coverage gap: per-vertex smooth normals (= normalized radial
+    // vector) differ meaningfully from per-triangle cross-product
+    // flat normals across every triangle, so Lambert+Phong shading
+    // produces a numerically distinct central-row pixel signature
+    // between the two paths.
+    // -----------------------------------------------------------------------
+
+    /// **ISSUE-87 acceptance gate.** Loads `smooth_normal_sphere.glb`
+    /// through the production `load_all_glb_meshes` path (imported
+    /// NORMAL accessor → vertex-tripled smooth normals), then
+    /// reconstructs the same geometry test-locally with `None`
+    /// normals passed to `RenderMesh::from_buffers_with_attributes`
+    /// (forces cross-product flat-recompute). Renders both shells
+    /// through `render_one_frame_to_readback` and asserts the
+    /// central horizontal row's accumulated absolute RGB delta
+    /// clears a driver-noise-resistant numeric threshold. Failing
+    /// this test means either (a) the M3 imported-NORMAL path
+    /// regressed to recomputing flat normals, or (b) the
+    /// recompute path picked up imported normals — both of which
+    /// would silently break smooth shading on real glTF imports.
+    #[test]
+    fn smooth_normal_sphere_imported_vs_flat_recompute_visibly_differs_end_to_end() {
+        use rge_io_gltf::import_glb;
+
+        let path = fixtures_path().join("smooth_normal_sphere.glb");
+        if skip_if_fixture_missing(&path) {
+            return;
+        }
+
+        // Path A — imported smooth normals via the real loader.
+        let (meshes_imp, base_colors, textures) =
+            load_all_glb_meshes(&path).expect("load_all_glb_meshes(smooth_normal_sphere.glb)");
+        let textures_for_shell_imp: Vec<Option<(u32, u32, Vec<u8>)>> = textures
+            .into_iter()
+            .map(|t| t.map(|t| (t.width, t.height, t.pixels)))
+            .collect();
+        let mut shell_imp = EditorShell::with_render_meshes_and_base_colors_and_textures(
+            meshes_imp,
+            base_colors.clone(),
+            textures_for_shell_imp,
+        );
+        let Some(buf_imp) = render_shell_one_frame(&mut shell_imp) else {
+            return;
+        };
+
+        // Path B — re-import the fixture directly, world-bake
+        // positions exactly the way `load_all_glb_meshes` does, then
+        // construct the RenderMesh with `normals = None` so
+        // brep-render recomputes flat normals from the (same) baked
+        // positions. Material / texture inputs match Path A so the
+        // ONLY observable difference is the per-fragment normal.
+        let mut cache_flat = MemoryCache::new();
+        let scene_flat = import_glb(&path, &mut cache_flat)
+            .expect("import_glb(smooth_normal_sphere.glb) for flat-recompute path");
+        let (entity, mh) = scene_flat
+            .iter()
+            .find_map(|(e, comps)| comps.mesh.map(|m| (e, m)))
+            .expect("scene carries one mesh-bearing entity");
+        let world_flat = accumulate_world_transform(&scene_flat, entity);
+        let mesh_asset_flat = cache_flat
+            .get_mesh(&mh)
+            .expect("flat-path mesh present in cache");
+        let baked_flat = bake_positions(&mesh_asset_flat.positions, &world_flat);
+        let mesh_flat = RenderMesh::from_buffers_with_attributes(
+            &baked_flat,
+            &mesh_asset_flat.indices,
+            None,
+            None, // forces brep-render flat recompute from baked positions
+            None,
+        );
+        let mut shell_flat = EditorShell::with_render_meshes_and_base_colors_and_textures(
+            vec![mesh_flat],
+            base_colors,
+            vec![None],
+        );
+        let Some(buf_flat) = render_shell_one_frame(&mut shell_flat) else {
+            return;
+        };
+
+        // Central-row pixel comparison. A pixel counts as on-mesh
+        // when EITHER render's per-channel delta from DEFAULT_CLEAR
+        // exceeds CUBE_THRESHOLD on at least one channel — that way
+        // we count the union of sphere footprints, then accumulate
+        // the imported-vs-flat absolute delta over pixels that
+        // landed on the sphere in both renders (the intersection).
+        let y = VISUAL_H / 2;
+        let mut common_on_mesh_pixels: u32 = 0;
+        let mut sum_abs_rgb_delta: u64 = 0;
+        let mut max_single_pixel_delta: u32 = 0;
+        for x in 0..VISUAL_W {
+            let pi = buf_imp.pixel(x, y).expect("imported-row pixel");
+            let pf = buf_flat.pixel(x, y).expect("flat-row pixel");
+            let on_mesh = |p: (u8, u8, u8, u8)| -> bool {
+                (i32::from(p.0) - BG_R).abs() > CUBE_THRESHOLD
+                    || (i32::from(p.1) - BG_G).abs() > CUBE_THRESHOLD
+                    || (i32::from(p.2) - BG_B).abs() > CUBE_THRESHOLD
+            };
+            if on_mesh(pi) && on_mesh(pf) {
+                common_on_mesh_pixels += 1;
+                let dr = (i32::from(pi.0) - i32::from(pf.0)).unsigned_abs();
+                let dg = (i32::from(pi.1) - i32::from(pf.1)).unsigned_abs();
+                let db = (i32::from(pi.2) - i32::from(pf.2)).unsigned_abs();
+                let pixel_delta = dr + dg + db;
+                sum_abs_rgb_delta += u64::from(pixel_delta);
+                max_single_pixel_delta = max_single_pixel_delta.max(pixel_delta);
+            }
+        }
+
+        eprintln!(
+            "ISSUE-87 smooth_normal_sphere central-row metrics: \
+             common_on_mesh_pixels={common_on_mesh_pixels} \
+             sum_abs_rgb_delta={sum_abs_rgb_delta} \
+             max_single_pixel_delta={max_single_pixel_delta}"
+        );
+
+        // Gate 1 — enough commonly-on-mesh pixels to make the
+        // distribution comparison meaningful. The sphere occupies
+        // the central viewport region under the auto-frame camera,
+        // so the central row crosses the sphere across dozens of
+        // pixels; >8 is the protocol-required floor.
+        assert!(
+            common_on_mesh_pixels > 8,
+            "smooth_normal_sphere central row must hit the sphere in both \
+             imported-normal and flat-recompute renders; \
+             got common_on_mesh_pixels={common_on_mesh_pixels}"
+        );
+
+        // Gate 2 — driver-noise-resistant numeric threshold. Per
+        // ISSUE-87 task packet: `sum_abs_rgb_delta > 300` is the
+        // documented absolute floor large enough to reject driver
+        // rounding noise. Smooth-vs-flat on a 12×18 sphere lit by
+        // a directional light easily clears 1000+ on a 256×256
+        // viewport; 300 is the smallest literal threshold that
+        // still rejects driver-noise-only deltas.
+        assert!(
+            sum_abs_rgb_delta > 300,
+            "ISSUE-87: imported-normal vs flat-recompute central-row \
+             sum_abs_rgb_delta must exceed 300 (driver-noise floor); \
+             got sum_abs_rgb_delta={sum_abs_rgb_delta} \
+             common_on_mesh_pixels={common_on_mesh_pixels} \
+             max_single_pixel_delta={max_single_pixel_delta}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
     // Dispatch M2 — per-mesh `base_color_texture` propagation tests
     // -----------------------------------------------------------------------
 
