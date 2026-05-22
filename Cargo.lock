@@ -4400,6 +4400,7 @@ name = "rge-editor"
 version = "0.0.1"
 dependencies = [
  "glam 0.30.10",
+ "notify",
  "rge-brep-render",
  "rge-cad-core",
  "rge-cad-projection",
