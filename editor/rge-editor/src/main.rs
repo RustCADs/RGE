@@ -1484,6 +1484,28 @@ mod tests {
     const VISUAL_W: u32 = 256;
     const VISUAL_H: u32 = 256;
 
+    /// Serializes the GPU-bearing tests in this binary. Multiple wgpu
+    /// `GfxContext` instances created and torn down concurrently inside
+    /// the same test process triggered Windows
+    /// `STATUS_ACCESS_VIOLATION (0xc0000005)` under the canonical
+    /// workspace verification gate (`cargo test --workspace
+    /// --all-targets --no-fail-fast -j 1`), after all visible tests
+    /// reported `ok`. The cargo test harness runs tests within one
+    /// binary on a thread pool; each GPU test below builds an
+    /// `EditorShell` that owns a `GfxContext`, and concurrent
+    /// init / teardown of those contexts is the failure source.
+    /// Each GPU test acquires this guard at its top so the lock
+    /// outlives the local `EditorShell` (variables drop in reverse
+    /// of declaration), meaning shell teardown is also serialized.
+    static GPU_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Acquire the GPU-test serialization guard. Poisoned mutexes
+    /// (a prior panicking test) are recovered so a single failure
+    /// does not block the remaining GPU tests.
+    fn gpu_test_lock() -> std::sync::MutexGuard<'static, ()> {
+        GPU_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
     /// Common end-to-end render pipeline: load a glTF fixture through
     /// the production loader, build an `EditorShell`, render one
     /// headless frame, return the readback buffer (or `None` to skip
@@ -1611,6 +1633,7 @@ mod tests {
     /// loader and the real shell construction path).
     #[test]
     fn textured_uv_cube_renders_with_visible_color_variance_end_to_end() {
+        let _gpu_lock = gpu_test_lock();
         let Some(buf) = render_fixture_end_to_end("textured_uv_cube.glb") else {
             return;
         };
@@ -1643,6 +1666,7 @@ mod tests {
     /// bound (1×1 placeholder path).
     #[test]
     fn cube_glb_renders_lit_blue_distinct_from_background_end_to_end() {
+        let _gpu_lock = gpu_test_lock();
         let Some(buf) = render_fixture_end_to_end("cube.glb") else {
             return;
         };
@@ -1683,6 +1707,7 @@ mod tests {
     /// green > blue, red ≈ green within tolerance).
     #[test]
     fn pbr_material_glb_renders_lit_gold_distinct_from_background_end_to_end() {
+        let _gpu_lock = gpu_test_lock();
         let Some(buf) = render_fixture_end_to_end("pbr_material.glb") else {
             return;
         };
@@ -1783,6 +1808,7 @@ mod tests {
     /// updated prebuilt vecs → next render reflects new content.
     #[test]
     fn r_key_reload_swaps_to_textured_uv_cube_end_to_end() {
+        let _gpu_lock = gpu_test_lock();
         let Some(mut shell) = build_shell_from_fixture("cube.glb") else {
             return;
         };
@@ -1851,6 +1877,7 @@ mod tests {
     /// signature.
     #[test]
     fn r_key_reload_on_missing_file_preserves_prior_frame() {
+        let _gpu_lock = gpu_test_lock();
         let Some(mut shell) = build_shell_from_fixture("cube.glb") else {
             return;
         };
@@ -1926,6 +1953,7 @@ mod tests {
     ///    `CUBE_THRESHOLD` relative to frames 1/2.
     #[test]
     fn r_key_reload_on_malformed_glb_retains_then_recovers() {
+        let _gpu_lock = gpu_test_lock();
         // Stage a temp file with wrong-magic bytes. The direct hook
         // assertion below must run regardless of GPU availability, so
         // we build the malformed path before any GPU-dependent setup.
@@ -2095,6 +2123,7 @@ mod tests {
 
     #[test]
     fn watcher_drain_drives_shell_reload_through_failure_and_recovery() {
+        let _gpu_lock = gpu_test_lock();
         // Skip cleanly on no-GPU CI: the end-to-end success leg
         // needs `reload_render_assets`, which requires `gfx_ctx`.
         let Some(mut shell) = build_shell_from_fixture("cube.glb") else {
@@ -2414,6 +2443,7 @@ mod tests {
     /// would silently break smooth shading on real glTF imports.
     #[test]
     fn smooth_normal_sphere_imported_vs_flat_recompute_visibly_differs_end_to_end() {
+        let _gpu_lock = gpu_test_lock();
         use rge_io_gltf::import_glb;
 
         let path = fixtures_path().join("smooth_normal_sphere.glb");
