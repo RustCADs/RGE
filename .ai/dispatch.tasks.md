@@ -856,7 +856,7 @@ is the only safeguard against selector drift.
      does not manually run cargo commands, the release-only perf
      harness, or fresh recorder-host measurements.
 
-18. **Read-only preflight: script-bench memory-soak `peak_rss` / `vss_delta` deferral reconciliation.**
+18. **[DONE 2026-05-23 via PR #121 / commit `5b770bf`] Read-only preflight: script-bench memory-soak `peak_rss` / `vss_delta` deferral reconciliation.**
    **NO source edits.** Audit whether the current documentation still
    accurately treats `peak_rss` / `vss_delta` soak-harness evidence as
    a future improvement, given that `crates/script-bench/BASELINE.md`
