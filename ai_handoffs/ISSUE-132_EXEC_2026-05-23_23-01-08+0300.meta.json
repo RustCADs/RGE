@@ -1,0 +1,14 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-132",
+    "packet_type": "EXEC",
+    "author": "Executor / Claude",
+    "timestamp": "2026-05-23_23-01-08+0300",
+    "related_files": [
+                          "ai_handoffs/ISSUE-132_EXEC_2026-05-23_23-01-08+0300.md — corrected read-only World-only CommandBus action preflight report (this file)."
+                      ],
+    "status": "AWAITING_REVIEW",
+    "handoff_status": "COMPLETE",
+    "next_role": "REVIEWER_AI",
+    "exit_code": 0
+}
