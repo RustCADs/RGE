@@ -1091,6 +1091,137 @@ is the only safeguard against selector drift.
      does not manually run cargo commands, the one-hour soak, or fresh
      recorder-host measurements.
 
+20. **Read-only preflight: `frame_graph/compile.rs` legibility split plan.**
+   **NO source edits.** Audit the optional `compile.rs` legibility
+   refactor deferral before any source movement. The target file is
+   `crates/gfx/src/frame_graph/compile.rs` (~29 KB). Determine whether
+   it can be split mechanically into smaller modules without behavior
+   changes, or whether the file is cohesive enough that the correct
+   follow-up is `NEEDS_HUMAN` / no-op.
+
+   **Allowed read-only scope**:
+   - MAY read `crates/gfx/src/frame_graph/compile.rs`.
+   - MAY read sibling frame-graph files needed to understand module
+     boundaries: `crates/gfx/src/frame_graph/mod.rs`,
+     `crates/gfx/src/frame_graph/resource_map.rs`,
+     `crates/gfx/src/frame_graph/texture_pool.rs`, and other
+     `crates/gfx/src/frame_graph/**` files only if `compile.rs`
+     imports or documents them.
+   - MAY read `crates/gfx/tests/**` and `crates/gfx/src/**` only to
+     identify tests/callers that would verify a mechanical split.
+   - MAY read architecture-lint code/docs that define line-count or
+     `SPLIT-EXEMPTION` rules.
+   - MAY read `plans/IMPLEMENTATION.md`, `Status.md`, `HANDOFF.md`,
+     and `change.md` only for the existing deferral wording.
+   - MAY use read-only `rg`, `git grep`, `git show`, `git log`,
+     `wc`, and file-read commands. Do not run cargo commands; this is
+     a documentary split-plan audit only.
+
+   **Allowed file surface**:
+   - MAY add exactly one execution report packet:
+     `ai_handoffs/ISSUE-*_EXEC_*.md`, plus its `.meta.json` sidecar
+     if produced by the orchestrator.
+
+   **Files that MUST NOT be touched**:
+   - Any tracked repository file outside this dispatch's own
+     `ai_handoffs/` EXEC packet.
+   - Any source file, test file, fixture, Cargo manifest,
+     `Cargo.lock`, workflow file, script, schema, lint file, doc,
+     ADR, `Status.md`, `HANDOFF.md`, `change.md`, or existing handoff
+     packet.
+
+   **Five-question compile split answer block**:
+   The EXEC report must contain a section titled exactly
+   `## 5-Question Compile Split Preflight Answer Block` and answer
+   exactly these headings:
+   - `Q1. What responsibilities currently live in crates/gfx/src/frame_graph/compile.rs, and how large is each region?`
+   - `Q2. What are the natural module boundaries, if any, that preserve public API and behavior?`
+   - `Q3. What tests or callers cover each proposed split boundary today?`
+   - `Q4. Is a mechanical split safe without changing algorithms, data structures, serialization, or frame-graph behavior?`
+   - `Q5. What is the smallest safe follow-up dispatch: mechanical split, docs-only/no-op, or NEEDS_HUMAN?`
+
+   **Acceptance criteria**:
+   - Q1 cites line ranges and names the major responsibilities in
+     `compile.rs` (types, validation, aliasing, ordering, tests, or
+     equivalent actual regions discovered by the audit).
+   - Q2 proposes concrete module names and file paths if a split is
+     safe, or explains why no split is justified.
+   - Q3 identifies existing tests/callers that would catch regressions,
+     including exact test names or commands if a follow-up is proposed.
+   - Q4 explicitly states whether the split can be mechanical and
+     behavior-preserving; any need to change algorithms or public API
+     must route to `NEEDS_HUMAN`.
+   - Q5 names exactly one smallest safe follow-up with proposed allowed
+     files, must-not-touch surfaces, verification gates, and halt
+     conditions. If the split would be broad or design-sensitive,
+     recommend `NEEDS_HUMAN` instead.
+
+   **Halt conditions**:
+   - Answering Q1-Q5 requires editing source, running cargo, running
+     architecture lints, or changing the `SPLIT-EXEMPTION` doctrine.
+     Halt; this dispatch is read-only.
+   - The audit discovers `compile.rs` already has a current
+     `SPLIT-EXEMPTION` that intentionally defers or rejects splitting
+     and there is no new pressure beyond old docs. Halt with
+     `NEEDS_HUMAN` or recommend no-op; do not force a split.
+   - Q5 would require changing algorithms, data structures,
+     serialization formats, frame-graph semantics, public APIs, or test
+     expectations. Halt with `NEEDS_HUMAN`; this is not a mechanical
+     legibility split.
+   - The smallest follow-up would touch more than the frame-graph
+     module plus tests. Halt with `NEEDS_HUMAN`.
+   - Any tracked file is already dirty in a way that makes the
+     read-only audit ambiguous.
+
+   **Scope-preserving halt clause** - the orchestrator's canonical
+   verify gate (`.ai/dispatch.verify.ps1`) runs after Claude execute
+   even on read-only audits. If verify fails on a target OUTSIDE the
+   audit scope (anything beyond `crates/gfx/src/frame_graph/**`,
+   `crates/gfx/tests/**`, architecture-lint split-rule files,
+   `plans/IMPLEMENTATION.md`, `Status.md`, `HANDOFF.md`, `change.md`,
+   or this dispatch's own `ai_handoffs/` packet), the orchestrator may
+   auto-route a CORRECTION packet asking the executor to fix the
+   failure. When that happens **the executor MUST halt**: write an
+   EXECUTION_REPORT with `EXEC_STATUS: blocked` and
+   `STATUS: NEEDS_HUMAN`, do NOT execute the correction. Read-only
+   intent is the entire reason this task is in the brief; a
+   correction-round source fix to an unrelated code/test failure
+   expands a split-plan audit into a source-fix dispatch and must
+   become its own ticket.
+
+   **Verbatim review-gate strings** - the autonomous selector MUST
+   copy these seven strings, character-for-character, into the filed
+   GitHub issue body. No paraphrasing, no substitution, no reflowing.
+   A packet that lacks any one of them verbatim is bounced at review:
+
+   ```
+   MUST be a read-only compile.rs legibility split preflight; do not edit source, tests, docs, Cargo.toml, Cargo.lock, workflows, scripts, or existing packets
+   MUST produce a 5-question compile split preflight answer block covering current responsibilities, natural module boundaries, test/caller coverage, mechanical-safety judgment, and smallest follow-up
+   MUST inspect crates/gfx/src/frame_graph/compile.rs, crates/gfx/src/frame_graph/mod.rs, crates/gfx/src/frame_graph/resource_map.rs, crates/gfx/src/frame_graph/texture_pool.rs, crates/gfx/tests/**, and the architecture-lint split-rule files
+   MUST NOT run cargo commands, tests, formatters, architecture lints, .ai/dispatch.verify.ps1, or source-generation commands
+   MUST halt with NEEDS_HUMAN if the split would change algorithms, data structures, serialization formats, frame-graph semantics, public APIs, or test expectations
+   MUST name exact proposed follow-up file paths if and only if the split is mechanical and behavior-preserving
+   MUST halt rather than combine a split implementation with this audit
+   ```
+
+   **Done-criterion**:
+   - One `ISSUE-*_EXEC_*.md` report with the exact
+     `## 5-Question Compile Split Preflight Answer Block` section and
+     Q1-Q5 headings above.
+   - No source, test, doc, Cargo, workflow, lint, schema, script,
+     status, or existing handoff packet edits.
+   - `git status --short --untracked-files=no` is clean before and
+     after writing the EXEC report.
+   - Verification claims are read-only only: document the `rg`,
+     `git grep`, `git show`, `git log`, `wc`, and file-read commands
+     used for the audit; do not manually run cargo tests, builds, fmt,
+     architecture lints, or `.ai/dispatch.verify.ps1`. The
+     orchestrator will still run its canonical verification gate after
+     execution.
+   - Q5 names one smallest next dispatch and includes its proposed
+     allowed files, must-not-touch surfaces, verification gates, and
+     halt conditions, unless the correct outcome is `NEEDS_HUMAN`.
+
 16. **[DONE 2026-05-23 via PR #117 / commit `26a9ba1`] Read-only preflight: editor-shell render-frame perf-harness reconciliation.**
    **NO source edits.** Audit the apparent mismatch between the older
    V0 / baseline deferral that says a non-winit editor-shell
