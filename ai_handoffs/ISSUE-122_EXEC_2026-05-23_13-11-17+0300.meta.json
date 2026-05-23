@@ -1,0 +1,22 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-122",
+    "packet_type": "EXEC",
+    "author": "Executor / Claude",
+    "timestamp": "2026-05-23_13-11-17+0300",
+    "related_files": [
+                          "plans/IMPLEMENTATION.md — Phase 3.4 exit-criterion #3 bullet edited only: present-tense parenthetical re-scoped to the 2026-05-12 run + forward-current 2026-05-17 re-validation pointer appended within the same bullet; 2026-05-12 CLOSED framing preserved verbatim.",
+                          "Status.md — new 2026-05-23 ISSUE-122 snapshot prepended directly above the existing 2026-05-23 ISSUE-118 snapshot at the former line 5; older snapshots (including the 2026-05-14 v0-cert and 2026-05-14 Job-10 MAIN-ORDERED closeout) retained verbatim below.",
+                          "HANDOFF.md — parallel 2026-05-23 ISSUE-122 snapshot prepended directly above the existing 2026-05-23 ISSUE-118 snapshot at the former line 5; older snapshots retained verbatim below.",
+                          "change.md — one new 2026-05-23 ISSUE-122 entry appended at the end after the existing 2026-05-23 ISSUE-118 entry; no existing entry modified.",
+                          "crates/script-bench/BASELINE.md — single forward cross-reference paragraph appended at the end of the existing \"Memory-soak process-memory metrics — harness revision 2026-05-16\" section pointing forward to the already-committed \"Formal 1-hour memory soak — RUN 2026-05-17 (process-memory metrics enabled)\" section above; the 2026-05-16 section body and the 2026-05-12 / 2026-05-17 RUN sections were not touched.",
+                          "ai_handoffs/ISSUE-122_TASK_2026-05-23_13-01-01+0300.md — TASK packet (read; not modified; untracked).",
+                          "ai_handoffs/ISSUE-122_TASK_2026-05-23_13-01-01+0300.meta.json — TASK sidecar (already untracked at start; not modified).",
+                          "ai_handoffs/ISSUE-120_EXEC_2026-05-23_12-47-55+0300.md — load-bearing audit basis (read; not modified).",
+                          "ai_handoffs/ISSUE-122_EXEC_2026-05-23_13-11-17+0300.md — this EXEC packet (new)."
+                      ],
+    "status": "AWAITING_REVIEW",
+    "handoff_status": "COMPLETE",
+    "next_role": "REVIEWER_AI",
+    "exit_code": 0
+}
