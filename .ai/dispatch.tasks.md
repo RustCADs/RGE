@@ -837,7 +837,7 @@ is the only safeguard against selector drift.
      dispatch's own `ai_handoffs/` packet. Zero Cargo, source, test,
      fixture, workflow, status, or unrelated doc edits.
 
-10. **Delete dead `rge-io-image` asset-store stub.**
+10. **[DONE 2026-05-23 via PR #105 / commit `7ca7895`] Delete dead `rge-io-image` asset-store stub.**
    Source-cleanup dispatch, pre-audited by the #98 / #99 read-only
    `rge-io-image` cache-surface preflight. That audit found
    `crates/io-image/src/asset_store_stub.rs` is reachable only as a
