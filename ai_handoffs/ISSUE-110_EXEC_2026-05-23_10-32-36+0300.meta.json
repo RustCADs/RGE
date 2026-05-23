@@ -1,0 +1,28 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-110",
+    "packet_type": "EXEC",
+    "author": "Executor / Claude",
+    "timestamp": "2026-05-23_10-32-36+0300",
+    "related_files": [
+                          "tools/architecture-lints/src/kernel_isolation.rs — read-only audit (no edits)",
+                          "tools/architecture-lints/tests/kernel_isolation_test.rs — read-only audit (no edits)",
+                          "Cargo.toml — read-only audit (no edits)",
+                          "crates/io-gltf/Cargo.toml — read-only audit (no edits)",
+                          "crates/io-gltf/src/lib.rs — read-only audit (no edits)",
+                          "crates/io-gltf/src/image.rs — read-only audit (no edits)",
+                          "crates/io-gltf/src/import.rs — read-only audit (no edits)",
+                          "crates/io-gltf/src/export.rs — read-only audit (no edits)",
+                          "crates/io-image/Cargo.toml — read-only audit (no edits)",
+                          "crates/io-image/src/lib.rs — read-only audit (no edits)",
+                          "crates/io-image/src/format_detect.rs — read-only audit (no edits)",
+                          "crates/io-step/Cargo.toml — read-only audit (no edits)",
+                          "crates/io-step/src/lib.rs — read-only audit (no edits)",
+                          "crates/io-stl/Cargo.toml — read-only audit (no edits)",
+                          "crates/io-stl/src/lib.rs — read-only audit (no edits)"
+                      ],
+    "status": "AWAITING_REVIEW",
+    "handoff_status": "COMPLETE",
+    "next_role": "REVIEWER_AI",
+    "exit_code": 0
+}
