@@ -989,6 +989,108 @@ is the only safeguard against selector drift.
      allowed files, must-not-touch surfaces, verification gates, and
      halt conditions, unless the correct outcome is `NEEDS_HUMAN`.
 
+19. **Docs-only reconciliation: script-bench memory-soak `peak_rss` / `vss_delta` deferral text.**
+   Reconcile stale current-state documentation now that task #18
+   established that script-bench has both committed process-memory
+   harness support and committed one-hour recorder-host result evidence
+   for `peak_rss_bytes` / `vss_delta_bytes` in
+   `crates/script-bench/BASELINE.md`. This is the exact smallest
+   follow-up named by #18 Q5: add forward-current reconciliation text
+   while preserving dated 2026-05-12 / 2026-05-14 history.
+
+   **Allowed file surface**:
+   - EDIT `plans/IMPLEMENTATION.md` only to reconcile the Phase 3.4
+     memory-soak exit-criterion bullet around line 318: preserve the
+     2026-05-12 CLOSED record, but add forward-current text that the
+     process-memory metrics were re-validated on 2026-05-17 with
+     `peak_rss_bytes` / `vss_delta_bytes` captured; point to
+     `crates/script-bench/BASELINE.md`.
+   - EDIT `Status.md` only by prepending a new dated snapshot that
+     records the `peak_rss` / `vss_delta` soak-harness deferral as
+     resolved by the 2026-05-17 metrics-enabled run. Preserve existing
+     dated snapshots.
+   - EDIT `HANDOFF.md` only by prepending a matching new dated
+     snapshot. Preserve existing dated snapshots.
+   - EDIT `change.md` only by appending one new chronological entry
+     for this docs reconciliation. Preserve all existing entries.
+   - EDIT `crates/script-bench/BASELINE.md` only to append a minimal
+     forward cross-reference at the end of the 2026-05-16
+     "Memory-soak process-memory metrics" section's future-tense
+     closing paragraph, pointing to the 2026-05-17 formal one-hour run
+     already recorded earlier in the same file.
+   - MAY add this dispatch's own `ai_handoffs/ISSUE-*_EXEC_*.md`
+     packet plus `.meta.json` sidecar if produced by the orchestrator.
+
+   **Files that MUST NOT be touched**:
+   - `crates/script-bench/src/**`, `crates/script-bench/benches/**`,
+     `crates/script-bench/tests/**`, and `crates/script-bench/Cargo.toml`.
+   - Any other source, test, bench, fixture, Cargo manifest,
+     `Cargo.lock`, workflow, script, schema, lint file, ADR, doctrine
+     doc, existing handoff packet, or unrelated doc.
+   - Existing historical entries in `change.md`, `Status.md`, and
+     `HANDOFF.md`; this task is prepend/append reconciliation only.
+
+   **Cargo.lock policy**:
+   - Zero Cargo metadata changes. If `Cargo.toml` or `Cargo.lock`
+     changes at all, halt with `NEEDS_HUMAN`.
+
+   **Halt conditions**:
+   - Reconciling the text appears to require editing script-bench
+     source, tests, benches, `Cargo.toml`, or the memory-soak harness
+     itself. Halt with `NEEDS_HUMAN`.
+   - The change would require running a fresh one-hour memory soak,
+     selecting a new pass/fail threshold for memory growth, or copying
+     all one-hour recorder-host metrics into Status/HANDOFF/change.
+     Halt; this is forward reconciliation, not a new certification.
+   - The change would require retroactively rewriting any existing
+     `change.md` entry, dated `Status.md` snapshot, dated `HANDOFF.md`
+     snapshot, or existing `ai_handoffs/` packet. Halt.
+   - Any tracked file outside `plans/IMPLEMENTATION.md`, `Status.md`,
+     `HANDOFF.md`, `change.md`, `crates/script-bench/BASELINE.md`, and
+     this dispatch's own `ai_handoffs/` packet shows a diff after
+     execution. Halt rather than clean up unrelated changes.
+   - The executor cannot verify the task #18 Q5 basis from the landed
+     `ISSUE-120_EXEC` packet and current docs without running cargo or
+     the one-hour soak. Halt; do not rerun measurements.
+
+   **Verbatim review-gate strings** - the autonomous selector MUST
+   copy these seven strings, character-for-character, into the filed
+   GitHub issue body. No paraphrasing, no substitution, no reflowing.
+   A packet that lacks any one of them verbatim is bounced at review:
+
+   ```
+   MUST edit only plans/IMPLEMENTATION.md, Status.md, HANDOFF.md, change.md, and crates/script-bench/BASELINE.md (except the dispatch's own ai_handoffs/ packet)
+   MUST NOT modify crates/script-bench/src/**, crates/script-bench/benches/**, crates/script-bench/tests/**, crates/script-bench/Cargo.toml, Cargo.toml, or Cargo.lock
+   MUST preserve existing dated history by prepending Status.md / HANDOFF.md snapshots and appending one change.md entry rather than rewriting old entries
+   MUST preserve the 2026-05-12 memory-soak CLOSED record while adding forward-current 2026-05-17 peak_rss / vss_delta evidence text
+   MUST add only a minimal forward cross-reference in crates/script-bench/BASELINE.md from the 2026-05-16 harness-revision section to the existing 2026-05-17 formal one-hour run
+   MUST NOT run cargo commands, the one-hour memory soak, fresh recorder-host measurements, or select new memory-growth thresholds
+   MUST halt with NEEDS_HUMAN rather than changing script-bench source/harness code or rewriting historical Status.md / HANDOFF.md / change.md entries
+   ```
+
+   **Done-criterion**:
+   - `plans/IMPLEMENTATION.md` no longer leaves the Phase 3.4
+     memory-soak bullet as a present-tense "no explicit peak_rss /
+     vss_delta capture" limitation; it preserves the 2026-05-12 CLOSED
+     record and adds forward-current 2026-05-17 evidence text.
+   - `Status.md` and `HANDOFF.md` have new prepended dated snapshots
+     that update the present-tense deferral list while preserving old
+     dated snapshots.
+   - `change.md` has one new append-only chronological entry for the
+     reconciliation; old entries remain byte-for-byte historical
+     records.
+   - `crates/script-bench/BASELINE.md` gains only a minimal
+     forward-reference from the 2026-05-16 harness-revision section to
+     the existing 2026-05-17 formal one-hour run section.
+   - Script-bench source, tests, benches, Cargo files, workflows,
+     scripts, schemas, and existing packets are untouched.
+   - Verification: `git diff --check` exits 0; `git status
+     --short --untracked-files=no` before/after shows only the five
+     allowed docs once staged/committed by the queue; the orchestrator's
+     canonical `.ai/dispatch.verify.ps1` gate exits 0. The executor
+     does not manually run cargo commands, the one-hour soak, or fresh
+     recorder-host measurements.
+
 16. **[DONE 2026-05-23 via PR #117 / commit `26a9ba1`] Read-only preflight: editor-shell render-frame perf-harness reconciliation.**
    **NO source edits.** Audit the apparent mismatch between the older
    V0 / baseline deferral that says a non-winit editor-shell
