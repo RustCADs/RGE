@@ -1,0 +1,14 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-108",
+    "packet_type": "EXEC",
+    "author": "Executor / Claude",
+    "timestamp": "2026-05-23_10-08-36+0300",
+    "related_files": [
+                          "ai_handoffs/ISSUE-108_EXEC_2026-05-23_10-08-36+0300.md — this read-only CommandBus editor user-action integration preflight report."
+                      ],
+    "status": "NEEDS_HUMAN",
+    "handoff_status": "NEEDS_HUMAN",
+    "next_role": "HUMAN_ARBITER",
+    "exit_code": 0
+}

@@ -1,0 +1,21 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-108",
+    "packet_type": "TASK",
+    "author": "Planner / OpenAI Codex",
+    "timestamp": "2026-05-23_09-59-46+0300",
+    "related_files": [
+                          "crates/editor-actions/**",
+                          "crates/editor-shell/**",
+                          "editor/rge-editor/**",
+                          "crates/editor-state/**",
+                          "crates/cad-core/**",
+                          "crates/cad-projection/**",
+                          "kernel/ecs/**",
+                          "ai_handoffs/ISSUE-108_EXEC_*.md"
+                      ],
+    "status": "OPEN",
+    "handoff_status": "COMPLETE",
+    "next_role": "EXECUTOR_AI",
+    "exit_code": 0
+}
