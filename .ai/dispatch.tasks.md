@@ -856,6 +856,139 @@ is the only safeguard against selector drift.
      does not manually run cargo commands, the release-only perf
      harness, or fresh recorder-host measurements.
 
+18. **Read-only preflight: script-bench memory-soak `peak_rss` / `vss_delta` deferral reconciliation.**
+   **NO source edits.** Audit whether the current documentation still
+   accurately treats `peak_rss` / `vss_delta` soak-harness evidence as
+   a future improvement, given that `crates/script-bench/BASELINE.md`
+   appears to contain a 2026-05-17 "process-memory metrics enabled"
+   one-hour run with `peak_rss_bytes` and `vss_delta_bytes`, and
+   `crates/script-bench/src/script_host.rs` appears to contain
+   process-memory sampling support. This mirrors task #16's
+   reconciliation-audit shape: determine whether the deferral is stale,
+   narrower than it looks, or still open, then name exactly one
+   smallest follow-up.
+
+   **Allowed read-only scope**:
+   - MAY read `crates/script-bench/BASELINE.md`.
+   - MAY read `crates/script-bench/METHODOLOGY.md`.
+   - MAY read `crates/script-bench/src/script_host.rs`.
+   - MAY read `crates/script-bench/Cargo.toml`.
+   - MAY read `plans/IMPLEMENTATION.md`, `Status.md`, `HANDOFF.md`,
+     and `change.md` only for deferral/status wording.
+   - MAY read prior `ai_handoffs/` packets only if directly referenced
+     by the script-bench baseline or methodology notes.
+   - MAY use read-only `rg`, `git grep`, `git show`, `git log`, and
+     file-read commands. Do not run cargo commands or the one-hour soak
+     harness; this is a documentary reconciliation audit only.
+
+   **Allowed file surface**:
+   - MAY add exactly one execution report packet:
+     `ai_handoffs/ISSUE-*_EXEC_*.md`, plus its `.meta.json` sidecar
+     if produced by the orchestrator.
+
+   **Files that MUST NOT be touched**:
+   - Any tracked repository file outside this dispatch's own
+     `ai_handoffs/` EXEC packet.
+   - Any source file, test file, fixture, Cargo manifest,
+     `Cargo.lock`, workflow file, script, schema, lint file, doc,
+     ADR, `Status.md`, `HANDOFF.md`, `change.md`, or existing handoff
+     packet.
+
+   **Five-question memory-soak reconciliation answer block**:
+   The EXEC report must contain a section titled exactly
+   `## 5-Question Memory-Soak Reconciliation Answer Block` and answer
+   exactly these headings:
+   - `Q1. What process-memory metrics support exists today in script-bench, and what exact path records peak_rss / vss_delta?`
+   - `Q2. What formal one-hour memory-soak evidence exists today, and does it include peak_rss / vss_delta values?`
+   - `Q3. Which Status / HANDOFF / IMPLEMENTATION / BASELINE deferral text is stale, still accurate, or narrower than the current harness?`
+   - `Q4. Is any source or harness change still needed before docs can stop listing peak_rss / vss_delta as a future improvement?`
+   - `Q5. What is the smallest safe follow-up dispatch: docs-only reconciliation, measurement rerun, harness change, or NEEDS_HUMAN?`
+
+   **Acceptance criteria**:
+   - Q1 cites the source and methodology paths that implement or
+     describe `ProcessMemoryMetrics`, `peak_rss_bytes`, and
+     `vss_delta_bytes`.
+   - Q2 cites any committed formal one-hour run evidence, including
+     exact run date, invocation, and whether `peak_rss_bytes` /
+     `vss_delta_bytes` were captured. Do not infer a result from code
+     existence alone.
+   - Q3 cites stale-or-current deferral text by file and line context,
+     and classifies each as stale, still accurate, or requiring
+     narrower wording.
+   - Q4 decides whether the current substrate is already enough for a
+     docs-only reconciliation, or whether a fresh recorder-host run /
+     harness change is required first.
+   - Q5 names exactly one smallest safe follow-up with proposed allowed
+     files, must-not-touch surfaces, verification gates, and halt
+     conditions. If a human one-hour recorder-host run is needed before
+     any repository edit is justified, recommend `NEEDS_HUMAN`.
+
+   **Halt conditions**:
+   - Answering Q1-Q5 requires running `cargo`, the one-hour soak, tests,
+     formatters, architecture lints, or `.ai/dispatch.verify.ps1`.
+     Halt; this dispatch is read-only.
+   - The audit discovers that no committed one-hour metrics-enabled
+     run exists and that only harness code exists. Halt with
+     `NEEDS_HUMAN` unless Q5 can name a measurement-rerun follow-up
+     without editing source.
+   - Q5 would require changing script-bench source and docs in the
+     same follow-up dispatch. Halt; harness changes and documentation
+     reconciliation must stay separable unless a human explicitly
+     widens scope.
+   - The smallest follow-up would require running a one-hour
+     recorder-host soak on specific hardware. Halt with `NEEDS_HUMAN`;
+     do not fake or extrapolate memory evidence.
+   - Any tracked file is already dirty in a way that makes the
+     read-only audit ambiguous.
+
+   **Scope-preserving halt clause** - the orchestrator's canonical
+   verify gate (`.ai/dispatch.verify.ps1`) runs after Claude execute
+   even on read-only audits. If verify fails on a target OUTSIDE the
+   audit scope (anything beyond `crates/script-bench/**`,
+   `plans/IMPLEMENTATION.md`, `Status.md`, `HANDOFF.md`, `change.md`,
+   directly referenced prior `ai_handoffs/` packets, or this dispatch's
+   own `ai_handoffs/` packet), the orchestrator may auto-route a
+   CORRECTION packet asking the executor to fix the failure. When that
+   happens **the executor MUST halt**: write an EXECUTION_REPORT with
+   `EXEC_STATUS: blocked` and `STATUS: NEEDS_HUMAN`, do NOT execute
+   the correction. Read-only intent is the entire reason this task is
+   in the brief; a correction-round source fix to an unrelated
+   code/test failure expands a memory-soak reconciliation audit into a
+   source-fix dispatch and must become its own ticket.
+
+   **Verbatim review-gate strings** - the autonomous selector MUST
+   copy these seven strings, character-for-character, into the filed
+   GitHub issue body. No paraphrasing, no substitution, no reflowing.
+   A packet that lacks any one of them verbatim is bounced at review:
+
+   ```
+   MUST be a read-only memory-soak peak_rss / vss_delta reconciliation audit; do not edit source, tests, docs, Cargo.toml, Cargo.lock, workflows, scripts, or existing packets
+   MUST produce a 5-question memory-soak reconciliation answer block covering metrics support, formal one-hour evidence, stale-or-current deferral text, remaining source/harness need, and smallest follow-up
+   MUST inspect crates/script-bench/BASELINE.md, crates/script-bench/METHODOLOGY.md, crates/script-bench/src/script_host.rs, crates/script-bench/Cargo.toml, plans/IMPLEMENTATION.md, Status.md, HANDOFF.md, and change.md
+   MUST NOT run cargo commands, tests, formatters, architecture lints, .ai/dispatch.verify.ps1, or the one-hour memory soak
+   MUST distinguish committed harness code from committed one-hour peak_rss / vss_delta result evidence
+   MUST halt with NEEDS_HUMAN if the smallest follow-up requires a fresh one-hour recorder-host soak before any repository edit is justified
+   MUST halt rather than combine script-bench source changes and documentation reconciliation in one follow-up dispatch
+   ```
+
+   **Done-criterion**:
+   - One `ISSUE-*_EXEC_*.md` report with the exact
+     `## 5-Question Memory-Soak Reconciliation Answer Block` section
+     and Q1-Q5 headings above.
+   - No source, test, doc, Cargo, workflow, lint, schema, script,
+     status, or existing handoff packet edits.
+   - `git status --short --untracked-files=no` is clean before and
+     after writing the EXEC report.
+   - Verification claims are read-only only: document the `rg`,
+     `git grep`, `git show`, `git log`, and file-read commands used
+     for the audit; do not manually run cargo tests, builds, fmt,
+     architecture lints, `.ai/dispatch.verify.ps1`, or the one-hour
+     memory soak. The orchestrator will still run its canonical
+     verification gate after execution.
+   - Q5 names one smallest next dispatch and includes its proposed
+     allowed files, must-not-touch surfaces, verification gates, and
+     halt conditions, unless the correct outcome is `NEEDS_HUMAN`.
+
 16. **[DONE 2026-05-23 via PR #117 / commit `26a9ba1`] Read-only preflight: editor-shell render-frame perf-harness reconciliation.**
    **NO source edits.** Audit the apparent mismatch between the older
    V0 / baseline deferral that says a non-winit editor-shell
