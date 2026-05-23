@@ -758,7 +758,7 @@ is the only safeguard against selector drift.
      allowed files, must-not-touch surfaces, verification gates, and
      halt conditions, unless the correct outcome is `NEEDS_HUMAN`.
 
-17. **Docs-only reconciliation: editor-shell render-frame perf-harness deferral text.**
+17. **[DONE 2026-05-23 via PR #119 / commit `aa3916c`] Docs-only reconciliation: editor-shell render-frame perf-harness deferral text.**
    Reconcile stale present-tense documentation now that task #16
    established that `crates/editor-shell/src/render_frame_e2e_perf.rs`
    exists and has committed recorder-host result evidence in
