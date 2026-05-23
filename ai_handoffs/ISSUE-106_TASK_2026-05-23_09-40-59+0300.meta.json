@@ -1,0 +1,33 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-106",
+    "packet_type": "TASK",
+    "author": "Planner / OpenAI Codex",
+    "timestamp": "2026-05-23_09-40-59+0300",
+    "related_files": [
+                          "editor/rge-editor/**",
+                          "crates/editor-shell/**",
+                          "crates/editor-ui/**",
+                          "crates/editor-state/**",
+                          "crates/editor-actions/**",
+                          "Cargo.toml",
+                          "editor/rge-editor/Cargo.toml",
+                          "crates/editor-shell/Cargo.toml",
+                          "crates/editor-ui/Cargo.toml",
+                          "crates/editor-state/Cargo.toml",
+                          "crates/editor-actions/Cargo.toml",
+                          "crates/editor-egui-host/Cargo.toml",
+                          "tools/architecture-lints/exemptions.toml",
+                          "tools/architecture-lints/src/forbidden_dep.rs",
+                          "tools/architecture-lints/src/editor_state_ownership.rs",
+                          "tools/architecture-lints/src/snapshot_participate.rs",
+                          ".github/workflows/architecture.yml",
+                          "plans/BASELINE.md",
+                          "change.md",
+                          "ai_handoffs/ISSUE-106_EXEC_*.md"
+                      ],
+    "status": "OPEN",
+    "handoff_status": "COMPLETE",
+    "next_role": "EXECUTOR_AI",
+    "exit_code": 0
+}
