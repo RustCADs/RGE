@@ -758,6 +758,139 @@ is the only safeguard against selector drift.
      allowed files, must-not-touch surfaces, verification gates, and
      halt conditions, unless the correct outcome is `NEEDS_HUMAN`.
 
+16. **Read-only preflight: editor-shell render-frame perf-harness reconciliation.**
+   **NO source edits.** Audit the apparent mismatch between the older
+   V0 / baseline deferral that says a non-winit editor-shell
+   `render_frame` perf harness remains deferred and the current source
+   tree, which contains `crates/editor-shell/src/render_frame_e2e_perf.rs`
+   gated from `crates/editor-shell/src/lib.rs`. The goal is to decide
+   whether the deferral is stale documentation, whether the harness
+   exists but lacks recorder-host baseline evidence, or whether it
+   measures a narrower path that still leaves the original deferral open.
+
+   **Allowed read-only scope**:
+   - MAY read `crates/editor-shell/src/render_frame_e2e_perf.rs`.
+   - MAY read `crates/editor-shell/src/lib.rs`.
+   - MAY read `crates/editor-shell/src/render_path.rs`.
+   - MAY read `crates/editor-shell/src/lifecycle/**`.
+   - MAY read `crates/editor-shell/tests/**` only to compare existing
+     editor-shell frame/test harness precedent.
+   - MAY read `plans/BASELINE.md`, `plans/IMPLEMENTATION.md`,
+     `change.md`, `Status.md`, and `HANDOFF.md` only for the V0 /
+     post-V0 measurement-deferral record.
+   - MAY read prior `ai_handoffs/` packets only if directly referenced
+     by the harness comments or baseline notes.
+   - MAY use read-only `rg`, `git grep`, `git show`, `git log`, and
+     file-read commands. Do not run cargo commands or the release-only
+     perf harness; this is a documentary reconciliation audit only.
+
+   **Allowed file surface**:
+   - MAY add exactly one execution report packet:
+     `ai_handoffs/ISSUE-*_EXEC_*.md`, plus its `.meta.json` sidecar
+     if produced by the orchestrator.
+
+   **Files that MUST NOT be touched**:
+   - Any tracked repository file outside this dispatch's own
+     `ai_handoffs/` EXEC packet.
+   - Any source file, test file, fixture, Cargo manifest,
+     `Cargo.lock`, workflow file, script, schema, lint file, doc,
+     ADR, `Status.md`, `HANDOFF.md`, `change.md`, or existing handoff
+     packet.
+
+   **Five-question render-frame perf reconciliation answer block**:
+   The EXEC report must contain a section titled exactly
+   `## 5-Question Render-Frame Perf Reconciliation Answer Block` and
+   answer exactly these headings:
+   - `Q1. What render-frame perf harness exists today, and what exact production path does it measure?`
+   - `Q2. Which V0 or post-V0 deferral text is now stale, still accurate, or narrower than the current harness?`
+   - `Q3. Is there recorded recorder-host evidence for the current harness, or only harness code?`
+   - `Q4. What invocation, hardware assumptions, and gates should future maintainers use for this harness?`
+   - `Q5. What is the smallest safe follow-up dispatch: docs-only reconciliation, recorder-host rerun, harness change, or NEEDS_HUMAN?`
+
+   **Acceptance criteria**:
+   - Q1 cites the harness file and names the measured path in terms of
+     `acquire_depth_view`, `render_frame_to_target`, encoder/submit,
+     and explicitly states whether winit surface acquire/present is in
+     or out of scope.
+   - Q2 cites the stale-or-current baseline/implementation/status text
+     by file and line context, and classifies each as stale, still
+     accurate, or requiring narrower wording.
+   - Q3 distinguishes committed harness code from committed
+     recorder-host result evidence. Do not infer a result from the
+     harness's existence.
+   - Q4 records the exact documented invocation, release/ignored-test
+     constraints, variance gate, soft or hard P95 target semantics, and
+     hardware limits of the evidence.
+   - Q5 names exactly one smallest safe follow-up with proposed allowed
+     files, must-not-touch surfaces, verification gates, and halt
+     conditions. If a human recorder-host run is needed before any
+     repository edit is justified, recommend `NEEDS_HUMAN`.
+
+   **Halt conditions**:
+   - Answering Q1-Q5 requires running the release-only perf harness,
+     any cargo command, tests, formatters, architecture lints, or
+     `.ai/dispatch.verify.ps1`. Halt; this dispatch is read-only.
+   - The audit discovers the harness is absent, unreachable, or
+     impossible to understand without source edits. Halt with
+     `NEEDS_HUMAN` rather than implementing or repairing it.
+   - Q5 would require changing source and docs in the same follow-up
+     dispatch. Halt; harness changes and documentation reconciliation
+     must stay separable unless a human explicitly widens scope.
+   - The smallest follow-up would require a recorder-host measurement
+     run on specific hardware. Halt with `NEEDS_HUMAN`; do not fake or
+     extrapolate perf evidence.
+   - Any tracked file is already dirty in a way that makes the
+     read-only audit ambiguous.
+
+   **Scope-preserving halt clause** - the orchestrator's canonical
+   verify gate (`.ai/dispatch.verify.ps1`) runs after Claude execute
+   even on read-only audits. If verify fails on a target OUTSIDE the
+   audit scope (anything beyond `crates/editor-shell/**`,
+   `plans/BASELINE.md`, `plans/IMPLEMENTATION.md`, `change.md`,
+   `Status.md`, `HANDOFF.md`, directly referenced prior
+   `ai_handoffs/` packets, or this dispatch's own `ai_handoffs/`
+   packet), the orchestrator may auto-route a CORRECTION packet asking
+   the executor to fix the failure. When that happens **the executor
+   MUST halt**: write an EXECUTION_REPORT with `EXEC_STATUS: blocked`
+   and `STATUS: NEEDS_HUMAN`, do NOT execute the correction. Read-only
+   intent is the entire reason this task is in the brief; a
+   correction-round source fix to an unrelated code/test failure
+   expands a perf-harness reconciliation audit into a source-fix
+   dispatch and must become its own ticket.
+
+   **Verbatim review-gate strings** - the autonomous selector MUST
+   copy these seven strings, character-for-character, into the filed
+   GitHub issue body. No paraphrasing, no substitution, no reflowing.
+   A packet that lacks any one of them verbatim is bounced at review:
+
+   ```
+   MUST be a read-only render-frame perf-harness reconciliation audit; do not edit source, tests, docs, Cargo.toml, Cargo.lock, workflows, scripts, or existing packets
+   MUST produce a 5-question render-frame perf reconciliation answer block covering existing harness scope, stale-or-current deferral text, recorded evidence, invocation/gates, and smallest follow-up
+   MUST inspect crates/editor-shell/src/render_frame_e2e_perf.rs, crates/editor-shell/src/lib.rs, crates/editor-shell/src/render_path.rs, crates/editor-shell/src/lifecycle/**, plans/BASELINE.md, plans/IMPLEMENTATION.md, change.md, Status.md, and HANDOFF.md
+   MUST NOT run cargo commands, tests, formatters, architecture lints, .ai/dispatch.verify.ps1, or the release-only perf harness
+   MUST distinguish committed harness code from committed recorder-host result evidence
+   MUST halt with NEEDS_HUMAN if the smallest follow-up requires a recorder-host measurement run before any repository edit is justified
+   MUST halt rather than combine harness source changes and documentation reconciliation in one follow-up dispatch
+   ```
+
+   **Done-criterion**:
+   - One `ISSUE-*_EXEC_*.md` report with the exact
+     `## 5-Question Render-Frame Perf Reconciliation Answer Block`
+     section and Q1-Q5 headings above.
+   - No source, test, doc, Cargo, workflow, lint, schema, script,
+     status, or existing handoff packet edits.
+   - `git status --short --untracked-files=no` is clean before and
+     after writing the EXEC report.
+   - Verification claims are read-only only: document the `rg`,
+     `git grep`, `git show`, `git log`, and file-read commands used
+     for the audit; do not manually run cargo tests, builds, fmt,
+     architecture lints, `.ai/dispatch.verify.ps1`, or the release-only
+     perf harness. The orchestrator will still run its canonical
+     verification gate after execution.
+   - Q5 names one smallest next dispatch and includes its proposed
+     allowed files, must-not-touch surfaces, verification gates, and
+     halt conditions, unless the correct outcome is `NEEDS_HUMAN`.
+
 14. **[DONE 2026-05-23 via PR #113 / commit `7d9d088`] Read-only preflight: remaining io-* format metadata declarations.**
    **NO source edits.** Companion audit to task #13. The #13 EXEC
    packet and its verification log showed the `kernel_isolation` lint
