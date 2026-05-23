@@ -758,6 +758,145 @@ is the only safeguard against selector drift.
      allowed files, must-not-touch surfaces, verification gates, and
      halt conditions, unless the correct outcome is `NEEDS_HUMAN`.
 
+12. **Read-only preflight: CommandBus integration context for editor user actions.**
+   **NO source edits.** Audit the smallest safe design shape for
+   connecting `editor-actions::CommandBus` to real editor-shell user
+   input without breaking its current `World`-only action contract or
+   faking a visible CAD command. This follows the Phase 9
+   editor-usability preflight recorded in `plans/BASELINE.md` and
+   `change.md`: `CommandBus::submit` is implemented and tested, but
+   no editor-shell / rge-editor user path currently drives it.
+
+   **Allowed read-only scope**:
+   - MAY read `plans/BASELINE.md` and `change.md` entries related to
+     Phase 9 editor usability and CommandBus integration.
+   - MAY read `crates/editor-actions/**`.
+   - MAY read `crates/editor-shell/**`.
+   - MAY read `editor/rge-editor/**`.
+   - MAY read `crates/editor-state/**`.
+   - MAY read `crates/cad-core/**` and `crates/cad-projection/**`
+     only to understand the current `CadGraph` / `CadProjection`
+     ownership boundary for visible CAD scene mutations.
+   - MAY read `kernel/ecs/**` only to understand the `World` mutation
+     surface that `Action::apply` currently accepts.
+   - MAY read relevant crate `Cargo.toml` files and architecture-lint
+     configuration only to reason about dep edges and lint
+     implications.
+   - MAY use read-only `rg`, `git grep`, `git diff`, and file-read
+     commands. Do not run cargo commands; this is design preflight
+     only.
+
+   **Allowed file surface**:
+   - MAY add exactly one execution report packet:
+     `ai_handoffs/ISSUE-*_EXEC_*.md`, plus its `.meta.json` sidecar
+     if produced by `new-handoff.ps1 -Finalize`.
+
+   **Files that MUST NOT be touched**:
+   - Any tracked repository file outside this dispatch's own
+     `ai_handoffs/` EXEC packet.
+   - Any source file, test file, fixture, Cargo manifest,
+     `Cargo.lock`, workflow file, script, schema, lint file, doc,
+     ADR, `Status.md`, `HANDOFF.md`, `change.md`, or existing handoff
+     packet.
+
+   **Five-question CommandBus preflight answer block**:
+   The EXEC report must contain a section titled exactly
+   `## 5-Question CommandBus Preflight Answer Block` and answer
+   exactly these headings:
+   - `Q1. What is CommandBus's current public contract and where is it tested?`
+   - `Q2. Which editor input paths could realistically dispatch commands first, and which are out of scope?`
+   - `Q3. Should the command context stay World-only, grow Action::apply/revert, or add an editor-specific adapter/context layer?`
+   - `Q4. How would undo, audit-ledger recording, CadGraph/CadProjection mutation, and render refresh compose for the first visible command?`
+   - `Q5. What is the smallest safe follow-up dispatch?`
+
+   **Acceptance criteria**:
+   - Q1 cites the current `CommandBus::submit`, undo/redo/coalescing,
+     `Action::apply` / `Action::revert`, and relevant test coverage.
+   - Q2 compares at least three candidate first user paths, including
+     a visible CAD mutation, a non-CAD editor shortcut, and a
+     no-op/menu-only path; it must reject any path that would be sham
+     progress.
+   - Q3 compares at least three context shapes: keep `World`-only,
+     widen `Action` to a richer editor context, or add an adapter
+     layer around `CommandBus` without changing the trait.
+   - Q4 explains how the chosen or rejected shapes affect undo,
+     audit-ledger semantics, `CadGraph`, `CadProjection`, `World`, and
+     render refresh.
+   - Q5 names exactly one smallest safe follow-up with proposed
+     allowed files, must-not-touch surfaces, verification gates, and
+     halt conditions. If no autonomous-friendly follow-up exists,
+     recommend `NEEDS_HUMAN` instead.
+
+   **Halt conditions**:
+   - The audit discovers a production editor-shell / rge-editor user
+     path already calls `CommandBus::submit`. Halt with
+     `NEEDS_HUMAN`; this preflight's premise is stale.
+   - The audit discovers `CommandBus` or `Action` no longer exists or
+     no longer has a `World`-only apply/revert surface. Halt with
+     `NEEDS_HUMAN`; the premise is stale.
+   - Answering Q1-Q5 requires editing source, Cargo metadata, lints,
+     docs, workflows, or tests. Halt; this dispatch is read-only.
+   - Q5 would require changing the `Action` trait and wiring a
+     user-visible command in the same follow-up dispatch. Halt;
+     context design and visible command wiring must stay separable
+     unless a human explicitly widens scope.
+   - The audit cannot be answered without running local cargo
+     commands, tests, formatters, architecture lints, or
+     `.ai/dispatch.verify.ps1`. Halt; this is documentary design
+     preflight only.
+   - Any tracked file is already dirty in a way that makes the
+     read-only audit ambiguous.
+
+   **Scope-preserving halt clause** - the orchestrator's canonical
+   verify gate (`.ai/dispatch.verify.ps1`) runs after Claude execute
+   even on read-only audits. If verify fails on a target OUTSIDE the
+   audit scope (anything beyond `crates/editor-actions/**`,
+   `crates/editor-shell/**`, `editor/rge-editor/**`,
+   `crates/editor-state/**`, `crates/cad-core/**`,
+   `crates/cad-projection/**`, `kernel/ecs/**`, relevant manifests,
+   architecture-lint config, `plans/BASELINE.md`, `change.md`, or
+   this dispatch's own `ai_handoffs/` packet), the orchestrator may
+   auto-route a CORRECTION packet asking the executor to fix the
+   failure. When that happens **the executor MUST halt**: write an
+   EXECUTION_REPORT with `EXEC_STATUS: blocked` and
+   `STATUS: NEEDS_HUMAN`, do NOT execute the correction. Read-only
+   intent is the entire reason this task is in the brief; a
+   correction-round source fix to an unrelated code/test failure
+   expands a CommandBus audit into a source-fix dispatch and must
+   become its own ticket.
+
+   **Verbatim review-gate strings** - the autonomous selector MUST
+   copy these seven strings, character-for-character, into the filed
+   GitHub issue body. No paraphrasing, no substitution, no reflowing.
+   A packet that lacks any one of them verbatim is bounced at review:
+
+   ```
+   MUST be a read-only CommandBus integration preflight; do not edit source, tests, docs, Cargo.toml, Cargo.lock, workflows, scripts, or existing packets
+   MUST produce a 5-question CommandBus preflight answer block covering current contract, first input paths, command-context shape, undo/audit/render composition, and smallest follow-up
+   MUST inspect crates/editor-actions/**, crates/editor-shell/**, editor/rge-editor/**, crates/editor-state/**, crates/cad-core/**, crates/cad-projection/**, and kernel/ecs/**
+   MUST compare World-only Action, widened editor-context Action, and adapter-layer approaches before naming a follow-up
+   MUST halt if a production editor user path already calls CommandBus::submit or if CommandBus no longer has a World-only Action surface
+   MUST NOT run local cargo commands, tests, formatters, architecture lints, or .ai/dispatch.verify.ps1
+   MUST halt rather than combine command-context design and visible command wiring into one follow-up dispatch
+   ```
+
+   **Done-criterion**:
+   - One `ISSUE-*_EXEC_*.md` report with the exact
+     `## 5-Question CommandBus Preflight Answer Block` section and
+     Q1-Q5 headings above.
+   - No source, test, doc, Cargo, workflow, lint, schema, script,
+     status, or existing handoff packet edits.
+   - `git status --short --untracked-files=no` is clean before and
+     after writing the EXEC report.
+   - Verification claims are read-only only: document the `rg`,
+     `git grep`, and file-read commands used for the audit; do not
+     manually run cargo tests, builds, fmt, architecture lints, or
+     `.ai/dispatch.verify.ps1`. The orchestrator will still run its
+     canonical verification gate after execution.
+   - Q5 names one smallest next dispatch and includes its proposed
+     allowed files, must-not-touch surfaces, verification gates, and
+     halt conditions, unless the correct outcome is `NEEDS_HUMAN`.
+
 9. **[DONE 2026-05-23 via PR #103 / commit `4fa1e60`] Add `bench.yml` parity to `.ai/dispatch.verify.ps1`.**
    Single-file verification-gate edit. The #100 CI audit Q4 found
    that the local canonical dispatch gate mirrors `fmt.yml`,
