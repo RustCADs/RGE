@@ -9,6 +9,9 @@ repository.workspace   = true
 authors.workspace      = true
 publish                = false
 
+[package.metadata.rge]
+formats = ["png", "jpg", "jpeg", "exr", "hdr"]
+
 [dependencies]
 image     = { workspace = true, features = ["png", "jpeg", "hdr"] }
 exr       = { workspace = true }

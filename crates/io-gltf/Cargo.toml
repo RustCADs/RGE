@@ -9,6 +9,9 @@ repository.workspace   = true
 authors.workspace      = true
 publish                = false
 
+[package.metadata.rge]
+formats = ["gltf", "glb"]
+
 [dependencies]
 # gltf 1.4.x: drop the `import` feature deliberately. Architectural
 # reason (per PLAN.md §1.6.4 "one importer per format"): if we enabled
