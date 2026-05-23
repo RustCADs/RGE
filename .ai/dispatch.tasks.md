@@ -1222,6 +1222,104 @@ is the only safeguard against selector drift.
      allowed files, must-not-touch surfaces, verification gates, and
      halt conditions, unless the correct outcome is `NEEDS_HUMAN`.
 
+21. **Mechanically split `crates/gfx/src/frame_graph/compile.rs` into a directory module.**
+   Implement the exact mechanical split identified by task #20 Q5.
+   This is a source refactor only: move code into smaller modules
+   without changing algorithms, public API, serialization, structural
+   hash bytes, frame-graph semantics, or test expectations.
+
+   **Allowed file surface**:
+   - DELETE `crates/gfx/src/frame_graph/compile.rs`.
+   - ADD `crates/gfx/src/frame_graph/compile/mod.rs`.
+   - ADD `crates/gfx/src/frame_graph/compile/error.rs`.
+   - ADD `crates/gfx/src/frame_graph/compile/types.rs`.
+   - ADD `crates/gfx/src/frame_graph/compile/algorithm.rs`.
+   - MAY edit rustdoc intra-doc links inside the new
+     `crates/gfx/src/frame_graph/compile/**` files only if the module
+     path depth changes require it.
+   - MAY add this dispatch's own `ai_handoffs/ISSUE-*_EXEC_*.md`
+     packet plus `.meta.json` sidecar if produced by the orchestrator.
+
+   **Expected module contents**:
+   - `compile/mod.rs`: existing module doc from `compile.rs`, `mod`
+     declarations for `error`, `types`, and `algorithm`; public
+     re-exports of `CompileError`, `AliasingGroup`,
+     `CompiledFrameGraph`, and `ResourceLifetime`; `pub(crate)` re-export
+     of `compile_passes`.
+   - `compile/error.rs`: `CompileError` enum and derives.
+   - `compile/types.rs`: `ResourceLifetime`, `AliasingGroup`,
+     `CompiledFrameGraph`, their impl blocks, `structural_hash`, and
+     type-targeted unit tests.
+   - `compile/algorithm.rs`: `compile_passes` and algorithm-targeted
+     unit tests.
+
+   **Files that MUST NOT be touched**:
+   - `crates/gfx/src/frame_graph/mod.rs`, unless a compiler error proves
+     the existing `mod compile;` declaration cannot resolve the new
+     directory module shape. If that happens, halt before editing it.
+   - `crates/gfx/src/lib.rs`.
+   - Any `crates/gfx/src/frame_graph/**` file outside the five allowed
+     compile-module paths above.
+   - Any `crates/gfx/tests/**` file.
+   - Any source/test/bench/fixture path outside `crates/gfx/src/frame_graph/compile/**`.
+   - `Cargo.toml`, `Cargo.lock`, workflows, scripts, schemas, lints,
+     docs, ADRs, status files, and existing handoff packets.
+
+   **Cargo.lock policy**:
+   - Zero Cargo metadata changes. If `Cargo.toml` or `Cargo.lock`
+     changes at all, halt with `NEEDS_HUMAN`.
+
+   **Halt conditions**:
+   - The split requires changing algorithm logic in `compile_passes`,
+     public API names/visibility, `FrameGraph::compile`, re-export
+     paths in `crates/gfx/src/lib.rs`, serialization derives/fields, or
+     `structural_hash` byte order. Halt with `NEEDS_HUMAN`.
+   - The split requires changing test expectations, adding tests,
+     deleting tests, or touching integration tests. Halt; this dispatch
+     is a mechanical move only.
+   - The split requires adding `// SPLIT-EXEMPTION` or changing
+     architecture-lint rules. Halt.
+   - Any tracked file outside the five allowed compile-module paths and
+     this dispatch's own `ai_handoffs/` packet shows a diff after
+     execution. Halt rather than clean up unrelated changes.
+   - `cargo test -p rge-gfx --lib --no-fail-fast` or the named
+     frame-graph smoke tests fail due to anything other than the
+     mechanical split. Halt rather than broadening scope.
+
+   **Verbatim review-gate strings** - the autonomous selector MUST
+   copy these eight strings, character-for-character, into the filed
+   GitHub issue body. No paraphrasing, no substitution, no reflowing.
+   A packet that lacks any one of them verbatim is bounced at review:
+
+   ```
+   MUST replace crates/gfx/src/frame_graph/compile.rs with crates/gfx/src/frame_graph/compile/mod.rs, error.rs, types.rs, and algorithm.rs
+   MUST preserve CompileError, ResourceLifetime, AliasingGroup, CompiledFrameGraph, compile_passes, and all public re-exports with no public API change
+   MUST preserve compile_passes algorithm behavior, structural_hash byte order, serde derives, and the #[serde(skip)] descriptors field exactly
+   MUST NOT modify crates/gfx/src/frame_graph/mod.rs, crates/gfx/src/lib.rs, crates/gfx/tests/**, Cargo.toml, or Cargo.lock
+   MUST NOT add SPLIT-EXEMPTION, change architecture-lint rules, add tests, delete tests, or change test expectations
+   MUST only adjust rustdoc intra-doc links inside crates/gfx/src/frame_graph/compile/** if module path depth requires it
+   MUST halt with NEEDS_HUMAN if the split requires algorithm, API, serialization, frame-graph semantics, or test-expectation changes
+   MUST run cargo +nightly fmt --check -p rge-gfx, cargo test -p rge-gfx --lib --no-fail-fast, cargo test -p rge-gfx --test frame_graph_smoke, cargo test -p rge-gfx --test frame_graph_umbrella_smoke, and .ai/dispatch.verify.ps1
+   ```
+
+   **Done-criterion**:
+   - `crates/gfx/src/frame_graph/compile.rs` is gone, replaced by the
+     four new files under `crates/gfx/src/frame_graph/compile/`.
+   - Existing public imports continue to work:
+     `frame_graph::{AliasingGroup, CompileError, CompiledFrameGraph,
+     ResourceLifetime}` and `FrameGraph::compile` are unchanged.
+   - `structural_hash` implementation is byte-for-byte semantically
+     identical: same prefix, separators, iteration order, field order,
+     and descriptor orthogonality.
+   - No source/test/Cargo/docs/lint files outside the allowed file
+     surface are modified.
+   - Verification exits 0 for:
+     `cargo +nightly fmt --check -p rge-gfx`;
+     `cargo test -p rge-gfx --lib --no-fail-fast`;
+     `cargo test -p rge-gfx --test frame_graph_smoke`;
+     `cargo test -p rge-gfx --test frame_graph_umbrella_smoke`;
+     `.ai/dispatch.verify.ps1`.
+
 16. **[DONE 2026-05-23 via PR #117 / commit `26a9ba1`] Read-only preflight: editor-shell render-frame perf-harness reconciliation.**
    **NO source edits.** Audit the apparent mismatch between the older
    V0 / baseline deferral that says a non-winit editor-shell
