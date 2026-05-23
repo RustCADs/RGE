@@ -758,7 +758,7 @@ is the only safeguard against selector drift.
      allowed files, must-not-touch surfaces, verification gates, and
      halt conditions, unless the correct outcome is `NEEDS_HUMAN`.
 
-9. **Add `bench.yml` parity to `.ai/dispatch.verify.ps1`.**
+9. **[DONE 2026-05-23 via PR #103 / commit `4fa1e60`] Add `bench.yml` parity to `.ai/dispatch.verify.ps1`.**
    Single-file verification-gate edit. The #100 CI audit Q4 found
    that the local canonical dispatch gate mirrors `fmt.yml`,
    `architecture.yml`, `deny.yml`, and `tests.yml`, but does not
