@@ -1,0 +1,15 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-104",
+    "packet_type": "EXEC",
+    "author": "Executor / Claude",
+    "timestamp": "2026-05-23_09-30-08+0300",
+    "related_files": [
+                          "crates/io-image/src/asset_store_stub.rs — deleted (dead stub module)",
+                          "crates/io-image/src/lib.rs — removed `pub mod asset_store_stub;` export"
+                      ],
+    "status": "AWAITING_REVIEW",
+    "handoff_status": "COMPLETE",
+    "next_role": "REVIEWER_AI",
+    "exit_code": 0
+}

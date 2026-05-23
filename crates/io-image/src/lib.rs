@@ -59,7 +59,6 @@
     reason = "format-adapter crate: pixel↔float casts and wrapping arithmetic are intrinsic to image codecs (sample bit-depth conversions, premultiplication math); rich error types intentional for authoring diagnostics"
 )]
 
-pub mod asset_store_stub;
 pub mod error;
 pub mod exr;
 pub mod format_detect;
