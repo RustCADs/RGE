@@ -441,6 +441,8 @@ formal one-hour soak and publishes no new one-hour memory baseline row — the
 soak invocation would be the natural producer of a formal one-hour
 `peak_rss` / `vss_delta` baseline.
 
+> **Forward cross-reference (2026-05-23):** the "future release-readiness one-hour soak invocation" anticipated by this 2026-05-16 revision was performed on 2026-05-17 and is recorded above as "Formal 1-hour memory soak — RUN 2026-05-17 (process-memory metrics enabled)" (lines 140–211 of this file), with `peak_rss_bytes` and `vss_delta_bytes` captured via the harness revision described in this section. This section's body remains the dated 2026-05-16 capability description and is preserved as written.
+
 ## Formal Phase 3.4 ECS-via-WASM ratio gate (bulk-path substrate)
 
 Re-recorded 2026-05-11 (release-profile test run) via:
