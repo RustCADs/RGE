@@ -1513,9 +1513,7 @@ mod tests {
     /// `"no compatible GPU adapter"` is the canonical wgpu/gfx error on
     /// headless CI (ubuntu-latest without Mesa / GPU passthrough).
     fn is_missing_gpu_adapter_error(e: &str) -> bool {
-        e.contains("NoAdapter")
-            || e.contains("no GPU")
-            || e.contains("no compatible GPU adapter")
+        e.contains("NoAdapter") || e.contains("no GPU") || e.contains("no compatible GPU adapter")
     }
 
     /// Common end-to-end render pipeline: load a glTF fixture through
