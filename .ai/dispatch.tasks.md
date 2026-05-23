@@ -908,7 +908,7 @@ is the only safeguard against selector drift.
      `ai_handoffs/` packet. Zero Cargo, workflow, source-crate,
      status, doc, or automation edits elsewhere.
 
-11. **Read-only preflight: egui host integration shape for the editor.**
+11. **[DONE 2026-05-23 via PR #107 / commit `2cf5619`] Read-only preflight: egui host integration shape for the editor.**
    **NO source edits.** Audit the smallest safe design shape for adding
    a real egui host to the editor so the already-landed editor-ui
    widgets, dock state, and inspector surface can become reachable
