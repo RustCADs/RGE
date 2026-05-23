@@ -2631,7 +2631,7 @@ is the only safeguard against selector drift.
      allowed files, must-not-touch surfaces, verification gates, and
      halt conditions, unless the correct outcome is `NEEDS_HUMAN`.
 
-25. **Implement first World-only CommandBus editor action: Ctrl+2 time-scale preset.**
+25. **[DONE 2026-05-24 via PR #135 / commit `e23378e`] Implement first World-only CommandBus editor action: Ctrl+2 time-scale preset.**
    ISSUE-132 (task #24, PR #133, commit `6661cee`) completed the
    Approach-A preflight and named one smallest implementation: bind
    `Ctrl+2` to `EditorShell::set_time_scale(2.0)`, so a normal fresh
