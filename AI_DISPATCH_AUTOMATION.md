@@ -885,6 +885,46 @@ PR diff. The literal text in that task's brief said "Do not download
 artifacts or write logs to disk," which the executor was forced to
 violate. The phrasing above resolves the ambiguity for future audits.
 
+### 14.12 Task-specific verification gates must not outrun CI by accident
+
+**Symptom:** a dispatch implements the requested change and passes the
+canonical repository gate (`.ai/dispatch.verify.ps1`), but halts with
+`EXEC_STATUS: blocked` because the task brief added a broad extra
+verification command that is not part of CI and fails on unrelated
+pre-existing warnings outside the task scope.
+
+**Cause:** focused task gates are useful, but a task-authored gate can
+accidentally become a new repository policy. For example, task #25
+(ISSUE-134) required
+`cargo clippy -p rge-editor-shell --all-targets -- -D warnings`. That
+command traversed dependencies of `rge-editor-shell` and failed on many
+pre-existing workspace warnings outside the allowed edit set, while the
+canonical dispatch gate and GitHub Actions were green. The executor
+correctly halted rather than edit forbidden files, but the halt was
+caused by an over-broad task gate, not by a bad implementation.
+
+**Fix:** task briefs SHOULD keep publish gates aligned with
+`.ai/dispatch.verify.ps1` and the relevant focused tests/builds for the
+allowed edit surface. Add extra gates only when they are:
+
+- already part of CI / `.ai/dispatch.verify.ps1`;
+- narrow to the allowed file or crate surface and known to be clean; or
+- the explicit subject of the task (for example, a task whose purpose is
+  to make a clippy lane green).
+
+If a task needs a stronger gate than CI, first verify that gate is
+already clean on current `main`, or make the task explicitly about
+clearing that gate. Do not hide a broad new policy inside an otherwise
+small implementation dispatch.
+
+**Salvage rule:** when a branch is blocked solely by an over-broad
+task-authored gate, a human may positive-salvage the substantive change:
+review the diff, tighten tests as needed, run the canonical verify gate,
+merge with a clean commit message, scrub misleading failure labels, and
+document the reason in the issue. This is distinct from §14.10: a
+designed `EXEC_STATUS: blocked` halt is terminal; an accidentally bad
+task gate is task-author error and can be corrected by human review.
+
 ---
 
 ## 15. Porting to another project
