@@ -127,6 +127,7 @@ it in a real interactive terminal, not a wrapped/CI runner with a short timeout
 | `Invoke-AiDispatchAuto.ps1` | Autonomous driver: Codex selects the next task from `.ai/dispatch.tasks.md` and runs it through the dispatch queue. | **Copy/adapt** |
 | `Register-AiDispatchSchedule.ps1` | Registers, queries, and removes the unattended Windows Scheduled Task that triggers dispatch automation on a recurring interval. | **Copy/adapt** |
 | `Get-AiDispatchHealth.ps1` | Read-only dispatch-health readout over retained `.ai/dispatch-*` run directories. | **Copy/adapt** |
+| `Wait-GitHubActions.ps1` | Read-only GitHub Actions waiter for the latest workflow run per workflow name on one commit, with hard timeout enforcement. | **Copy/adapt** |
 | `.mcp.json` | MCP server config passed to `claude`. | **Copy/adapt** |
 | `.ai/codex_control.schema.json` | Schema for Codex's control review. | **Copy** |
 | `.ai/dispatch.verify.ps1` | Canonical post-execution verification gate; mirrors CI before Codex control and publish. | **Copy/adapt** |
@@ -975,6 +976,11 @@ task gate is task-author error and can be corrected by human review.
 - **Resuming:** once a dispatch has an approved + finalized TASK, re-run with
   `-ResumeApprovedTask` to (re-)run only the execution phase without
   re-planning.
+- **Waiting for CI:** after pushing a publish or follow-up commit, prefer
+  `.\Wait-GitHubActions.ps1` over ad hoc `gh run list` polling. It filters to a
+  single commit SHA, keeps only the latest run per workflow name, and enforces
+  the timeout before each poll and sleep so the watcher cannot drift past its
+  deadline while duplicate or stale runs are still visible.
 
 ## 17. Seven-task arc retrospective (2026-05-22)
 
