@@ -1091,7 +1091,7 @@ is the only safeguard against selector drift.
      does not manually run cargo commands, the one-hour soak, or fresh
      recorder-host measurements.
 
-20. **Read-only preflight: `frame_graph/compile.rs` legibility split plan.**
+20. **[DONE 2026-05-23 via PR #125 / commit `a955e08`] Read-only preflight: `frame_graph/compile.rs` legibility split plan.**
    **NO source edits.** Audit the optional `compile.rs` legibility
    refactor deferral before any source movement. The target file is
    `crates/gfx/src/frame_graph/compile.rs` (~29 KB). Determine whether
