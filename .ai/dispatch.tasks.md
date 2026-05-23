@@ -836,3 +836,74 @@ is the only safeguard against selector drift.
    - Diff stat is limited to `.ai/dispatch.verify.ps1` plus this
      dispatch's own `ai_handoffs/` packet. Zero Cargo, source, test,
      fixture, workflow, status, or unrelated doc edits.
+
+10. **Delete dead `rge-io-image` asset-store stub.**
+   Source-cleanup dispatch, pre-audited by the #98 / #99 read-only
+   `rge-io-image` cache-surface preflight. That audit found
+   `crates/io-image/src/asset_store_stub.rs` is reachable only as a
+   public module declaration and has zero in-tree consumers. W16's
+   real asset-store cache substrate now exists, and keeping this
+   aspirational stub creates misleading API surface.
+
+   **Allowed file surface**:
+   - DELETE `crates/io-image/src/asset_store_stub.rs`.
+   - EDIT `crates/io-image/src/lib.rs` only to remove
+     `pub mod asset_store_stub;`.
+   - MAY add this dispatch's own `ai_handoffs/ISSUE-*_EXEC_*.md`
+     packet plus `.meta.json` sidecar if produced by the orchestrator.
+
+   **Files that MUST NOT be touched**:
+   - Any file outside the two `crates/io-image/src/**` files named
+     above, except this dispatch's own `ai_handoffs/` packet.
+   - `crates/asset-store/**`, `crates/io-gltf/**`, `editor/**`,
+     `crates/editor-shell/**`, `crates/gfx/**`, `kernel/**`,
+     `.github/**`, `Cargo.toml`, `Cargo.lock`, docs, ADRs, status
+     files, existing handoff packets, and automation scripts.
+
+   **Cargo.lock policy**:
+   - Zero Cargo metadata changes. If `Cargo.toml` or `Cargo.lock`
+     changes at all, halt with `NEEDS_HUMAN`.
+
+   **Halt conditions**:
+   - Any current in-tree Rust code imports or references
+     `rge_io_image::asset_store_stub`, `crate::asset_store_stub`, its
+     `Cache`, `MemoryCache`, or `AssetId` symbols. Halt and report the
+     consumers; do not migrate them in this dispatch.
+   - Removing the public module declaration causes compile failures
+     outside `rge-io-image` itself. Halt; that means the #98 audit's
+     reachability finding is stale.
+   - The deletion appears to require replacing the stub with a real
+     `rge-asset-store` adapter, adding a dependency, or changing
+     image-loading/cache behavior. Halt; this task is deletion only.
+   - Any tracked file outside `crates/io-image/src/lib.rs` and
+     `crates/io-image/src/asset_store_stub.rs` shows a diff after
+     execution, except this dispatch's own `ai_handoffs/` packet. Halt
+     rather than clean up unrelated changes.
+
+   **Verbatim review-gate strings** - the autonomous selector MUST
+   copy these six strings, character-for-character, into the filed
+   GitHub issue body. No paraphrasing, no substitution, no reflowing.
+   A packet that lacks any one of them verbatim is bounced at review:
+
+   ```
+   MUST delete crates/io-image/src/asset_store_stub.rs
+   MUST remove pub mod asset_store_stub; from crates/io-image/src/lib.rs
+   MUST NOT modify any file outside crates/io-image/src/lib.rs and crates/io-image/src/asset_store_stub.rs (except the dispatch's own ai_handoffs/ packet)
+   MUST NOT add or modify any dependency, Cargo.toml, or Cargo.lock
+   MUST halt if any in-tree Rust code still references rge_io_image::asset_store_stub, crate::asset_store_stub, Cache, MemoryCache, or AssetId from that stub
+   MUST halt rather than replace the stub with a real asset-store adapter or change image loading/cache behavior
+   ```
+
+   **Done-criterion**:
+   - `crates/io-image/src/asset_store_stub.rs` is deleted.
+   - `crates/io-image/src/lib.rs` no longer declares
+     `pub mod asset_store_stub;`.
+   - A repo-wide search for `asset_store_stub` finds no Rust-source
+     references outside the dispatch packet.
+   - `cargo test -p rge-io-image --all-targets --no-fail-fast`
+     exits 0.
+   - `.ai/dispatch.verify.ps1` exits 0.
+   - Diff stat is limited to the deleted stub, the one-line module
+     removal in `crates/io-image/src/lib.rs`, and this dispatch's own
+     `ai_handoffs/` packet. Zero Cargo, workflow, source-crate,
+     status, doc, or automation edits elsewhere.
