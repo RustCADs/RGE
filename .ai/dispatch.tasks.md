@@ -2768,3 +2768,151 @@ is the only safeguard against selector drift.
    - Cargo files remain unchanged.
    - All required tests / assertions above are present and pass.
    - All verification gates listed in the final MUST string exit 0.
+
+26. **Implement Ctrl+0 reset-to-default CommandBus time-scale action.**
+   Task #25 made `Ctrl+2` the first user-visible World-only
+   `CommandBus::submit` path by routing through the existing
+   `SetTimeScale` action. That unlocks the reset half that ISSUE-132
+   correctly rejected before `Ctrl+2` existed: `Ctrl+0` is a no-op on a
+   fresh editor, but after a non-default time-scale value it becomes a
+   real `SetTimeScale { from: 2.0, to: TimeScale::DEFAULT }` submit.
+
+   Implement exactly that reset binding. Preserve the existing
+   `SetTimeScale` coalescing model: immediate preset changes within the
+   500 ms coalesce window may still merge like slider drags. This task
+   must not change the bus, the coalesce window, action ids, payload
+   encoding, undo-stack internals, or any editor-state/CAD/render surface.
+
+   **Runtime invocation note**: this task is a deliberate named +1 on
+   top of the freeze-at-103 posture set by task #25. Run as
+   `.\Invoke-AiDispatchAuto.ps1 -PublishMode branch -MaxAutonomousTasks 104`
+   so the cap accommodates exactly this one dispatch. The scheduler
+   remains disabled and must not be re-enabled by this task.
+
+   **Allowed file surface**:
+   - EDIT `crates/editor-shell/src/lifecycle/commands.rs`
+     - Add one `EditorKeyCommand::ResetTimeScaleDefault` variant.
+     - Add one `EditorKeyCommand::from_key_press` arm mapping
+       `(KeyCode::Digit0, ctrl=true, shift=false)` to
+       `Some(Self::ResetTimeScaleDefault)`.
+     - Add one `EditorShell::handle_key_command` match arm that calls
+       `self.set_time_scale(TimeScale::DEFAULT)`.
+   - EDIT `crates/editor-shell/tests/keyboard_command_bus_round_trip.rs`
+     and/or `crates/editor-shell/tests/time_scale_test.rs`
+     - Prefer extending the existing tests rather than adding a new
+       test file.
+     - Add focused tests for the key mapping, fresh-default no-op
+       behavior, and post-`Ctrl+2` reset behavior described below.
+   - MAY add this dispatch's own `ai_handoffs/ISSUE-*_TASK_*.md`,
+     `ai_handoffs/ISSUE-*_EXEC_*.md`, `ai_handoffs/ISSUE-*_CORRECT_*.md`
+     packets plus `.meta.json` sidecars if produced by the orchestrator,
+     and the queue-runner's own `ai_dispatch_logs/log_*.md`.
+
+   **Files that MUST NOT be touched**:
+   - `crates/editor-actions/**` (no trait widening, no bus signature
+     change, no coalesce-window change, no action-id change, no payload
+     format change, no `CompoundAction` change)
+   - `crates/editor-state/**`
+   - `editor/rge-editor/**`
+   - `kernel/ecs/**`
+   - `crates/editor-shell/src/lifecycle/mod.rs`
+   - Any other `crates/editor-shell/src/**` file besides
+     `crates/editor-shell/src/lifecycle/commands.rs`
+   - Any Cargo file (`Cargo.toml`, `Cargo.lock`, workspace manifests)
+   - Any workflow, architecture-lint, script, doctrine, status, ADR,
+     fixture, generated asset, or root-level doc file
+   - Any existing handoff packet or dispatch log
+   - Any GitHub label or issue metadata except the queue runner's normal
+     issue lifecycle for this dispatch
+
+   **Cargo.lock policy**:
+   - Zero Cargo metadata changes. If `Cargo.toml` or `Cargo.lock`
+     changes at all, halt with `NEEDS_HUMAN`.
+
+   **Implementation constraints**:
+   - Keep the command World-only and use the existing `SetTimeScale`
+     action through `EditorShell::set_time_scale(TimeScale::DEFAULT)`.
+   - Do not add any new public `Action` impl for this task.
+   - Do not call `CommandBus::submit` directly from keyboard handling;
+     route through `EditorShell::handle_key_command` and the existing
+     `set_time_scale` helper.
+   - Do not add a preset trio, step-up/step-down binding, UI control,
+     menu item, toolbar button, or egui callback.
+   - Do not modify undo/redo/mark-saved semantics except through the
+     natural behavior of submitting `SetTimeScale`.
+   - Do not alter the 500 ms coalesce behavior. Tests that require a
+     separate reset stack entry after `Ctrl+2` must wait past the current
+     coalesce window (for example 600 ms) rather than changing bus code.
+   - Re-read task #25's landed code before editing and treat
+     `EditorKeyCommand::SetTimeScaleDoubleSpeed` as the existing
+     companion binding.
+
+   **Required tests / assertions**:
+   - A key-mapping test proves
+     `EditorKeyCommand::from_key_press(KeyCode::Digit0, true, false)
+     == Some(EditorKeyCommand::ResetTimeScaleDefault)`.
+   - The same mapping coverage proves `ctrl=false` and `shift=true`
+     do not map to the new command.
+   - A fresh-shell no-op test calls
+     `shell.handle_key_command(EditorKeyCommand::ResetTimeScaleDefault)`
+     on a fresh `EditorShell` and asserts no stack entry, no cursor
+     advance, no dirty flip, no time-scale change, and no
+     `TimeScaleChanged` audit event.
+   - A reset-after-preset test first calls
+     `shell.handle_key_command(EditorKeyCommand::SetTimeScaleDoubleSpeed)`,
+     waits past the existing coalesce window, then calls
+     `shell.handle_key_command(EditorKeyCommand::ResetTimeScaleDefault)`
+     and asserts:
+     - `shell.time_scale().value() == TimeScale::DEFAULT` within the
+       existing float tolerance style.
+     - `shell.command_bus().stack().cursor()` advanced by exactly 1 for
+       the reset submit.
+     - The shell audit ledger gained exactly one additional
+       `TimeScaleChanged { from: 2.0, to: 1.0 }` event for the reset.
+   - An undo assertion proves `shell.undo_command()` after the reset
+     restores `TimeScale` to `2.0` within the existing tolerance style.
+
+   **Halt conditions**:
+   - `rge_input::KeyCode::Digit0` no longer exists or the winit-to-RGE
+     translation for `Digit0` is no longer present.
+   - An existing `Ctrl+0` / `KeyCode::Digit0` editor binding is discovered
+     that would be shadowed.
+   - `EditorKeyCommand`, `EditorKeyCommand::from_key_press`,
+     `EditorShell::handle_key_command`, `EditorShell::set_time_scale`,
+     or task #25's `SetTimeScaleDoubleSpeed` path have been moved,
+     renamed, or restructured enough that the change is no longer a
+     single-file command-surface edit.
+   - Implementing the binding requires editing any file listed in
+     "Files that MUST NOT be touched".
+   - Any verification gate reveals failure outside this task's scope that
+     would require source/test/Cargo/workflow edits outside the allowed file
+     surface. Halt rather than broadening scope.
+
+   **Verbatim review-gate strings** - the autonomous selector MUST copy
+   these eight strings, character-for-character, into the filed GitHub issue
+   body. No paraphrasing, no substitution, no reflowing. A packet that lacks
+   any one of them verbatim is bounced at review:
+
+   ```
+   MUST implement Ctrl+0 as EditorKeyCommand::ResetTimeScaleDefault routed through EditorShell::set_time_scale(TimeScale::DEFAULT)
+   MUST keep the implementation inside crates/editor-shell/src/lifecycle/commands.rs plus focused tests in crates/editor-shell/tests/keyboard_command_bus_round_trip.rs and/or crates/editor-shell/tests/time_scale_test.rs
+   MUST use the existing SetTimeScale Action and existing CommandBus::submit path; do not add a new Action trait shape, new Action impl, adapter ledger, CompoundAction wrapper, or coalesce-window change
+   MUST NOT modify crates/editor-actions/**, crates/editor-state/**, editor/rge-editor/**, kernel/ecs/**, crates/editor-shell/src/lifecycle/mod.rs, Cargo.toml, or Cargo.lock
+   MUST NOT add preset trio, step-up/step-down, UI, menu, toolbar, or egui wiring in this dispatch
+   MUST add tests for Digit0 key mapping, fresh-shell Ctrl+0 no-op behavior, Ctrl+2 then Ctrl+0 reset-to-default behavior after the coalesce window, and undo back to 2.0
+   MUST halt with NEEDS_HUMAN if KeyCode::Digit0 is unavailable, an existing Ctrl+0 binding would be shadowed, or the command surface has moved enough to require broader edits
+   MUST run cargo build -p rge-editor-shell, cargo +nightly fmt --all -- --check, cargo test -p rge-editor-shell --test keyboard_command_bus_round_trip, cargo test -p rge-editor-shell --test time_scale_test, cargo run -q -p rge-tool-architecture-lints -- all, and .ai/dispatch.verify.ps1
+   ```
+
+   **Done-criterion**:
+   - `Ctrl+0` maps to `EditorKeyCommand::ResetTimeScaleDefault`.
+   - `EditorKeyCommand::ResetTimeScaleDefault` calls
+     `EditorShell::set_time_scale(TimeScale::DEFAULT)`.
+   - Fresh-shell `Ctrl+0` is pinned as a no-op.
+   - `Ctrl+2` followed by `Ctrl+0` after the coalesce window resets to
+     default and undo restores `2.0`.
+   - No files outside the allowed source/test surface and this dispatch's
+     own generated handoff/log artifacts are modified.
+   - Cargo files remain unchanged.
+   - All required tests / assertions above are present and pass.
+   - All verification gates listed in the final MUST string exit 0.
