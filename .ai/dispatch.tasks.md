@@ -2488,7 +2488,7 @@ is the only safeguard against selector drift.
      allowed files, must-not-touch surfaces, verification gates, and
      halt conditions, unless the correct outcome is `NEEDS_HUMAN`.
 
-24. **Read-only preflight: first World-only CommandBus-backed editor action.**
+24. **[DONE 2026-05-23 via PR #133 / commit `6661cee`] Read-only preflight: first World-only CommandBus-backed editor action.**
    ISSUE-108 (task #12, PR #109, commit `ba90b04`) audited CommandBus
    integration shape and landed Q5 = `NEEDS_HUMAN` because picking the
    first editor action through the bus required arbitration between
