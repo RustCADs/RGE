@@ -758,6 +758,138 @@ is the only safeguard against selector drift.
      allowed files, must-not-touch surfaces, verification gates, and
      halt conditions, unless the correct outcome is `NEEDS_HUMAN`.
 
+14. **Read-only preflight: remaining io-* format metadata declarations.**
+   **NO source edits.** Companion audit to task #13. The #13 EXEC
+   packet and its verification log showed the `kernel_isolation` lint
+   warns on seven io crates, not only the original four. This dispatch
+   audits the remaining detected io crates — `rge-io-obj`,
+   `rge-io-audio`, and `rge-io-3mf` — so the eventual manifest fix can
+   address the full warning set in one bounded edit.
+
+   **Allowed read-only scope**:
+   - MAY read `ai_handoffs/ISSUE-110_EXEC_2026-05-23_10-32-36+0300.md`.
+   - MAY read `.ai/dispatch-ISSUE-110/verification.round0.log` if
+     present locally, only to confirm the seven warning crates.
+   - MAY read `tools/architecture-lints/src/kernel_isolation.rs`.
+   - MAY read `tools/architecture-lints/tests/kernel_isolation_test.rs`.
+   - MAY read root `Cargo.toml`.
+   - MAY read `crates/io-obj/**`, `crates/io-audio/**`, and
+     `crates/io-3mf/**`.
+   - MAY use read-only `rg`, `git grep`, `git diff`, `git status`,
+     and file-read commands. Do not run cargo commands; this is a
+     metadata preflight only.
+
+   **Allowed file surface**:
+   - MAY add exactly one execution report packet:
+     `ai_handoffs/ISSUE-*_EXEC_*.md`, plus its `.meta.json` sidecar
+     if produced by `new-handoff.ps1 -Finalize`.
+
+   **Files that MUST NOT be touched**:
+   - Any tracked repository file outside this dispatch's own
+     `ai_handoffs/` EXEC packet.
+   - Any source file, test file, fixture, Cargo manifest,
+     `Cargo.lock`, workflow file, script, schema, lint file, doc,
+     ADR, `Status.md`, `HANDOFF.md`, `change.md`, or existing handoff
+     packet.
+
+   **Five-question remaining io-format metadata preflight answer block**:
+   The EXEC report must contain a section titled exactly
+   `## 5-Question Remaining Io Formats Metadata Preflight Answer Block`
+   and answer exactly these headings:
+   - `Q1. What did task #13 prove, and why is this companion audit needed?`
+   - `Q2. Are rge-io-obj, rge-io-audio, and rge-io-3mf real lint-detected io crates?`
+   - `Q3. What exact format strings should rge-io-obj, rge-io-audio, and rge-io-3mf declare?`
+   - `Q4. Are there ownership ambiguities or aliases, including obj/mtl, wav/ogg/oga, mp3/mpeg, flac, and 3mf?`
+   - `Q5. What is the smallest safe follow-up dispatch covering all seven io crates?`
+
+   **Acceptance criteria**:
+   - Q1 cites task #13's finding that the verify gate warned on seven
+     io crates and explains why the four-crate implementation follow-up
+     is insufficient.
+   - Q2 confirms the three remaining crates are lint-detected by
+     package name or manifest path and currently lack
+     `package.metadata.rge.formats`.
+   - Q3 proposes exact `formats = [...]` arrays for the three
+     remaining crates, with evidence from crate manifests and
+     crate-level docs.
+   - Q4 explicitly resolves or halts on at least these ambiguity
+     points: whether OBJ should claim `mtl`, whether OGG should include
+     `oga` or `opus`, whether MP3 should include `mpeg`, and whether
+     3MF has any extension alias beyond `3mf`.
+   - Q5 names exactly one smallest safe follow-up manifest-only
+     dispatch covering all seven io crates from task #13 plus this
+     audit. If exact metadata cannot be chosen without a policy
+     decision, recommend `NEEDS_HUMAN` instead.
+
+   **Halt conditions**:
+   - The audit cannot identify exact arrays for `rge-io-obj`,
+     `rge-io-audio`, and `rge-io-3mf` from current manifests/docs.
+     Halt with `NEEDS_HUMAN`; do not guess.
+   - The audit finds an unavoidable ownership conflict between any of
+     the three remaining crates and the four arrays proposed by task
+     #13. Halt with `NEEDS_HUMAN`.
+   - The audit cannot decide whether aliases such as `mtl`, `oga`,
+     `opus`, or `mpeg` should be declared separately. Halt with
+     `NEEDS_HUMAN` rather than guessing.
+   - Answering Q1-Q5 requires editing source, Cargo metadata, lints,
+     docs, workflows, or tests. Halt; this dispatch is read-only.
+   - The audit cannot be answered without running local cargo
+     commands, tests, formatters, architecture lints, or
+     `.ai/dispatch.verify.ps1`. Halt; this is documentary preflight
+     only.
+   - Any tracked file is already dirty in a way that makes the
+     read-only audit ambiguous.
+
+   **Scope-preserving halt clause** - the orchestrator's canonical
+   verify gate (`.ai/dispatch.verify.ps1`) runs after Claude execute
+   even on read-only audits. If verify fails on a target OUTSIDE the
+   audit scope (anything beyond task #13's EXEC packet, the local
+   task #13 verification log if present, `tools/architecture-lints/src/
+   kernel_isolation.rs`, `tools/architecture-lints/tests/
+   kernel_isolation_test.rs`, root `Cargo.toml`, `crates/io-obj/**`,
+   `crates/io-audio/**`, `crates/io-3mf/**`, or this dispatch's own
+   `ai_handoffs/` packet), the orchestrator may auto-route a
+   CORRECTION packet asking the executor to fix the failure. When that
+   happens **the executor MUST halt**: write an EXECUTION_REPORT with
+   `EXEC_STATUS: blocked` and `STATUS: NEEDS_HUMAN`, do NOT execute
+   the correction. Read-only intent is the entire reason this task is
+   in the brief; a correction-round source fix to an unrelated
+   code/test failure expands an io-format metadata audit into a
+   source-fix dispatch and must become its own ticket.
+
+   **Verbatim review-gate strings** - the autonomous selector MUST
+   copy these seven strings, character-for-character, into the filed
+   GitHub issue body. No paraphrasing, no substitution, no reflowing.
+   A packet that lacks any one of them verbatim is bounced at review:
+
+   ```
+   MUST be a read-only remaining-io-format metadata preflight; do not edit source, tests, docs, Cargo.toml, Cargo.lock, workflows, scripts, lints, or existing packets
+   MUST produce a 5-question remaining io formats metadata preflight answer block covering task #13 findings, lint detection, exact three-crate format strings, ownership ambiguities, and a seven-crate follow-up
+   MUST inspect task #13's EXEC packet, tools/architecture-lints/src/kernel_isolation.rs, tools/architecture-lints/tests/kernel_isolation_test.rs, root Cargo.toml, crates/io-obj/**, crates/io-audio/**, and crates/io-3mf/**
+   MUST identify exact formats arrays for rge-io-obj, rge-io-audio, and rge-io-3mf or halt with NEEDS_HUMAN
+   MUST explicitly resolve or halt on aliases including obj/mtl, wav/ogg/oga, mp3/mpeg, flac, and 3mf
+   MUST NOT run local cargo commands, tests, formatters, architecture lints, or .ai/dispatch.verify.ps1
+   MUST halt rather than edit any Cargo.toml in this dispatch
+   ```
+
+   **Done-criterion**:
+   - One `ISSUE-*_EXEC_*.md` report with the exact
+     `## 5-Question Remaining Io Formats Metadata Preflight Answer Block`
+     section and Q1-Q5 headings above.
+   - No source, test, doc, Cargo, workflow, lint, schema, script,
+     status, or existing handoff packet edits.
+   - `git status --short --untracked-files=no` is clean before and
+     after writing the EXEC report.
+   - Verification claims are read-only only: document the `rg`,
+     `git grep`, and file-read commands used for the audit; do not
+     manually run cargo tests, builds, fmt, architecture lints, or
+     `.ai/dispatch.verify.ps1`. The orchestrator will still run its
+     canonical verification gate after execution.
+   - Q5 names one smallest next dispatch covering all seven io crates
+     and includes its proposed allowed files, must-not-touch surfaces,
+     verification gates, and halt conditions, unless the correct
+     outcome is `NEEDS_HUMAN`.
+
 12. **[DONE 2026-05-23 via PR #109 / commit `ba90b04`] Read-only preflight: CommandBus integration context for editor user actions.**
    **NO source edits.** Audit the smallest safe design shape for
    connecting `editor-actions::CommandBus` to real editor-shell user
