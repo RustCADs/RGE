@@ -1,0 +1,33 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-128",
+    "packet_type": "TASK",
+    "author": "Planner / OpenAI Codex",
+    "timestamp": "2026-05-23_14-49-45+0300",
+    "related_files": [
+                          "AI_DISPATCH_AUTOMATION.md",
+                          "ai_handoffs/AI_HANDOFF_PROTOCOL.md",
+                          "Invoke-AiDispatchAuto.ps1",
+                          "Register-AiDispatchSchedule.ps1",
+                          ".ai/dispatch.tasks.md",
+                          "Status.md",
+                          "HANDOFF.md",
+                          "change.md",
+                          "plans/BASELINE.md",
+                          "plans/IMPLEMENTATION.md",
+                          "ai_handoffs/ISSUE-116_*.md",
+                          "ai_handoffs/ISSUE-118_*.md",
+                          "ai_handoffs/ISSUE-120_*.md",
+                          "ai_handoffs/ISSUE-122_*.md",
+                          "ai_handoffs/ISSUE-124_*.md",
+                          "ai_handoffs/ISSUE-126_*.md",
+                          "GitHub issue metadata: issues #116, #118, #120, #122, #124, #126, #128",
+                          "GitHub PR metadata: PRs #117, #119, #121, #123, #125, #127",
+                          "Windows Scheduled Task metadata: RGE-AiDispatch",
+                          "ai_handoffs/ISSUE-128_EXEC_*.md"
+                      ],
+    "status": "OPEN",
+    "handoff_status": "COMPLETE",
+    "next_role": "EXECUTOR_AI",
+    "exit_code": 0
+}
