@@ -9,6 +9,9 @@ repository.workspace   = true
 authors.workspace      = true
 publish                = false
 
+[package.metadata.rge]
+formats = ["wav", "ogg", "oga", "flac", "mp3", "mpeg"]
+
 [dependencies]
 
 [lints]

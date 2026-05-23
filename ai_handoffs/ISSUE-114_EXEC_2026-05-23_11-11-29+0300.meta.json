@@ -1,0 +1,20 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-114",
+    "packet_type": "EXEC",
+    "author": "Executor / Claude",
+    "timestamp": "2026-05-23_11-11-29+0300",
+    "related_files": [
+                          "crates/io-gltf/Cargo.toml — added `[package.metadata.rge] formats = [\"gltf\", \"glb\"]`",
+                          "crates/io-image/Cargo.toml — added `[package.metadata.rge] formats = [\"png\", \"jpg\", \"jpeg\", \"exr\", \"hdr\"]`",
+                          "crates/io-step/Cargo.toml — added `[package.metadata.rge] formats = [\"step\", \"stp\", \"iges\", \"igs\"]`",
+                          "crates/io-stl/Cargo.toml — added `[package.metadata.rge] formats = [\"stl\"]`",
+                          "crates/io-obj/Cargo.toml — added `[package.metadata.rge] formats = [\"obj\", \"mtl\"]`",
+                          "crates/io-audio/Cargo.toml — added `[package.metadata.rge] formats = [\"wav\", \"ogg\", \"oga\", \"flac\", \"mp3\", \"mpeg\"]`",
+                          "crates/io-3mf/Cargo.toml — added `[package.metadata.rge] formats = [\"3mf\"]`"
+                      ],
+    "status": "AWAITING_REVIEW",
+    "handoff_status": "COMPLETE",
+    "next_role": "REVIEWER_AI",
+    "exit_code": 0
+}
