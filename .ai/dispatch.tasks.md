@@ -1222,7 +1222,7 @@ is the only safeguard against selector drift.
      allowed files, must-not-touch surfaces, verification gates, and
      halt conditions, unless the correct outcome is `NEEDS_HUMAN`.
 
-21. **Mechanically split `crates/gfx/src/frame_graph/compile.rs` into a directory module.**
+21. **[DONE 2026-05-23 via PR #127 / commit `02a241a`] Mechanically split `crates/gfx/src/frame_graph/compile.rs` into a directory module.**
    Implement the exact mechanical split identified by task #20 Q5.
    This is a source refactor only: move code into smaller modules
    without changing algorithms, public API, serialization, structural
