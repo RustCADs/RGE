@@ -87,7 +87,7 @@ param(
     [string]$PublishMode = 'branch',
 
     [Parameter(ParameterSetName = 'Register')]
-    [ValidateRange(1, 100)]
+    [ValidateRange(1, 200)]
     [int]$MaxAutonomousTasks = 5,
 
     [Parameter(ParameterSetName = 'Register')]

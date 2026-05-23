@@ -59,7 +59,7 @@ param(
     [ValidateSet('branch', 'main')]
     [string]$PublishMode = 'branch',
 
-    [ValidateRange(1, 100)]
+    [ValidateRange(1, 200)]
     [int]$MaxAutonomousTasks = 5,
 
     [string]$TaskBrief = '',
