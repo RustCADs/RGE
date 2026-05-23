@@ -2769,7 +2769,7 @@ is the only safeguard against selector drift.
    - All required tests / assertions above are present and pass.
    - All verification gates listed in the final MUST string exit 0.
 
-26. **Implement Ctrl+0 reset-to-default CommandBus time-scale action.**
+26. **[DONE 2026-05-24 via PR #137 / commit `bb4f557`] Implement Ctrl+0 reset-to-default CommandBus time-scale action.**
    Task #25 made `Ctrl+2` the first user-visible World-only
    `CommandBus::submit` path by routing through the existing
    `SetTimeScale` action. That unlocks the reset half that ISSUE-132
