@@ -897,6 +897,142 @@ is the only safeguard against selector drift.
      allowed files, must-not-touch surfaces, verification gates, and
      halt conditions, unless the correct outcome is `NEEDS_HUMAN`.
 
+13. **Read-only preflight: io-* `package.metadata.rge.formats` declarations.**
+   **NO source edits.** Audit the `kernel_isolation` architecture-lint
+   warning for io-format ownership metadata before any Cargo manifest
+   changes are made. Task #9/#10 verify output showed four real
+   workspace io crates warning that they lack
+   `package.metadata.rge.formats`: `rge-io-gltf`, `rge-io-image`,
+   `rge-io-step`, and `rge-io-stl`. This dispatch determines the
+   canonical metadata shape and the exact format strings each crate
+   should declare, then scopes the smallest safe follow-up manifest
+   edit.
+
+   **Allowed read-only scope**:
+   - MAY read `tools/architecture-lints/src/kernel_isolation.rs`.
+   - MAY read `tools/architecture-lints/tests/kernel_isolation_test.rs`.
+   - MAY read `tools/architecture-lints/src/main.rs` only for the
+     lint name / grouping.
+   - MAY read root `Cargo.toml`.
+   - MAY read `crates/io-gltf/**`, `crates/io-image/**`,
+     `crates/io-step/**`, and `crates/io-stl/**`.
+   - MAY read `plans/PLAN.md` / `plans/BASELINE.md` references to
+     PLAN section 1.6.4 / one-import-path-per-format only if needed
+     to interpret the lint's doctrine.
+   - MAY use read-only `rg`, `git grep`, `git diff`, `git status`,
+     and file-read commands. Do not run cargo commands; this is a
+     metadata preflight only.
+
+   **Allowed file surface**:
+   - MAY add exactly one execution report packet:
+     `ai_handoffs/ISSUE-*_EXEC_*.md`, plus its `.meta.json` sidecar
+     if produced by `new-handoff.ps1 -Finalize`.
+
+   **Files that MUST NOT be touched**:
+   - Any tracked repository file outside this dispatch's own
+     `ai_handoffs/` EXEC packet.
+   - Any source file, test file, fixture, Cargo manifest,
+     `Cargo.lock`, workflow file, script, schema, lint file, doc,
+     ADR, `Status.md`, `HANDOFF.md`, `change.md`, or existing handoff
+     packet.
+
+   **Five-question io-format metadata preflight answer block**:
+   The EXEC report must contain a section titled exactly
+   `## 5-Question Io Formats Metadata Preflight Answer Block` and
+   answer exactly these headings:
+   - `Q1. What metadata shape does kernel_isolation expect, and how does it treat missing metadata?`
+   - `Q2. Which workspace io-* crates are detected by the lint today, and which already declare formats?`
+   - `Q3. What exact format strings should rge-io-gltf, rge-io-image, rge-io-step, and rge-io-stl declare?`
+   - `Q4. Are there ambiguous ownership cases or overlaps, including embedded glTF images and image extension aliases?`
+   - `Q5. What is the smallest safe follow-up dispatch?`
+
+   **Acceptance criteria**:
+   - Q1 quotes or paraphrases the canonical TOML shape and confirms
+     strings are lowercase extension names with no leading dot.
+   - Q2 enumerates every current workspace crate that the lint will
+     classify as an io crate by package name or manifest path.
+   - Q3 proposes exact `formats = [...]` arrays for each of the four
+     warning crates, with evidence from crate docs, descriptions,
+     format detectors, or public APIs.
+   - Q4 explicitly handles at least these ambiguity points:
+     `gltf` vs `glb`, `jpg` vs `jpeg`, `tif`/`tiff` if present,
+     `step` vs `stp`, `iges` vs `igs`, and glTF embedded raster
+     images owned by `rge-io-image`.
+   - Q5 names exactly one smallest safe follow-up with proposed
+     allowed files, must-not-touch surfaces, verification gates, and
+     halt conditions. If exact metadata cannot be chosen without a
+     policy decision, recommend `NEEDS_HUMAN` instead.
+
+   **Halt conditions**:
+   - The audit discovers any crate besides `rge-io-gltf`,
+     `rge-io-image`, `rge-io-step`, or `rge-io-stl` is classified as
+     an io crate by the lint and needs metadata. Halt with
+     `NEEDS_HUMAN`; the assumed four-crate follow-up scope is stale.
+   - The audit discovers an unavoidable overlap where two io crates
+     should claim the same extension. Halt with `NEEDS_HUMAN`; do not
+     paper over ownership conflict in the follow-up.
+   - The audit cannot decide whether aliases such as `jpg`/`jpeg`,
+     `stp`/`step`, or `igs`/`iges` should be declared separately.
+     Halt with `NEEDS_HUMAN` rather than guessing.
+   - Answering Q1-Q5 requires editing source, Cargo metadata, lints,
+     docs, workflows, or tests. Halt; this dispatch is read-only.
+   - The audit cannot be answered without running local cargo
+     commands, tests, formatters, architecture lints, or
+     `.ai/dispatch.verify.ps1`. Halt; this is documentary preflight
+     only.
+   - Any tracked file is already dirty in a way that makes the
+     read-only audit ambiguous.
+
+   **Scope-preserving halt clause** - the orchestrator's canonical
+   verify gate (`.ai/dispatch.verify.ps1`) runs after Claude execute
+   even on read-only audits. If verify fails on a target OUTSIDE the
+   audit scope (anything beyond `tools/architecture-lints/src/
+   kernel_isolation.rs`, `tools/architecture-lints/tests/
+   kernel_isolation_test.rs`, `tools/architecture-lints/src/main.rs`,
+   root `Cargo.toml`, `crates/io-gltf/**`, `crates/io-image/**`,
+   `crates/io-step/**`, `crates/io-stl/**`, relevant PLAN/BASELINE
+   references, or this dispatch's own `ai_handoffs/` packet), the
+   orchestrator may auto-route a CORRECTION packet asking the executor
+   to fix the failure. When that happens **the executor MUST halt**:
+   write an EXECUTION_REPORT with `EXEC_STATUS: blocked` and
+   `STATUS: NEEDS_HUMAN`, do NOT execute the correction. Read-only
+   intent is the entire reason this task is in the brief; a
+   correction-round source fix to an unrelated code/test failure
+   expands an io-format metadata audit into a source-fix dispatch and
+   must become its own ticket.
+
+   **Verbatim review-gate strings** - the autonomous selector MUST
+   copy these seven strings, character-for-character, into the filed
+   GitHub issue body. No paraphrasing, no substitution, no reflowing.
+   A packet that lacks any one of them verbatim is bounced at review:
+
+   ```
+   MUST be a read-only io-format metadata preflight; do not edit source, tests, docs, Cargo.toml, Cargo.lock, workflows, scripts, lints, or existing packets
+   MUST produce a 5-question io formats metadata preflight answer block covering lint metadata shape, detected io crates, exact four-crate format strings, ownership ambiguities, and smallest follow-up
+   MUST inspect tools/architecture-lints/src/kernel_isolation.rs, tools/architecture-lints/tests/kernel_isolation_test.rs, root Cargo.toml, crates/io-gltf/**, crates/io-image/**, crates/io-step/**, and crates/io-stl/**
+   MUST identify exact formats arrays for rge-io-gltf, rge-io-image, rge-io-step, and rge-io-stl or halt with NEEDS_HUMAN
+   MUST explicitly resolve or halt on aliases including jpg/jpeg, step/stp, iges/igs, and gltf/glb embedded raster ownership
+   MUST NOT run local cargo commands, tests, formatters, architecture lints, or .ai/dispatch.verify.ps1
+   MUST halt rather than edit any Cargo.toml in this dispatch
+   ```
+
+   **Done-criterion**:
+   - One `ISSUE-*_EXEC_*.md` report with the exact
+     `## 5-Question Io Formats Metadata Preflight Answer Block`
+     section and Q1-Q5 headings above.
+   - No source, test, doc, Cargo, workflow, lint, schema, script,
+     status, or existing handoff packet edits.
+   - `git status --short --untracked-files=no` is clean before and
+     after writing the EXEC report.
+   - Verification claims are read-only only: document the `rg`,
+     `git grep`, and file-read commands used for the audit; do not
+     manually run cargo tests, builds, fmt, architecture lints, or
+     `.ai/dispatch.verify.ps1`. The orchestrator will still run its
+     canonical verification gate after execution.
+   - Q5 names one smallest next dispatch and includes its proposed
+     allowed files, must-not-touch surfaces, verification gates, and
+     halt conditions, unless the correct outcome is `NEEDS_HUMAN`.
+
 9. **[DONE 2026-05-23 via PR #103 / commit `4fa1e60`] Add `bench.yml` parity to `.ai/dispatch.verify.ps1`.**
    Single-file verification-gate edit. The #100 CI audit Q4 found
    that the local canonical dispatch gate mirrors `fmt.yml`,
