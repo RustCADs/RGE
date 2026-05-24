@@ -3956,3 +3956,114 @@ is the only safeguard against selector drift.
    - Q5 names exactly one smallest next dispatch or `NEEDS_HUMAN`.
    - `git status --short --untracked-files=no` is clean before and after
      execution, except for this dispatch's own packet/log artifacts.
+
+36. **Add simple-scene minimal load+tick regression with test-local Scene to World bridge.**
+   Task #35 found no existing `rge_data::Scene` -> runtime consumer, but it
+   identified a bounded first load+tick step that does not choose the
+   production bridge architecture: add a test-local identity-only bridge in
+   a new `rge-data` integration test. The bridge copies only entity ids from
+   parsed `rge_data::Scene` into a fresh `rge_kernel_ecs::World`, then asserts
+   the world is tickable. This is intentionally not a production loader.
+
+   **Runtime invocation note**: this task is a deliberate named +1 on top
+   of the freeze-at-113 posture set by task #35. Run as
+   `.\Invoke-AiDispatchAuto.ps1 -PublishMode branch -MaxAutonomousTasks 114`
+   so the cap accommodates exactly this one dispatch. The scheduler
+   remains disabled and must not be re-enabled by this task.
+
+   **Allowed file surface**:
+   - ADD exactly one new integration test file:
+     `crates/rge-data/tests/golden_simple_scene_load_tick.rs`.
+   - EDIT `crates/rge-data/Cargo.toml` only to add
+     `rge-kernel-ecs = { workspace = true }` under `[dev-dependencies]`.
+   - MAY edit `Cargo.lock` only for the mechanical `rge-kernel-ecs`
+     dependency edge under the `rge-data` package, if Cargo updates the lock.
+   - MAY add this dispatch's own `ai_handoffs/ISSUE-*_TASK_*.md`,
+     `ai_handoffs/ISSUE-*_EXEC_*.md`, `ai_handoffs/ISSUE-*_CORRECT_*.md`
+     packets plus `.meta.json` sidecars if produced by the orchestrator,
+     and the queue-runner's own `ai_dispatch_logs/log_*.md`.
+
+   **Test required**:
+   - Read `golden-projects/simple-scene/.rge-project` and parse it as
+     `rge_data::Project`.
+   - Resolve the first scene path relative to `golden-projects/simple-scene/`
+     and parse that `.rge-scene` as `rge_data::Scene`.
+   - Define a helper inside the test file, not production code, that builds
+     `rge_kernel_ecs::World::new()` and calls
+     `world.spawn_with_id(rge_kernel_ecs::EntityId::from_ulid(*entity.id.as_ulid()))`
+     once for each `scene.entities` entry.
+   - Assert `world.entity_count() == scene.entities.len()`.
+   - For each scene entity id, assert the converted ECS entity exists in the
+     world via the public `World::entity(...)` surface.
+   - Capture `current_tick()` and `last_tick()`, call `advance_tick()`, and
+     assert `current_tick()` incremented by one and `last_tick()` equals the
+     pre-advance tick.
+   - Assert this test intentionally ignores `ComponentValue` payloads and
+     scene relations until a production bridge decision is made.
+
+   **Files that MUST NOT be touched**:
+   - Any `golden-projects/**` file
+   - Any `crates/rge-data/src/**` production source
+   - Any `crates/rge-data/tests/**` file outside the single new
+     `golden_simple_scene_load_tick.rs`
+   - Any `kernel/**`, `editor/**`, `crates/editor-shell/**`,
+     `crates/script-host/**`, or `crates/script-bench/**` file
+   - Any Cargo file outside `crates/rge-data/Cargo.toml` and the narrowly
+     allowed `Cargo.lock` edge
+   - Any workflow under `.github/**`
+   - Any PowerShell script
+   - Any doctrine/status/planning doc (`AI_DISPATCH_AUTOMATION.md`,
+     `HANDOFF.md`, `Status.md`, `change.md`, ADRs, architecture docs,
+     plans)
+   - Any existing handoff packet or dispatch log
+   - Any GitHub label or issue metadata except the queue runner's normal
+     issue lifecycle for this dispatch
+
+   **Cargo.lock policy**:
+   - If `Cargo.lock` changes, the only acceptable diff is adding
+     `rge-kernel-ecs` to the dependency list for the `rge-data` package.
+   - Any package version, checksum, source, or unrelated dependency change
+     must halt with `NEEDS_HUMAN`.
+
+   **Halt conditions**:
+   - The implementation requires production code, a production crate
+     dependency, a new workspace member, or moving the bridge outside the
+     new test file.
+   - The implementation requires typed component parsing, asset loading,
+     renderer/GPU behavior, cook output, screenshot baselines, editor UI,
+     script execution, relation storage, or schedule/plugin-host integration.
+   - The test cannot prove load+tick using only parsed `rge_data::Scene`,
+     `rge_kernel_ecs::World`, identity conversion, `entity_count`,
+     `World::entity`, `current_tick`, `last_tick`, and `advance_tick`.
+   - Cargo.lock changes beyond the single allowed edge.
+   - The focused test or canonical verification gate fails for any reason
+     outside the allowed file surface.
+
+   **Verbatim review-gate strings** - the autonomous selector MUST copy
+   these seven strings, character-for-character, into the filed GitHub issue
+   body. No paraphrasing, no substitution, no reflowing. A packet that lacks
+   any one of them verbatim is bounced at review:
+
+   ```
+   MUST add exactly one new test file at crates/rge-data/tests/golden_simple_scene_load_tick.rs
+   MUST add rge-kernel-ecs as a dev-dependency of rge-data only, not a production dependency
+   MUST implement the rge_data::Scene to rge_kernel_ecs::World bridge as a test-local helper only
+   MUST load golden-projects/simple-scene through the Project scene path, spawn one ECS entity per parsed scene entity, and assert entity_count plus entity existence
+   MUST assert World advance_tick updates current_tick and last_tick on the loaded world
+   MUST NOT touch golden-project files, production source, kernel/editor/script crates, renderer/GPU, asset-store, cook output, screenshot baselines, typed component bridging, workflows, scripts, doctrine, or status docs
+   MUST run cargo test -p rge-data --test golden_simple_scene_load_tick and the canonical .ai/dispatch.verify.ps1 gate successfully
+   ```
+
+   **Done-criterion**:
+   - The new test file exists and is the only `crates/rge-data/tests/**`
+     file changed by this dispatch.
+   - `crates/rge-data/Cargo.toml` has exactly one new dev-dependency edge
+     to `rge-kernel-ecs`.
+   - The test parses the existing simple-scene project and referenced scene,
+     bridges identities into a fresh ECS World, verifies entity count and
+     entity existence, advances the world tick, and asserts tick bookkeeping.
+   - `cargo test -p rge-data --test golden_simple_scene_load_tick` exits 0.
+   - `.ai/dispatch.verify.ps1` exits 0.
+   - No tracked file outside the allowed test file, `crates/rge-data/Cargo.toml`,
+     and narrowly allowed `Cargo.lock` edge changes, except this dispatch's
+     own handoff/log artifacts.
