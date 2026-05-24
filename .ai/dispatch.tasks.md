@@ -3861,7 +3861,7 @@ is the only safeguard against selector drift.
    - No tracked file outside the one manifest, one scene fixture, and one
      test file changes, except this dispatch's own handoff/log artifacts.
 
-35. **Audit golden simple-scene load+tick harness shape.**
+35. **[DONE 2026-05-24 via PR #155 / commit `dbe6f84`] Audit golden simple-scene load+tick harness shape.**
    Task #34 landed the first non-empty schema-load-only
    `golden-projects/simple-scene` fixture: a manifest with one scene path,
    a current-schema `.rge-scene`, and an rge-data test that parses both.
