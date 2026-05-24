@@ -1,0 +1,16 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-152",
+    "packet_type": "EXEC",
+    "author": "Executor / Claude",
+    "timestamp": "2026-05-24T14:06:27+03:00",
+    "related_files": [
+                          "golden-projects/simple-scene/.rge-project — `scenes` changed from `[]` to exactly one relative path `\"scenes/main.rge-scene\"`.",
+                          "golden-projects/simple-scene/scenes/main.rge-scene — new minimal schema-load-only Scene fixture (version `\"0.1.0\"`, name `\"main\"`, empty entities, empty root_entities).",
+                          "crates/rge-data/tests/golden_simple_scene_schema.rs — updated positive project assertion to require the one scene path, resolves and parses the referenced `.rge-scene`, asserts schema facts only, and adds a scene deliberate-break parse-failure test alongside the existing project one."
+                      ],
+    "status": "AWAITING_REVIEW",
+    "handoff_status": "COMPLETE",
+    "next_role": "REVIEWER_AI",
+    "exit_code": 0
+}
