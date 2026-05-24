@@ -3860,3 +3860,99 @@ is the only safeguard against selector drift.
    - `.ai/dispatch.verify.ps1` exits 0.
    - No tracked file outside the one manifest, one scene fixture, and one
      test file changes, except this dispatch's own handoff/log artifacts.
+
+35. **Audit golden simple-scene load+tick harness shape.**
+   Task #34 landed the first non-empty schema-load-only
+   `golden-projects/simple-scene` fixture: a manifest with one scene path,
+   a current-schema `.rge-scene`, and an rge-data test that parses both.
+   The next rung in the evolution chain is load+tick, but current search
+   suggests there may be no existing `rge_data::Scene` -> runtime `World`
+   bridge or golden-project consumer. This task is a read-only preflight to
+   determine the smallest safe follow-up before any implementation.
+
+   **Runtime invocation note**: this task is a deliberate named +1 on top
+   of the freeze-at-112 posture set by task #34. Run as
+   `.\Invoke-AiDispatchAuto.ps1 -PublishMode branch -MaxAutonomousTasks 113`
+   so the cap accommodates exactly this one dispatch. The scheduler
+   remains disabled and must not be re-enabled by this task.
+
+   **Scope (read-only)**:
+   - `golden-projects/simple-scene/**`
+   - `crates/rge-data/src/**`
+   - `crates/rge-data/tests/**`
+   - `kernel/ecs/**`
+   - `kernel/events/**`
+   - `kernel/schedule/**`
+   - `kernel/plugin-host/**`
+   - `crates/editor-shell/**`
+   - `editor/rge-editor/**`
+   - `crates/script-host/**`
+   - `crates/script-bench/**`
+   - Cross-reference task #31, #33, and #34 handoff packets only as
+     historical context if useful.
+
+   **Allowed file surface**:
+   - This is read-only. The dispatch may add only its own
+     `ai_handoffs/ISSUE-*_TASK_*.md`, `ai_handoffs/ISSUE-*_EXEC_*.md`,
+     optional `ai_handoffs/ISSUE-*_CORRECT_*.md`, `.meta.json` sidecars,
+     and `ai_dispatch_logs/log_*.md`.
+   - No source, test, golden-project, Cargo, workflow, script, doctrine,
+     status, plan, or README file may be edited.
+
+   **Required answer format**:
+   - The EXEC report must include the exact heading
+     `## 5-Question Load+Tick Preflight Answer Block`.
+   - It must answer Q1 through Q5 with file/line evidence.
+
+   **Questions to answer**:
+   1. What exactly does `golden-projects/simple-scene` contain after task #34,
+      and which schema-only facts are now validated?
+   2. Which existing code paths, if any, already load `rge_data::Project` /
+      `rge_data::Scene` into a runtime or editor structure that can be ticked?
+      Classify each candidate as `usable-now`, `schema-only`, `different-scene-type`,
+      `renderer-only`, or `not-a-consumer`.
+   3. Does a direct `rge_data::Scene` -> `rge_kernel_ecs::World` bridge already
+      exist? If not, what exact bridge shape would be needed before load+tick
+      can be meaningful?
+   4. What would a renderer-free, GPU-free load+tick regression assert on the
+      current simple-scene fixture without typed component bridging or asset
+      loading?
+   5. What is the smallest safe follow-up dispatch: implement an existing
+      load+tick path, add a narrow schema-to-World bridge, add a narrower
+      pre-bridge test, or stop with `NEEDS_HUMAN` because the next step is an
+      architecture decision?
+
+   **Halt conditions**:
+   - If answering Q3 or Q4 requires writing code, changing fixture shape, or
+     inventing a new bridge during this dispatch, halt with `NEEDS_HUMAN`.
+   - If the only viable follow-up requires renderer/GPU, asset-store, cook
+     output, screenshot baselines, typed component bridging, or editor UI,
+     halt with `NEEDS_HUMAN`.
+   - If verify fails on a target outside this audit scope, halt with
+     `NEEDS_HUMAN` rather than fixing it.
+   - If the audit cannot be answered in one EXEC packet, halt with
+     `NEEDS_HUMAN`.
+
+   **Verbatim review-gate strings** - the autonomous selector MUST copy
+   these seven strings, character-for-character, into the filed GitHub issue
+   body. No paraphrasing, no substitution, no reflowing. A packet that lacks
+   any one of them verbatim is bounced at review:
+
+   ```
+   MUST be a read-only preflight audit; do not modify source, tests, golden-project files, Cargo files, workflows, scripts, doctrine, status docs, or existing handoff/log artifacts
+   MUST include the exact heading ## 5-Question Load+Tick Preflight Answer Block and answer Q1 through Q5
+   MUST inspect golden-projects/simple-scene, rge-data Project/Scene, kernel ECS/events/schedule/plugin-host, editor-shell/editor, and script-host/script-bench surfaces with file/line evidence
+   MUST classify candidate load+tick paths as usable-now, schema-only, different-scene-type, renderer-only, or not-a-consumer
+   MUST determine whether a direct rge_data::Scene to rge_kernel_ecs::World bridge exists before recommending implementation
+   MUST recommend exactly one smallest safe follow-up dispatch or NEEDS_HUMAN
+   MUST halt rather than fix if the audit reveals an implementation requirement outside the read-only scope
+   ```
+
+   **Done-criterion**:
+   - The EXEC packet contains the exact required heading and Q1-Q5 answers.
+   - Q2 classifies every plausible existing path with concrete file/line
+     evidence.
+   - Q3 states whether the bridge already exists or what shape is missing.
+   - Q5 names exactly one smallest next dispatch or `NEEDS_HUMAN`.
+   - `git status --short --untracked-files=no` is clean before and after
+     execution, except for this dispatch's own packet/log artifacts.
