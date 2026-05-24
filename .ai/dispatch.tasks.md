@@ -3326,7 +3326,7 @@ is the only safeguard against selector drift.
    - Q5 recommends exactly one task #30 route or `NEEDS_HUMAN`.
    - No tracked source/test/Cargo/workflow/script/doc/status file changes.
 
-30. **Fix Wait-GitHubActions CodeQL workflow-name matching.**
+30. **[DONE 2026-05-24 via PR #145 / commit `988a626`] Fix Wait-GitHubActions CodeQL workflow-name matching.**
    The publish lane now repeatedly needs a second manual `gh run watch` for
    CodeQL after `Wait-GitHubActions.ps1` reports the five in-repo workflow
    mirrors green. That helper intentionally reads `.github/workflows/*.yml`
