@@ -3412,7 +3412,7 @@ is the only safeguard against selector drift.
    - No tracked file outside `Wait-GitHubActions.ps1` changes, except this
      dispatch's own handoff/log artifacts.
 
-31. **Read-only preflight: golden-projects simple-scene scaffold.**
+31. **[DONE 2026-05-24 via PR #147 / commit `c09dddb`] Read-only preflight: golden-projects simple-scene scaffold.**
    The golden-project suite is product-facing regression infrastructure:
    `golden-projects/README.md` says `simple-scene/` should cover basic load,
    transform, camera, and light render. Today `golden-projects/simple-scene/`
