@@ -5,11 +5,40 @@ Scene(
         Entity(
             id: "0000000000000G000000000000",
             name: "Camera",
-            components: [],
+            components: [
+                ComponentValue(
+                    type_id: "rge::components::Transform",
+                    data: "(translation:(0.0,0.0,5.0),rotation:(0.0,0.0,0.0,1.0),scale:(1.0,1.0,1.0))",
+                ),
+                ComponentValue(
+                    type_id: "rge::components::Camera",
+                    data: "(projection: Perspective(fov_y_radians: 1.0471976, near: 0.05, far: 1000.0), viewport: (0.0, 0.0, 1.0, 1.0), priority: 0, is_active: true)",
+                ),
+                ComponentValue(
+                    type_id: "rge::components::Visibility",
+                    data: "Visible",
+                ),
+            ],
+            relations: [],
+        ),
+        Entity(
+            id: "00000000000010000000000000",
+            name: "KeyLight",
+            components: [
+                ComponentValue(
+                    type_id: "rge::components::Transform",
+                    data: "(translation:(0.0,0.0,0.0),rotation:(0.0,0.0,0.0,1.0),scale:(1.0,1.0,1.0))",
+                ),
+                ComponentValue(
+                    type_id: "rge::components::Light",
+                    data: "(color:(1.0,1.0,1.0),kind:Directional(illuminance_lux:100000.0),affects_indirect:true)",
+                ),
+            ],
             relations: [],
         ),
     ],
     root_entities: [
         "0000000000000G000000000000",
+        "00000000000010000000000000",
     ],
 )
