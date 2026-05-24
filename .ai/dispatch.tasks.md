@@ -4067,3 +4067,104 @@ is the only safeguard against selector drift.
    - No tracked file outside the allowed test file, `crates/rge-data/Cargo.toml`,
      and narrowly allowed `Cargo.lock` edge changes, except this dispatch's
      own handoff/log artifacts.
+
+37. **Read-only preflight: typed component payload shape for golden simple-scene.**
+   Task #36 proved a renderer-free load+tick path for
+   `golden-projects/simple-scene` by parsing the project and scene, copying
+   scene entity ids into a test-local ECS World, and advancing the world tick.
+   The next rung toward the README's "basic load + transform + camera + light
+   render" target is adding typed component payloads to the fixture, but the
+   current production bridge still intentionally ignores `ComponentValue`
+   payloads. This task is a read-only preflight to determine the exact safe
+   payload shape before any fixture or loader edit.
+
+   **Runtime invocation note**: this task is a deliberate named +1 on top
+   of the freeze-at-114 posture set by task #36. Run as
+   `.\Invoke-AiDispatchAuto.ps1 -PublishMode branch -MaxAutonomousTasks 115`
+   so the cap accommodates exactly this one dispatch. The scheduler
+   remains disabled and must not be re-enabled by this task.
+
+   **Scope (read-only)**:
+   - `golden-projects/simple-scene/**`
+   - `crates/rge-data/src/**`
+   - `crates/rge-data/tests/**`
+   - `crates/components-spatial/**`
+   - `crates/components-render/**`
+   - `crates/components-visibility/**`
+   - `kernel/types/**`
+   - `crates/macros-reflect/**`
+   - Cross-reference task #31 through #36 handoff packets only as
+     historical context if useful.
+
+   **Allowed file surface**:
+   - This is read-only. The dispatch may add only its own
+     `ai_handoffs/ISSUE-*_TASK_*.md`, `ai_handoffs/ISSUE-*_EXEC_*.md`,
+     optional `ai_handoffs/ISSUE-*_CORRECT_*.md`, `.meta.json` sidecars,
+     and `ai_dispatch_logs/log_*.md`.
+   - No source, test, golden-project, Cargo, workflow, script, doctrine,
+     status, plan, or README file may be edited.
+
+   **Required answer format**:
+   - The EXEC report must include the exact heading
+     `## 5-Question Typed Component Payload Preflight Answer Block`.
+   - It must answer Q1 through Q5 with file/line evidence.
+
+   **Questions to answer**:
+   1. What exactly does `golden-projects/simple-scene` contain after task #36,
+      and which "transform + camera + light" fixture facts are still missing?
+   2. Which current component crates define serializable Transform, Camera,
+      Light, and Visibility payloads, and what exact RON payload strings would
+      round-trip for a minimal simple-scene fixture?
+   3. What should the `ComponentValue.type_id` strings be for those payloads?
+      Identify any existing convention, test, or comment for canonical type
+      paths versus `kernel/types::TypeId` values.
+   4. Can raw `ComponentValue` payloads be added to the simple-scene fixture
+      now without typed component bridging or production loader changes, and
+      what schema-only tests would validate parse/round-trip behavior?
+   5. What is the smallest safe follow-up dispatch: add raw ComponentValue
+      fixture payloads plus schema tests, run a narrower preflight, or stop
+      with `NEEDS_HUMAN` because type identity or payload encoding is an
+      architecture decision?
+
+   **Halt conditions**:
+   - If `ComponentValue.type_id` naming cannot be inferred from current code,
+     comments, tests, or protocol docs, halt with `NEEDS_HUMAN`.
+   - If the next useful step requires production loader code, typed component
+     bridging, renderer/GPU behavior, asset loading, cook output, screenshot
+     baselines, editor UI, or a new workspace dependency, halt with
+     `NEEDS_HUMAN`.
+   - If answering the audit requires editing source, tests, fixtures, Cargo
+     files, workflows, scripts, or doctrine, halt with `NEEDS_HUMAN`.
+   - If verify fails on a target outside this audit scope, halt with
+     `NEEDS_HUMAN` rather than fixing it.
+   - If the audit cannot be answered in one EXEC packet, halt with
+     `NEEDS_HUMAN`.
+
+   **Verbatim review-gate strings** - the autonomous selector MUST copy
+   these seven strings, character-for-character, into the filed GitHub issue
+   body. No paraphrasing, no substitution, no reflowing. A packet that lacks
+   any one of them verbatim is bounced at review:
+
+   ```
+   MUST be a read-only preflight audit; do not modify source, tests, golden-project files, Cargo files, workflows, scripts, doctrine, status docs, or existing handoff/log artifacts
+   MUST include the exact heading ## 5-Question Typed Component Payload Preflight Answer Block and answer Q1 through Q5
+   MUST inspect golden-projects/simple-scene, rge-data ComponentValue/Scene tests, components-spatial, components-render, components-visibility, kernel/types, and macros-reflect surfaces with file/line evidence
+   MUST identify exact candidate RON payload strings for Transform, Camera, Light, and Visibility or halt with NEEDS_HUMAN if any cannot be justified from current code
+   MUST determine the canonical ComponentValue.type_id strings before recommending any fixture implementation
+   MUST recommend exactly one smallest safe follow-up dispatch or NEEDS_HUMAN
+   MUST halt rather than fix if the audit reveals an implementation requirement outside the read-only scope
+   ```
+
+   **Done-criterion**:
+   - The EXEC packet contains the exact required heading and Q1-Q5 answers.
+   - Q2 names the component crate/file evidence and exact candidate RON
+     payload strings for Transform, Camera, Light, and Visibility, or explains
+     why a specific payload cannot be justified.
+   - Q3 states the exact `ComponentValue.type_id` strings to use, or states
+     `NEEDS_HUMAN` if the current repo does not define a canonical convention.
+   - Q4 states whether adding raw payloads to the fixture is schema-only safe
+     without production bridge work, and names the schema-only tests that would
+     validate it.
+   - Q5 names exactly one smallest next dispatch or `NEEDS_HUMAN`.
+   - `git status --short --untracked-files=no` is clean before and after
+     execution, except for this dispatch's own packet/log artifacts.
