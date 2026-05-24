@@ -3634,3 +3634,115 @@ is the only safeguard against selector drift.
    - `.ai/dispatch.verify.ps1` exits 0.
    - No tracked file outside the single `crates/rge-data/tests/*.rs` file
      changes, except this dispatch's own handoff/log artifacts.
+
+33. **Reconcile golden project manifests to rge-data schema and add simple-scene schema-load test.**
+   Task #32 proved the schema-load-only policy is correct but not yet
+   implementable because every golden `.rge-project` manifest is still in
+   placeholder form: `target_tiers: ["desktop"]` is rejected by the current
+   `TargetTier` enum wire format, and the extra `schema_version` field is
+   not part of `rge_data::Project`. The human policy choice is to align the
+   placeholder golden manifests to the current `rge-data` schema rather
+   than widening production schema for placeholder files.
+
+   This is a bounded fixture/test reconciliation. Update all six golden
+   project manifests to parse as `rge_data::Project`, then add the
+   schema-load-only simple-scene integration test that task #32 attempted.
+   Do not add scene files, renderer behavior, screenshot baselines, cook
+   output, typed component bridging, or workflow changes.
+
+   **Runtime invocation note**: this task is a deliberate named +1 on top
+   of the freeze-at-110 posture set by task #32. Run as
+   `.\Invoke-AiDispatchAuto.ps1 -PublishMode branch -MaxAutonomousTasks 111`
+   so the cap accommodates exactly this one dispatch. The scheduler
+   remains disabled and must not be re-enabled by this task.
+
+   **Allowed file surface**:
+   - EDIT these six files only:
+     - `golden-projects/simple-scene/.rge-project`
+     - `golden-projects/material-zoo/.rge-project`
+     - `golden-projects/skinned-character/.rge-project`
+     - `golden-projects/physics-puzzle/.rge-project`
+     - `golden-projects/cad-parametric/.rge-project`
+     - `golden-projects/stress-world/.rge-project`
+   - ADD exactly one integration test file:
+     `crates/rge-data/tests/golden_simple_scene_schema.rs`.
+   - MAY add this dispatch's own `ai_handoffs/ISSUE-*_TASK_*.md`,
+     `ai_handoffs/ISSUE-*_EXEC_*.md`, `ai_handoffs/ISSUE-*_CORRECT_*.md`
+     packets plus `.meta.json` sidecars if produced by the orchestrator,
+     and the queue-runner's own `ai_dispatch_logs/log_*.md`.
+
+   **Manifest edits required**:
+   - In each of the six golden `.rge-project` files, change the
+     `target_tiers` entry from the quoted placeholder form to the current
+     `TargetTier` RON enum wire form, e.g. `target_tiers: [desktop],` or
+     the equivalent pretty-printed bare-identifier list.
+   - In each of the six golden `.rge-project` files, remove the extra
+     `schema_version: "0.1.0"` field because `Project` already carries
+     `version: "0.1.0"` and has no separate `schema_version` field.
+   - Preserve names, descriptions, plugins, and currently-empty `scenes`
+     lists.
+
+   **Test required**:
+   - `crates/rge-data/tests/golden_simple_scene_schema.rs` includes
+     `golden-projects/simple-scene/.rge-project` via a stable relative
+     path.
+   - It parses the manifest as `rge_data::Project`.
+   - It asserts `name == "simple-scene"`, `version == SchemaVersion::V0_1_0`,
+     `description` is non-empty, `target_tiers` contains `TargetTier::Desktop`,
+     `plugins` is empty, and `scenes` is currently empty.
+   - It adds a deliberate-break negative assertion by mutating the manifest
+     text in memory to rename or remove one required field, then asserts
+     `ron::from_str::<Project>(...)` returns an error.
+
+   **Files that MUST NOT be touched**:
+   - Any `golden-projects/**` file outside the six listed manifests
+   - Any `crates/**` file outside
+     `crates/rge-data/tests/golden_simple_scene_schema.rs`
+   - `editor/**`
+   - `kernel/**`
+   - `.github/**`
+   - Any Cargo file (`Cargo.toml`, `Cargo.lock`, workspace manifests)
+   - Any PowerShell script
+   - Any doctrine/status/planning doc (`AI_DISPATCH_AUTOMATION.md`,
+     `HANDOFF.md`, `Status.md`, `change.md`, ADRs, architecture docs,
+     plans)
+   - Any existing handoff packet or dispatch log
+   - Any GitHub label or issue metadata except the queue runner's normal
+     issue lifecycle for this dispatch
+
+   **Halt conditions**:
+   - Any golden manifest still fails to parse as `rge_data::Project` after
+     only the required placeholder-to-schema edits.
+   - The implementation requires changing `rge-data` production schema,
+     Cargo files, workflows, scripts, renderer code, asset-store code, or
+     typed component bridging.
+   - The implementation wants to add `.rge-scene` files, generated binary
+     assets, screenshot baselines, cook output, or a renderer comparison
+     harness.
+   - The focused test or canonical verification gate fails for any reason
+     outside the allowed file surface.
+
+   **Verbatim review-gate strings** - the autonomous selector MUST copy
+   these seven strings, character-for-character, into the filed GitHub issue
+   body. No paraphrasing, no substitution, no reflowing. A packet that lacks
+   any one of them verbatim is bounced at review:
+
+   ```
+   MUST align the six golden-projects/*.rge-project manifests to the current rge_data::Project schema without changing production schema
+   MUST change quoted target_tiers placeholders to the current bare TargetTier enum wire form in all six golden manifests
+   MUST remove the extra schema_version field from all six golden manifests while preserving the existing version field
+   MUST add exactly one rge-data integration test file at crates/rge-data/tests/golden_simple_scene_schema.rs
+   MUST keep the test schema-load-only and assert the current simple-scene Project fields plus a deliberate-break parse-failure variant
+   MUST NOT add scene files, renderer/GPU behavior, asset-store behavior, cook output, screenshot baselines, typed component bridging, Cargo changes, workflow changes, scripts, doctrine, or status docs
+   MUST run cargo test -p rge-data --test golden_simple_scene_schema and the canonical .ai/dispatch.verify.ps1 gate successfully
+   ```
+
+   **Done-criterion**:
+   - All six golden `.rge-project` manifests parse as `rge_data::Project`.
+   - `crates/rge-data/tests/golden_simple_scene_schema.rs` exists and
+     proves the simple-scene manifest's schema-load-only contract.
+   - The deliberate-break negative variant fails parsing as intended.
+   - `cargo test -p rge-data --test golden_simple_scene_schema` exits 0.
+   - `.ai/dispatch.verify.ps1` exits 0.
+   - No tracked file outside the six listed manifests plus the single new
+     test file changes, except this dispatch's own handoff/log artifacts.
