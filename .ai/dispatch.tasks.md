@@ -3535,3 +3535,102 @@ is the only safeguard against selector drift.
    - Q5 recommends exactly one task #32 route or `NEEDS_HUMAN`.
    - No tracked source/test/Cargo/workflow/script/doc/status/golden-project
      file changes.
+
+32. **Add schema-load-only golden simple-scene regression test.**
+   Human policy decision after task #31: choose the schema-load-only rung of
+   the golden-project evolution chain. Do not attempt load+tick, renderer
+   comparison, screenshot baselines, cook output, asset loading, or typed
+   component bridging in this task. The purpose is to build the first shared
+   harness layer that later load+tick and render-comparison work can reuse.
+
+   Add a test-only regression under `crates/rge-data/tests/` that reads the
+   existing `golden-projects/simple-scene/.rge-project` manifest, parses it
+   as the current `rge_data::Project` schema, and asserts the schema-level
+   fields that are valid today. The current manifest may keep `scenes: []`;
+   this task is not required to add a scene file. It must include a
+   deliberate-break negative assertion proving the test fails if a required
+   project field is renamed or removed.
+
+   **Runtime invocation note**: this task is a deliberate named +1 on top
+   of the freeze-at-109 posture set by task #31. Run as
+   `.\Invoke-AiDispatchAuto.ps1 -PublishMode branch -MaxAutonomousTasks 110`
+   so the cap accommodates exactly this one dispatch. The scheduler
+   remains disabled and must not be re-enabled by this task.
+
+   **Allowed file surface**:
+   - EDIT or ADD exactly one integration test file under
+     `crates/rge-data/tests/`, preferably
+     `crates/rge-data/tests/golden_simple_scene_schema.rs`.
+   - MAY add this dispatch's own `ai_handoffs/ISSUE-*_TASK_*.md`,
+     `ai_handoffs/ISSUE-*_EXEC_*.md`, `ai_handoffs/ISSUE-*_CORRECT_*.md`
+     packets plus `.meta.json` sidecars if produced by the orchestrator,
+     and the queue-runner's own `ai_dispatch_logs/log_*.md`.
+
+   **Files that MUST NOT be touched**:
+   - `golden-projects/**`
+   - Any `crates/**` file outside the single new/edited
+     `crates/rge-data/tests/*.rs` integration test
+   - `editor/**`
+   - `kernel/**`
+   - `.github/**`
+   - Any Cargo file (`Cargo.toml`, `Cargo.lock`, workspace manifests)
+   - Any PowerShell script
+   - Any doctrine/status/planning doc (`AI_DISPATCH_AUTOMATION.md`,
+     `HANDOFF.md`, `Status.md`, `change.md`, ADRs, architecture docs,
+     plans)
+   - Any existing handoff packet or dispatch log
+   - Any GitHub label or issue metadata except the queue runner's normal
+     issue lifecycle for this dispatch
+
+   **Required test shape**:
+   - Include the manifest via a stable relative path from the test file,
+     for example `include_str!("../../../golden-projects/simple-scene/.rge-project")`.
+   - Parse it as `rge_data::Project`.
+   - Assert `name == "simple-scene"`, `version == SchemaVersion::V0_1_0`,
+     `description` is non-empty, `target_tiers` contains `TargetTier::Desktop`,
+     `plugins` is empty, and the `scenes` vector is present and currently
+     empty.
+   - Add a deliberate-break negative assertion by mutating the manifest text
+     in memory to rename or remove one required field, then assert
+     `ron::from_str::<Project>(...)` returns an error.
+   - Do not add or require any `.rge-scene` file, renderer, GPU, asset-store,
+     cook, screenshot, or typed-component behavior.
+
+   **Halt conditions**:
+   - The current `golden-projects/simple-scene/.rge-project` cannot parse as
+     `rge_data::Project` without editing the manifest or production schema.
+   - The test requires adding a new dependency, changing Cargo manifests, or
+     changing the `rge-data` public schema.
+   - The implementation wants to add a scene file, binary asset, screenshot
+     baseline, renderer comparison, GPU test, asset-store integration, or
+     typed component bridge.
+   - Any tracked file outside the single allowed `crates/rge-data/tests/*.rs`
+     test file changes, excluding this dispatch's own handoff/log artifacts.
+
+   **Verbatim review-gate strings** - the autonomous selector MUST copy
+   these seven strings, character-for-character, into the filed GitHub issue
+   body. No paraphrasing, no substitution, no reflowing. A packet that lacks
+   any one of them verbatim is bounced at review:
+
+   ```
+   MUST keep scope to a schema-load-only rge-data integration test
+   MUST add or edit exactly one test file under crates/rge-data/tests and no production code
+   MUST read golden-projects/simple-scene/.rge-project and parse it as rge_data::Project
+   MUST assert the current schema-level fields including name, version, non-empty description, desktop target tier, empty plugins, and currently-empty scenes vector
+   MUST add a deliberate-break negative test variant that mutates a required field in memory and asserts parsing fails
+   MUST NOT touch renderer, GPU, asset-store, cook output, screenshot baselines, typed component bridging, golden-project files, Cargo files, workflows, scripts, doctrine, or status docs
+   MUST run cargo test -p rge-data --test golden_simple_scene_schema and the canonical .ai/dispatch.verify.ps1 gate successfully
+   ```
+
+   **Done-criterion**:
+   - One `crates/rge-data/tests/golden_simple_scene_schema.rs` test file
+     exists, or one equivalent single integration test file under
+     `crates/rge-data/tests/` is updated.
+   - The test parses the existing golden simple-scene manifest and asserts
+     the current schema-load-only contract.
+   - The deliberate-break negative variant proves a required-field rename or
+     removal fails parsing.
+   - `cargo test -p rge-data --test golden_simple_scene_schema` exits 0.
+   - `.ai/dispatch.verify.ps1` exits 0.
+   - No tracked file outside the single `crates/rge-data/tests/*.rs` file
+     changes, except this dispatch's own handoff/log artifacts.
