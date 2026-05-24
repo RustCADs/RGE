@@ -4068,7 +4068,16 @@ is the only safeguard against selector drift.
      and narrowly allowed `Cargo.lock` edge changes, except this dispatch's
      own handoff/log artifacts.
 
-37. **Read-only preflight: typed component payload shape for golden simple-scene.**
+37. **[DONE-BLOCKED 2026-05-24 via PR #159 / commit `4bd1a23`] Read-only preflight: typed component payload shape for golden simple-scene.**
+   Audit landed; EXEC was `NEEDS_HUMAN` because the audit could only prove
+   the canonical `ComponentValue.type_id` string for `Transform`. The arbiter
+   decision was recorded in issue #160 (closed): use rge-data scene-envelope
+   strings (`"rge::components::Camera"`, `"rge::components::Light"`,
+   `"rge::components::Visibility"`), explicit `Visibility::Visible` on the
+   camera entity, and `fov_y_radians: 1.0471976`. Task #38 below implements
+   the bounded fixture + schema-only test follow-up against those decisions.
+
+   *(original task brief preserved below for context)*
    Task #36 proved a renderer-free load+tick path for
    `golden-projects/simple-scene` by parsing the project and scene, copying
    scene entity ids into a test-local ECS World, and advancing the world tick.
@@ -4169,3 +4178,192 @@ is the only safeguard against selector drift.
    - Q5 names exactly one smallest next dispatch or `NEEDS_HUMAN`.
    - `git status --short --untracked-files=no` is clean before and after
      execution, except for this dispatch's own packet/log artifacts.
+
+38. **Add typed `ComponentValue` payloads to golden simple-scene fixture and extend schema test.**
+   Task #37 produced a `NEEDS_HUMAN` audit for typed component payload
+   shape; issue #160 closed the arbiter decision with the rge-data
+   scene-envelope convention for `ComponentValue.type_id` strings, explicit
+   `Visibility::Visible` on the camera entity, and the `FRAC_PI_3`-compatible
+   `f32` literal `1.0471976` for `Camera.fov_y_radians`. This task implements
+   the bounded fixture + schema-only test follow-up against those decisions.
+   No typed bridging, no renderer/GPU, no asset loading, no production
+   loader changes.
+
+   **Runtime invocation note**: this task is a deliberate named +1 on top
+   of the freeze-at-115 posture set by task #37. Run as
+   `.\Invoke-AiDispatchAuto.ps1 -PublishMode branch -MaxAutonomousTasks 116`
+   so the cap accommodates exactly this one dispatch. The scheduler
+   remains disabled and must not be re-enabled by this task.
+
+   **Arbiter decisions to encode** (from #160 resolution; these are
+   scene-envelope identity strings, NOT Rust module paths and NOT final
+   Reflect runtime identity):
+   - Canonical `ComponentValue.type_id` strings:
+       - `"rge::components::Transform"`
+       - `"rge::components::Camera"`
+       - `"rge::components::Light"`
+       - `"rge::components::Visibility"`
+   - Camera entity carries `Visibility::Visible` explicitly (fixture
+     readability and schema pinning); not the `Inherited` default.
+   - Camera projection uses `fov_y_radians: 1.0471976` as the
+     `FRAC_PI_3`-compatible `f32` literal already justified by the #158
+     audit (`crates/components-render/src/camera.rs:31-39`).
+
+   **Allowed file surface**:
+   - EDIT `golden-projects/simple-scene/scenes/main.rge-scene` to add
+     typed `ComponentValue` payloads to the existing `Camera` entity and
+     to add one new `Light` entity (both top-level roots; no relations).
+   - EDIT `crates/rge-data/tests/golden_simple_scene_schema.rs` to extend
+     the existing `simple_scene_referenced_scene_parses_as_scene` test
+     and to add new tests asserting per-entity `ComponentValue` count,
+     verbatim `type_id` strings, and verbatim raw `data` strings.
+   - MAY add this dispatch's own `ai_handoffs/ISSUE-*_TASK_*.md`,
+     `ai_handoffs/ISSUE-*_EXEC_*.md`, `ai_handoffs/ISSUE-*_CORRECT_*.md`
+     packets plus `.meta.json` sidecars if produced by the orchestrator,
+     and the queue-runner's own `ai_dispatch_logs/log_*.md`.
+
+   **Fixture content required**:
+   - Camera entity (preserve existing id `"0000000000000G000000000000"`,
+     name `"Camera"`, empty `relations: []`) gains three components, in
+     this order:
+       - `ComponentValue(type_id: "rge::components::Transform", data: "(translation:(0.0,0.0,5.0),rotation:(0.0,0.0,0.0,1.0),scale:(1.0,1.0,1.0))")`
+       - `ComponentValue(type_id: "rge::components::Camera", data: "(projection:Perspective(fov_y_radians:1.0471976,near:0.05,far:1000.0),viewport:(0.0,0.0,1.0,1.0),priority:0,is_active:true)")`
+       - `ComponentValue(type_id: "rge::components::Visibility", data: "Visible")`
+   - New Light entity (any valid 26-char ULID that does NOT collide with
+     the Camera entity's id; name `"Light"`; empty `relations: []`) gains
+     three components, in this order:
+       - `ComponentValue(type_id: "rge::components::Transform", data: "(translation:(0.0,0.0,0.0),rotation:(0.0,0.0,0.0,1.0),scale:(1.0,1.0,1.0))")`
+       - `ComponentValue(type_id: "rge::components::Light", data: "(color:(1.0,1.0,1.0),kind:Directional(illuminance_lux:100000.0),affects_indirect:true)")`
+       - `ComponentValue(type_id: "rge::components::Visibility", data: "Visible")`
+   - `root_entities` MUST list both the existing Camera id and the new
+     Light id; both are top-level roots.
+
+   **Schema test changes required**:
+   - Replace the current `assert!(root.components.is_empty(), "schema fixture stays untyped")`
+     line (currently at
+     `crates/rge-data/tests/golden_simple_scene_schema.rs:114`) with
+     assertions that the Camera entity has exactly three components, in
+     the order above, with verbatim `(type_id, data)` pairs.
+   - Add a new test that locates the `Light` entity by name in
+     `scene.entities`, asserts it has exactly three components in the
+     order above with verbatim `(type_id, data)` pairs, and asserts its
+     `relations` is empty.
+   - Add a new test that iterates every `ComponentValue` in every entity
+     and asserts `ron::from_str::<ron::Value>(&cv.data)` returns
+     `Ok(_)` for shape integrity. This uses only the existing `ron`
+     workspace dep already available to `rge-data` tests; do NOT add
+     any component crate to `rge-data`'s dev-deps.
+   - Update entity-count and root-count assertions to reflect two
+     entities and two root entities.
+
+   **Files that MUST NOT be touched**:
+   - Any `crates/rge-data/src/**` production source.
+   - Any other `crates/rge-data/tests/**` file (extend the existing
+     schema test only; do not touch `golden_simple_scene_load_tick.rs`,
+     `round_trip.rs`, or any other test file).
+   - Any other `golden-projects/**` file (`cad-parametric`,
+     `material-zoo`, `physics-puzzle`, `skinned-character`,
+     `stress-world`, or the `simple-scene` `README.md` /
+     `.rge-project` manifest).
+   - Any `crates/components-spatial/**`, `crates/components-render/**`,
+     `crates/components-visibility/**`, or any other component crate
+     source/test/Cargo file. This task is schema-only and does NOT pull
+     component crates into `rge-data`'s dev-deps.
+   - Any `kernel/**`, `editor/**`, `crates/editor-shell/**`,
+     `crates/script-host/**`, `crates/script-bench/**`,
+     `crates/macros-reflect/**`, `crates/gfx/**`, `crates/brep-render/**`,
+     any `crates/io-*/**`, `crates/asset-store/**`, or any other crate.
+   - Any Cargo file (`Cargo.toml`, `Cargo.lock`, workspace manifests,
+     feature flags).
+   - Any workflow under `.github/**`.
+   - Any PowerShell script.
+   - Any doctrine / status / planning doc
+     (`AI_DISPATCH_AUTOMATION.md`, `HANDOFF.md`, `Status.md`,
+     `change.md`, ADRs, architecture docs, plans, READMEs).
+   - Any existing handoff packet or dispatch log.
+   - Any GitHub label or issue metadata except the queue runner's
+     normal issue lifecycle for this dispatch.
+
+   **Cargo.lock policy**:
+   - Zero Cargo metadata changes. If `Cargo.toml` or `Cargo.lock`
+     changes at all, halt with `NEEDS_HUMAN`.
+
+   **Halt conditions**:
+   - Adding the typed payloads requires touching production code in
+     `crates/rge-data/src/**`, any component crate, or any other
+     production source.
+   - The schema test requires a new dependency (e.g. any component
+     crate in dev-deps). Use `ron::Value` for raw-payload shape
+     validation; the existing `ron` workspace dep is sufficient.
+   - The fixture or test requires typed component bridging, an
+     `rge_data::Scene` -> ECS payload bridge, asset loading, cook
+     output, renderer/GPU behavior, screenshot baselines, editor UI,
+     script execution, or any production loader change.
+   - Any `(type_id, data)` string would deviate from the arbiter
+     decisions above. Use the exact verbatim strings; do NOT
+     substitute Rust crate-path strings, `kernel/types::TypeId` hash
+     forms, or any other convention.
+   - The Camera entity's existing id `"0000000000000G000000000000"`
+     would need to change. Preserve it verbatim; only add components
+     and add the new Light entity alongside.
+   - The fixture would need to rename the Camera entity, drop the
+     existing root invariant, or break any other invariant the current
+     `simple_scene_referenced_scene_parses_as_scene` test asserts
+     besides the `root.components.is_empty()` flip. Extend assertions;
+     do not rewrite history.
+   - Cargo.lock changes for any reason.
+   - The focused test or canonical verification gate fails for any
+     reason outside the allowed file surface.
+
+   **Scope-preserving halt clause** - the orchestrator's canonical
+   verify gate (`.ai/dispatch.verify.ps1`) runs after Claude execute.
+   If verify fails on a target OUTSIDE the allowed file surface
+   (anything beyond
+   `golden-projects/simple-scene/scenes/main.rge-scene`,
+   `crates/rge-data/tests/golden_simple_scene_schema.rs`, or this
+   dispatch's own `ai_handoffs/` packet), the orchestrator may
+   auto-route a CORRECTION packet asking the executor to fix the
+   failure. When that happens **the executor MUST halt**: write an
+   EXECUTION_REPORT with `EXEC_STATUS: blocked` and
+   `STATUS: NEEDS_HUMAN`, do NOT execute the correction. Scope
+   discipline is the entire reason this task is bounded narrowly;
+   a correction-round source fix to an unrelated failure expands a
+   fixture + test dispatch into a source-fix dispatch and must
+   become its own ticket.
+
+   **Verbatim review-gate strings** - the autonomous selector MUST
+   copy these eight strings, character-for-character, into the filed
+   GitHub issue body. No paraphrasing, no substitution, no
+   reflowing. A packet that lacks any one of them verbatim is
+   bounced at review:
+
+   ```
+   MUST use the rge-data scene-envelope ComponentValue.type_id strings exactly: "rge::components::Transform", "rge::components::Camera", "rge::components::Light", "rge::components::Visibility"
+   MUST add Visibility::Visible explicitly on the camera entity, not rely on the Inherited default
+   MUST use fov_y_radians: 1.0471976 as the FRAC_PI_3-compatible f32 literal for the camera's Perspective projection
+   MUST edit only golden-projects/simple-scene/scenes/main.rge-scene and crates/rge-data/tests/golden_simple_scene_schema.rs (except the dispatch's own ai_handoffs/ packet)
+   MUST NOT pull any component crate (components-spatial, components-render, components-visibility) into rge-data's dev-dependencies; use ron::Value for raw-payload shape validation
+   MUST NOT touch any kernel, editor, script, gfx, brep-render, io-*, asset-store, macros-reflect, or any production source crate
+   MUST NOT modify Cargo.toml or Cargo.lock; halt with NEEDS_HUMAN if either changes
+   MUST run cargo test -p rge-data --test golden_simple_scene_schema and the canonical .ai/dispatch.verify.ps1 gate successfully
+   ```
+
+   **Done-criterion**:
+   - `golden-projects/simple-scene/scenes/main.rge-scene` contains the
+     existing Camera entity (id `"0000000000000G000000000000"`, name
+     `"Camera"`, empty relations) with three `ComponentValue` payloads
+     using the four arbiter-approved canonical `type_id` strings in the
+     order above, and a new Light entity (valid ULID id distinct from
+     Camera, name `"Light"`, empty relations) with three
+     `ComponentValue` payloads including a directional light in the
+     order above. `root_entities` lists both ids.
+   - `crates/rge-data/tests/golden_simple_scene_schema.rs` asserts the
+     per-entity `ComponentValue` counts and verbatim `(type_id, data)`
+     pairs for both entities, validates each raw `data` string parses
+     successfully as `ron::Value` for shape integrity, and updates
+     entity-count/root-count assertions to reflect two entities and two
+     root entities.
+   - `cargo test -p rge-data --test golden_simple_scene_schema` exits 0.
+   - `.ai/dispatch.verify.ps1` exits 0.
+   - No tracked file outside the two allowed files changes, except
+     this dispatch's own handoff/log artifacts.
