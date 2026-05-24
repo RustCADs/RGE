@@ -1,0 +1,31 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-154",
+    "packet_type": "EXEC",
+    "author": "Executor / Claude",
+    "timestamp": "2026-05-24_14-59-53+0300",
+    "related_files": [
+                          "ai_handoffs/ISSUE-154_TASK_2026-05-24_14-47-18+0300.md — TASK packet being executed (read-only)",
+                          "golden-projects/simple-scene/.rge-project — fixture manifest inspected (Q1)",
+                          "golden-projects/simple-scene/scenes/main.rge-scene — fixture scene inspected (Q1)",
+                          "golden-projects/simple-scene/README.md — fixture intent doc inspected (Q1)",
+                          "crates/rge-data/tests/golden_simple_scene_schema.rs — existing schema-only test inspected (Q1, Q2)",
+                          "crates/rge-data/Cargo.toml — dep surface inspected (Q2, Q3)",
+                          "crates/rge-data/src/lib.rs — public surface inspected (Q2)",
+                          "crates/rge-data/src/project.rs — Project schema inspected (Q1, Q2)",
+                          "crates/rge-data/src/scene.rs — Scene schema inspected (Q1, Q2)",
+                          "crates/rge-data/src/entity_ref.rs — EntityId(Ulid) shape inspected (Q3)",
+                          "kernel/ecs/Cargo.toml, kernel/ecs/src/lib.rs, kernel/ecs/src/world.rs, kernel/ecs/src/entity.rs — kernel ECS surface inspected (Q2, Q3, Q4)",
+                          "kernel/app/Cargo.toml, kernel/app/src/lib.rs, kernel/app/src/app.rs — kernel App / phase runner inspected (Q2)",
+                          "kernel/events/Cargo.toml, kernel/schedule/Cargo.toml, kernel/plugin-host/Cargo.toml — kernel substrate deps inspected (Q2)",
+                          "crates/editor-shell/Cargo.toml, crates/editor-shell/src/lib.rs, crates/editor-shell/src/world.rs — editor-shell surface inspected (Q2)",
+                          "editor/rge-editor/Cargo.toml, editor/rge-editor/src/main.rs — editor binary surface inspected (Q2)",
+                          "crates/script-host/Cargo.toml — script-host dep surface inspected (Q2)",
+                          "crates/script-bench/Cargo.toml — script-bench dep surface inspected (Q2)",
+                          "Cargo.toml — workspace member + dependency edges inspected (Q2, Q3)"
+                      ],
+    "status": "AWAITING_REVIEW",
+    "handoff_status": "COMPLETE",
+    "next_role": "REVIEWER_AI",
+    "exit_code": 0
+}
