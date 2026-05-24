@@ -2917,7 +2917,7 @@ is the only safeguard against selector drift.
    - All required tests / assertions above are present and pass.
    - All verification gates listed in the final MUST string exit 0.
 
-27. **Implement Ctrl+4 max-fast-forward CommandBus time-scale action.**
+27. **[DONE 2026-05-24 via PR #139 / commit `fa2f9a0`] Implement Ctrl+4 max-fast-forward CommandBus time-scale action.**
    Tasks #25 and #26 established the first World-only `CommandBus`
    editor action pair by routing `Ctrl+2` and `Ctrl+0` through the
    existing `SetTimeScale` action. Add one more bounded preset:
