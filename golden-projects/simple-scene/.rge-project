@@ -4,5 +4,5 @@ Project(
     description: "Basic load + transform + camera + light render",
     target_tiers: [desktop],
     plugins: [],
-    scenes: [],
+    scenes: ["scenes/main.rge-scene"],
 )
