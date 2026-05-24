@@ -3635,7 +3635,7 @@ is the only safeguard against selector drift.
    - No tracked file outside the single `crates/rge-data/tests/*.rs` file
      changes, except this dispatch's own handoff/log artifacts.
 
-33. **Reconcile golden project manifests to rge-data schema and add simple-scene schema-load test.**
+33. **[DONE 2026-05-24 via PR #151 / commit `2035a00`] Reconcile golden project manifests to rge-data schema and add simple-scene schema-load test.**
    Task #32 proved the schema-load-only policy is correct but not yet
    implementable because every golden `.rge-project` manifest is still in
    placeholder form: `target_tiers: ["desktop"]` is rejected by the current
