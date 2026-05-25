@@ -1,0 +1,14 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-196",
+    "packet_type": "EXEC",
+    "author": "Executor / Claude",
+    "timestamp": "2026-05-26_01-30-29+0300",
+    "related_files": [
+                          "Invoke-AiDispatchAuto.ps1 — added `Get-RecoveryDecision` helper and a one-shot transient recovery decision path after the local sentinel halt check."
+                      ],
+    "status": "AWAITING_REVIEW",
+    "handoff_status": "COMPLETE",
+    "next_role": "REVIEWER_AI",
+    "exit_code": 0
+}
