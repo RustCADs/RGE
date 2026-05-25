@@ -6472,3 +6472,130 @@ is the only safeguard against selector drift.
      the JSONL stream but must not alter producers.
    - Keep this a CLI reporting tool. Failure taxonomy recovery routes and
      execute/correction retry work are later tasks.
+
+55. **Add one-shot transient recovery route for taxonomy-labelled autonomous failures.**
+   The queue now applies terminal failure taxonomy labels, and the autonomous
+   driver still halts on every `ai-dispatch-failed` issue. Add the first
+   conservative recovery route: an optically visible, one-shot Auto-side
+   requeue for a single open autonomous issue whose terminal failure taxonomy
+   is transient (`ai-dispatch-failure-stall` or
+   `ai-dispatch-failure-timeout`). This is a recovery-policy task only. It
+   must not change queue failure classification, queue retry policy, the
+   dispatch loop, or any Rust/project source.
+
+   **Runtime invocation note**: this task is a deliberate named +1 after task
+   #54. Current `ai-auto` count is 131. Run as
+   `.\Invoke-AiDispatchAuto.ps1 -PublishMode branch -MaxAutonomousTasks 132`
+   so the cap accommodates exactly this one dispatch. The scheduler remains
+   disabled and must not be re-enabled by this task.
+
+   **Required TASK packet shape**:
+   - The generated TASK packet MUST include a `### MAY edit` section listing
+     exactly `Invoke-AiDispatchAuto.ps1`.
+   - The generated TASK packet MAY include a `### MAY add new files` section
+     only for this dispatch's own `ai_handoffs/ISSUE-*_TASK_*.md`,
+     `ai_handoffs/ISSUE-*_EXEC_*.md`,
+     `ai_handoffs/ISSUE-*_CORRECT_*.md` packets, matching `.meta.json`
+     sidecars, and its own `ai_dispatch_logs/log_*.md` file.
+
+   **Allowed file surface**:
+   - EDIT only `Invoke-AiDispatchAuto.ps1`.
+   - MAY add this dispatch's own handoff packets, handoff sidecars, and queue
+     log as produced by the orchestrator/queue.
+
+   **Files that MUST NOT be touched**:
+   - Do not edit `Invoke-AiDispatchQueue.ps1`, `Invoke-AiDispatchLoop.ps1`,
+     `Get-AiDispatchTrends.ps1`, `Get-AiDispatchHealth.ps1`, scheduler
+     scripts, trace emitters, failure taxonomy classifiers, docs, task brief,
+     workflows, schemas, Rust source, Cargo files, golden fixtures, status
+     files, existing handoff/log artifacts, or sandbox worktrees.
+   - Do not add new retry logic to the queue or loop, do not change publish
+     behavior, and do not change the meaning or creation point of any existing
+     taxonomy label.
+
+   **Implementation behavior required**:
+   - Preserve the `.ai/dispatch.auto-halt` sentinel behavior exactly. A local
+     halt sentinel must still stop before any GitHub recovery logic.
+   - In the existing Auto halt check for `ai-auto` + `ai-dispatch-failed`,
+     fetch failed issues with at least `number`, `title`, `state`, and
+     `labels`.
+   - If zero failed autonomous issues exist, continue the current normal Auto
+     flow unchanged.
+   - If more than one failed autonomous issue exists, halt with a clear message
+     and do not recover any of them.
+   - If exactly one failed autonomous issue exists, recover it only when all of
+     these are true:
+     - issue state is open;
+     - it has `ai-dispatch-failure-stall` or `ai-dispatch-failure-timeout`;
+     - it does not have the recovery marker label
+       `ai-dispatch-recovered-transient`;
+     - it does not have any non-transient failure taxonomy label such as
+       `ai-dispatch-failure-blocked`,
+       `ai-dispatch-failure-verification`,
+       `ai-dispatch-failure-control`, `ai-dispatch-failure-publish`, or
+       `ai-dispatch-failure-unknown`.
+   - Recovery must be visible and bounded: idempotently ensure the
+     `ai-dispatch-recovered-transient` label exists, then remove
+     `ai-dispatch-failed`, remove `ai-dispatch-done` if present, and add
+     `ai-dispatch`, `ai-dispatch-retry`, and
+     `ai-dispatch-recovered-transient`. Leave the transient taxonomy label in
+     place for auditability.
+   - After a successful recovery mutation, continue the existing Auto flow so
+     the queue can pick up the requeued issue before any new task selection.
+   - In `-DryRun`, print the same recovery decision but do not mutate GitHub
+     labels. A dry run must not clear the halt label or requeue an issue.
+   - If the single failed issue is closed, already recovered, non-transient, or
+     mixed with a non-transient taxonomy label, preserve halt behavior and
+     print the reason.
+   - If the GitHub label mutation fails, preserve halt behavior and do not
+     proceed to task selection.
+
+   **Halt conditions**:
+   - Halt if the recovery route cannot be implemented by editing only
+     `Invoke-AiDispatchAuto.ps1` plus this dispatch's own generated artifacts.
+   - Halt if implementing recovery would require changing queue/loop retry
+     policy, queue publish behavior, failure taxonomy classification, JSONL
+     trace schema, scheduled tasks, CI, Rust/Cargo files, docs, or task brief.
+   - Halt if recovery cannot be made one-shot using
+     `ai-dispatch-recovered-transient`.
+   - Halt if non-transient failure classes would be auto-recovered.
+   - Halt if `-DryRun` would need to mutate GitHub labels.
+   - Halt if PowerShell 5.1 compatibility cannot be preserved.
+
+   **Verbatim review-gate strings** - the autonomous selector MUST copy these
+   eight strings, character-for-character, into the filed GitHub issue body.
+   No paraphrasing, no substitution, no reflowing. A packet that lacks any one
+   of them verbatim is bounced at review:
+
+   ```
+   MUST edit only Invoke-AiDispatchAuto.ps1 plus this dispatch's own ai_handoffs and ai_dispatch_logs artifacts
+   MUST preserve the .ai/dispatch.auto-halt sentinel as the first halt check before any GitHub recovery logic
+   MUST recover only one open ai-auto ai-dispatch-failed issue when it has ai-dispatch-failure-stall or ai-dispatch-failure-timeout and lacks ai-dispatch-recovered-transient
+   MUST NOT recover closed issues multiple simultaneous failed issues already-recovered issues or issues with blocked verification control publish unknown or mixed non-transient taxonomy labels
+   MUST requeue recovery by removing ai-dispatch-failed removing ai-dispatch-done if present and adding ai-dispatch ai-dispatch-retry and ai-dispatch-recovered-transient while keeping the transient taxonomy label
+   MUST make DryRun print the recovery decision without mutating GitHub labels
+   MUST NOT change Invoke-AiDispatchQueue.ps1 Invoke-AiDispatchLoop.ps1 taxonomy classification queue retry policy publish behavior JSONL schema scheduler CI Rust Cargo docs or task brief
+   MUST run PowerShell parser validation for Invoke-AiDispatchAuto.ps1, git diff --check, and the canonical .ai/dispatch.verify.ps1 gate successfully
+   ```
+
+   **Verification required**:
+   - PowerShell parser validation for `Invoke-AiDispatchAuto.ps1` reports zero
+     errors.
+   - `git diff --check` reports no whitespace errors.
+   - `.ai/dispatch.verify.ps1` passes.
+   - Static inspection confirms `.ai/dispatch.auto-halt` remains the first
+     halt path.
+   - Static inspection confirms only stall/timeout taxonomy labels can trigger
+     recovery, and only when exactly one open failed issue exists.
+   - Static inspection confirms blocked/verification/control/publish/unknown,
+     closed, mixed, already-recovered, and multiple-failure cases still halt.
+   - Static inspection confirms `-DryRun` performs no label mutations.
+   - No file outside the allowed surface changes, except this dispatch's own
+     handoff/log artifacts.
+
+   **Notes for executor**:
+   - This is item 6 of the self-improving automation sequence. It consumes the
+     failure taxonomy from task #52 and creates the first bounded recovery
+     route.
+   - Keep this Auto-side and one-shot. Execute/correction snapshot retry work
+     is a later task.
