@@ -6473,7 +6473,15 @@ is the only safeguard against selector drift.
    - Keep this a CLI reporting tool. Failure taxonomy recovery routes and
      execute/correction retry work are later tasks.
 
-55. **Add one-shot transient recovery route for taxonomy-labelled autonomous failures.**
+55. **[DONE 2026-05-26 via PR #197 / commit `b8ae199`] Add one-shot transient recovery route for taxonomy-labelled autonomous failures.**
+   Landed via PR #197. Auto now has a bounded one-shot recovery route for a
+   single open autonomous terminal failure labelled `ai-dispatch-failure-stall`
+   or `ai-dispatch-failure-timeout`, guarded by
+   `ai-dispatch-recovered-transient`. The local `.ai/dispatch.auto-halt`
+   sentinel remains first, non-transient or ambiguous failures still halt, and
+   stale post-recovery queue visibility either drains the recovered issue or
+   exits before new task selection. The original brief is preserved below.
+
    The queue now applies terminal failure taxonomy labels, and the autonomous
    driver still halts on every `ai-dispatch-failed` issue. Add the first
    conservative recovery route: an optically visible, one-shot Auto-side
@@ -6599,3 +6607,144 @@ is the only safeguard against selector drift.
      route.
    - Keep this Auto-side and one-shot. Execute/correction snapshot retry work
      is a later task.
+
+56. **Add snapshot-backed same-phase retry for execute and correction mutation phases.**
+   The loop now retries read-only model review phases, but mutation phases
+   still rely on the outer queue retry after any infrastructure failure. Add
+   the final self-improving automation piece: same-phase retry for Claude
+   execution and Codex correction-packet generation only, backed by an
+   explicit worktree snapshot/restore guard so a failed partial mutation
+   cannot smear into the retry attempt. This task must not retry semantic
+   verdicts, verification failures, or queue/publish/GitHub operations.
+
+   **Runtime invocation note**: this task is a deliberate named +1 after task
+   #55. Current `ai-auto` count is 132. Run as
+   `.\Invoke-AiDispatchAuto.ps1 -PublishMode branch -MaxAutonomousTasks 133`
+   so the cap accommodates exactly this one dispatch. The scheduler remains
+   disabled and must not be re-enabled by this task.
+
+   **Required TASK packet shape**:
+   - The generated TASK packet MUST include a `### MAY edit` section listing
+     exactly `Invoke-AiDispatchLoop.ps1`.
+   - The generated TASK packet MAY include a `### MAY add new files` section
+     only for this dispatch's own `ai_handoffs/ISSUE-*_TASK_*.md`,
+     `ai_handoffs/ISSUE-*_EXEC_*.md`,
+     `ai_handoffs/ISSUE-*_CORRECT_*.md` packets, matching `.meta.json`
+     sidecars, and its own `ai_dispatch_logs/log_*.md` file.
+
+   **Allowed file surface**:
+   - EDIT only `Invoke-AiDispatchLoop.ps1`.
+   - MAY add this dispatch's own handoff packets, handoff sidecars, and queue
+     log as produced by the orchestrator/queue.
+
+   **Files that MUST NOT be touched**:
+   - Do not edit `Invoke-AiDispatchAuto.ps1`, `Invoke-AiDispatchQueue.ps1`,
+     `Get-AiDispatchTrends.ps1`, `Get-AiDispatchHealth.ps1`, scheduler
+     scripts, trace emitters, failure taxonomy labels, docs, task brief,
+     workflows, schemas, Rust source, Cargo files, golden fixtures, status
+     files, existing handoff/log artifacts, or sandbox worktrees.
+   - Do not add queue retries, Auto recovery routes, publish retries, GitHub
+     API retries, verification retries, preflight retries, JSONL schema
+     changes, dashboards, scheduled tasks, or new agents.
+
+   **Implementation behavior required**:
+   - Add a mutation-phase retry wrapper distinct from the existing
+     read-only `Invoke-WithSamePhaseRetry` helper. It may share small internal
+     helpers, but its restore behavior must be explicit and mutation-aware.
+   - Add a bounded retry count for mutation phases, defaulting to one retry
+     and allowing `0` to preserve previous single-attempt behavior for
+     debugging.
+   - Apply mutation retry only to:
+     - `Invoke-ClaudeExecute` for TASK execution and CORRECTION execution;
+     - `Invoke-CorrectionPacket` for Codex-authored correction packets after
+       verification failure or control `needs_changes`.
+   - Do not apply mutation retry to Codex plan-fill, Claude plan-gate,
+     Codex preflight audit, verification, Codex control, queue runner,
+     Auto driver, publish, relabel/comment/close, issue creation, branch
+     operations, or any GitHub API call.
+   - Retry only infrastructure/model-call/tooling failures that surface as a
+     thrown `Fail` path before a valid semantic result is available, such as
+     timeout, stall, non-zero CLI exit, missing output, malformed/missing
+     required markers, missing generated packet, failed packet finalize, or
+     transient planner tool failure while writing a correction packet.
+   - Do not retry semantic results. `EXEC_STATUS: blocked`,
+     `EXEC_STATUS: failed`, verification failure, control `needs_changes`,
+     control `block`, plan-gate `needs_changes`, and plan-gate `block` must
+     retain their existing flow.
+   - Before each eligible mutation phase, capture a restore point for the
+     current worktree state, including tracked changes and untracked
+     non-ignored files that are already present at phase entry. If a failed
+     attempt is retried, restore exactly that phase-entry state before the
+     next attempt.
+   - The snapshot/restore path must be guarded: resolve and verify the repo
+     root before any restore, reject staged changes unless the implementation
+     can preserve them exactly, and never operate outside the current repo
+     root. If a safe restore cannot be established, halt rather than retry.
+   - Generated files from a failed attempt, including partial EXEC/CORRECT
+     packets and sidecars, must not survive into the retry unless they were
+     part of the phase-entry snapshot.
+   - On successful attempt, discard the temporary restore point without
+     altering the successful worktree.
+   - Emit clear loop stdout when a mutation retry attempt fails, when restore
+     begins/ends, when retry succeeds, and when retries exhaust, so queue logs
+     capture the recovery path without changing JSONL schema.
+   - Preserve the final failure wording as much as practical when retries
+     exhaust so the queue failure taxonomy can still classify stall/timeout
+     failures.
+
+   **Halt conditions**:
+   - Halt if the mutation retry cannot be implemented by editing only
+     `Invoke-AiDispatchLoop.ps1` plus this dispatch's own generated artifacts.
+   - Halt if safe phase-entry snapshot/restore cannot be implemented for
+     tracked changes plus untracked non-ignored files.
+   - Halt if the restore logic would need to operate outside the current repo
+     root or cannot guard against staged-change loss.
+   - Halt if semantic statuses or verdicts would be retried.
+   - Halt if the implementation would require changing Auto, Queue, publish,
+     GitHub issue/label behavior, failure taxonomy labels, JSONL schema,
+     verification gates, Rust/Cargo files, docs, CI, scheduler scripts, or the
+     task brief.
+   - Halt if PowerShell 5.1 compatibility cannot be preserved.
+
+   **Verbatim review-gate strings** - the autonomous selector MUST copy these
+   eight strings, character-for-character, into the filed GitHub issue body.
+   No paraphrasing, no substitution, no reflowing. A packet that lacks any one
+   of them verbatim is bounced at review:
+
+   ```
+   MUST edit only Invoke-AiDispatchLoop.ps1 plus this dispatch's own ai_handoffs and ai_dispatch_logs artifacts
+   MUST add snapshot-backed same-phase retry only for Invoke-ClaudeExecute and Invoke-CorrectionPacket mutation phases
+   MUST preserve a zero-retry path that matches the previous single-attempt mutation behavior
+   MUST restore the exact phase-entry worktree state before any mutation retry attempt including tracked changes and untracked non-ignored files
+   MUST NOT retry semantic EXEC_STATUS blocked failed verification failure control needs_changes control block plan-gate needs_changes or plan-gate block outcomes
+   MUST NOT change Auto Queue publish GitHub issue or label behavior failure taxonomy JSONL schema verification gates Rust Cargo docs CI scheduler or task brief
+   MUST emit loop output for mutation retry failure restore retry success and exhaustion without adding schemas or JSONL trace schema changes
+   MUST run PowerShell parser validation for Invoke-AiDispatchLoop.ps1, git diff --check, a focused restore harness, and the canonical .ai/dispatch.verify.ps1 gate successfully
+   ```
+
+   **Verification required**:
+   - PowerShell parser validation for `Invoke-AiDispatchLoop.ps1` reports zero
+     errors.
+   - `git diff --check` reports no whitespace errors.
+   - `.ai/dispatch.verify.ps1` passes.
+   - A focused non-mutating or temporary-repo restore harness proves that a
+     failed mutation attempt can create/modify/delete tracked and untracked
+     non-ignored files, then the retry restore returns the worktree to the
+     exact phase-entry state before the second attempt. The harness must not
+     mutate live GitHub issues or labels, and any temporary files/repos must
+     be removed before commit.
+   - Static inspection confirms only `Invoke-ClaudeExecute` and
+     `Invoke-CorrectionPacket` call sites enable mutation retry.
+   - Static inspection confirms plan-fill, plan-gate, preflight, verification,
+     control, queue, Auto, publish, relabel/comment/close, issue creation, and
+     branch operations retain their previous retry behavior.
+   - Static inspection confirms semantic statuses/verdicts are not retried.
+   - No file outside the allowed surface changes, except this dispatch's own
+     handoff/log artifacts.
+
+   **Notes for executor**:
+   - This is item 7 of the self-improving automation sequence. It is the only
+     item in the sequence that may retry mutation phases, so the restore guard
+     is the main correctness requirement.
+   - Keep this loop-local. Do not move retry policy into the queue, do not add
+     new recovery labels, and do not change autonomous selection behavior.
