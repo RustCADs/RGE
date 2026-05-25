@@ -399,38 +399,26 @@ Write-TimingTrace "auto.queue-check: primary done (count=$($openQueue.Count))"
 $queueStateAmbiguous = $false
 if ($openQueue.Count -eq 0) {
     # GitHub label search can occasionally report an empty queue even when the
-    # queue runner can see an already-filed dispatch issue. Retry the primary
-    # query, then cross-check through the REST issues endpoint so a filed issue
-    # is not stranded behind the autonomous task cap. If the cross-check itself
-    # fails, treat queue state as ambiguous and skip this tick instead of
-    # selecting fresh work or cap-halting on a possibly stale empty result.
-    for ($poll = 1; $poll -le 2 -and $openQueue.Count -eq 0; $poll++) {
-        Start-Sleep -Seconds 5
-        $openQueue = Get-IssuesJson @(
-            'issue', 'list', '--repo', $repoSlug, '--label', $queueLabel,
-            '--state', 'open', '--limit', '100', '--json', 'number,title')
-        if ($openQueue.Count -gt 0) {
-            Write-Output "Primary queue check found pending '$queueLabel' issue(s) after retry $poll."
-        }
-    }
-
-    if ($openQueue.Count -eq 0) {
-        $restQueue = Get-OpenQueueIssuesRest -RepoSlug $repoSlug -QueueLabel $queueLabel
-        if ($restQueue.Code -eq 0 -and @($restQueue.Items).Count -gt 0) {
-            $count = @($restQueue.Items).Count
-            Write-Output "Primary queue check returned empty, but REST issues check sees $count open '$queueLabel' issue(s); draining before cap check."
-            $openQueue = @($restQueue.Items | ForEach-Object {
-                [pscustomobject]@{
-                    number = $_.number
-                    title  = $_.title
-                }
-            })
-        } elseif ($restQueue.Code -eq 0) {
-            Write-Output "REST issues check confirms no open '$queueLabel' issues."
-        } else {
-            Write-Output "WARNING: REST issues queue cross-check failed (exit $($restQueue.Code)); queue state is ambiguous, so this tick will not select new work or cap-halt."
-            $queueStateAmbiguous = $true
-        }
+    # queue runner can see an already-filed dispatch issue. Cross-check through
+    # the REST issues endpoint immediately so a filed issue is not stranded
+    # behind the autonomous task cap. If the cross-check itself fails, treat
+    # queue state as ambiguous and skip this tick instead of selecting fresh
+    # work or cap-halting on a possibly stale empty result.
+    $restQueue = Get-OpenQueueIssuesRest -RepoSlug $repoSlug -QueueLabel $queueLabel
+    if ($restQueue.Code -eq 0 -and @($restQueue.Items).Count -gt 0) {
+        $count = @($restQueue.Items).Count
+        Write-Output "Primary queue check returned empty, but REST issues check sees $count open '$queueLabel' issue(s); draining before cap check."
+        $openQueue = @($restQueue.Items | ForEach-Object {
+            [pscustomobject]@{
+                number = $_.number
+                title  = $_.title
+            }
+        })
+    } elseif ($restQueue.Code -eq 0) {
+        Write-Output "REST issues check confirms no open '$queueLabel' issues."
+    } else {
+        Write-Output "WARNING: REST issues queue cross-check failed (exit $($restQueue.Code)); queue state is ambiguous, so this tick will not select new work or cap-halt."
+        $queueStateAmbiguous = $true
     }
 }
 
