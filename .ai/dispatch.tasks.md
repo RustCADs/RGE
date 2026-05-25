@@ -4757,7 +4757,18 @@ is the only safeguard against selector drift.
    - No tracked file outside the allowed surface changes, except this
      dispatch's own handoff/log artifacts.
 
-41. **Create first `rge-scene-loader` bridge for simple-scene typed `ComponentValue` payloads.**
+41. **[DONE-BLOCKED 2026-05-25 via ISSUE-168 local blocked commit `85cfcc0`] Create first `rge-scene-loader` bridge for simple-scene typed `ComponentValue` payloads.**
+   Dispatch #168 correctly halted before publish. The scaffolded loader
+   crate proved the match-table bridge shape, but `cargo test -p
+   rge-scene-loader` exposed a prerequisite `kernel/ecs` storage bug:
+   the single catch-all archetype cannot currently attach heterogeneous
+   component sets because a component column panics or misaligns when its
+   first value belongs to a nonzero entity row. The local branch
+   `ai-dispatch/ISSUE-168` is retained as evidence/scaffold, but is not a
+   merge candidate. Issue #168 was closed as not planned; task #42 queues
+   the kernel prerequisite, and the loader retry must be a later task after
+   that lands. The original loader brief is preserved below.
+
    Tasks #38-#40 pinned the file-format shape and made the four typed
    component structs ECS-attachable. This task implements the first
    runtime bridge crate from the #165 resolution: a Tier-2
@@ -4927,6 +4938,144 @@ is the only safeguard against selector drift.
    - Tests in the new crate prove the golden simple-scene bridge for
      Camera and KeyLight plus unsupported-type behavior.
    - `cargo test -p rge-scene-loader` exits 0.
+   - `.ai/dispatch.verify.ps1` exits 0.
+   - No file outside the allowed surface changes, except this dispatch's
+     own handoff/log artifacts.
+
+42. **Fix `kernel/ecs` sparse component columns for heterogeneous entity component sets.**
+   Task #41 / ISSUE-168 showed that the loader cannot land until the
+   current single catch-all ECS archetype can represent sparse component
+   membership. The kernel docs already say queries iterate the full entity
+   list and skip entities that do not carry the queried component. The
+   implementation does not yet satisfy that contract: component columns are
+   dense `Vec<ColumnRow>` values, so the first insert for a component at
+   row `> 0` either trips `debug_assert_eq!(row, col.len())` or stores the
+   value at the wrong row if the assertion is disabled.
+
+   **Runtime invocation note**: this task is a deliberate named +1 on top
+   of the cap-119 posture used by task #41. Run as
+   `.\Invoke-AiDispatchAuto.ps1 -PublishMode branch -MaxAutonomousTasks 120`
+   so the cap accommodates exactly this one dispatch. The scheduler
+   remains disabled and must not be re-enabled by this task.
+
+   **Required behavior**:
+   - The current single catch-all archetype must support rows where a
+     component type is absent for some entities and present for others.
+   - `World::insert<C>` must work when component `C` first appears on any
+     existing entity row, including nonzero rows.
+   - `World::insert_erased` must have the same sparse-row behavior for the
+     snapshot restore path.
+   - `EntityRef::get<C>()`, `EntityMut::get<C>()`, and queries must return
+     `None` / skip rows where component `C` is absent.
+   - `EntityRef::contains<C>()` must become row-specific. It must be true
+     only when that entity has `C`, not merely when any entity in the
+     archetype has a `C` column.
+   - `World::remove<C>`, `World::replace<C>`, `EntityMut::remove<C>()`, and
+     `World::despawn` / archetype swap-remove must preserve row-to-entity
+     alignment for sparse columns.
+   - Snapshot serialize/restore must support heterogeneous registered
+     component sets without changing the snapshot wire format.
+
+   **Allowed file surface**:
+   - EDIT `kernel/ecs/src/archetype.rs`.
+   - EDIT `kernel/ecs/src/entity.rs` only if needed for row-specific
+     `EntityRef::contains<C>()`.
+   - EDIT `kernel/ecs/src/world.rs` only for focused tests or call-site
+     adaptation required by the sparse column API.
+   - EDIT `kernel/ecs/src/snapshot.rs` only if the existing snapshot
+     call sites need a no-format-change adaptation to sparse columns.
+   - EDIT existing `kernel/ecs/tests/*.rs` or add new focused tests under
+     `kernel/ecs/tests/`.
+   - MAY add this dispatch's own `ai_handoffs/ISSUE-*_TASK_*.md`,
+     `ai_handoffs/ISSUE-*_EXEC_*.md`, `ai_handoffs/ISSUE-*_CORRECT_*.md`
+     packets plus `.meta.json` sidecars if produced by the orchestrator,
+     and the queue-runner's own `ai_dispatch_logs/log_*.md`.
+
+   **Files that MUST NOT be touched**:
+   - `Cargo.toml`, `Cargo.lock`, or any crate manifest.
+   - `crates/rge-scene-loader/**` - the blocked scaffold from #168 is not
+     part of this dispatch; do not create or modify the loader crate here.
+   - `crates/rge-data/**`, `golden-projects/**`, and all component crates.
+   - `kernel/types/**`, `crates/macros-reflect/**`, any registry/inventory
+     crate, any macro crate, or any type-erased public loader surface.
+   - `editor/**`, `runtime/**`, `crates/editor-shell/**`,
+     `crates/script-host/**`, `crates/script-bench/**`, `crates/gfx/**`,
+     `crates/brep-render/**`, any `crates/io-*/**`,
+     `crates/asset-store/**`, or any other crate.
+   - `.github/**`, PowerShell automation scripts, schema/doctrine/status
+     docs, ADRs, READMEs, or existing handoff/log artifacts.
+   - Any GitHub label or issue metadata except the queue runner's normal
+     issue lifecycle for this dispatch.
+
+   **Implementation guidance**:
+   - A safe-Rust `Vec<Option<ColumnRow>>` sparse-column representation is
+     acceptable if it is the smallest coherent fix. Other safe-Rust sparse
+     representations are acceptable if they preserve the existing public ECS
+     API and pass the required tests.
+   - Do not introduce `unsafe`.
+   - Do not implement real per-component-set archetype migration in this
+     dispatch; that is larger than the bug being fixed.
+   - Do not change public `World` / `EntityRef` / `EntityMut` API names or
+     signatures unless the current code makes a row-specific correctness fix
+     impossible without it. If a public API break is required, halt.
+   - Do not change snapshot serialization format. Existing snapshot tests
+     must remain valid.
+
+   **Tests required**:
+   - Add a kernel ECS test where two entities carry different component
+     sets (for example entity A has only `A`, entity B has only `B`), and
+     prove `insert`, `get`, `contains`, and `query` are row-correct.
+   - Add a test where the first value for a component type is inserted on a
+     nonzero row and does not panic or misalign.
+   - Add a test covering sparse-column `remove` / `replace` behavior.
+   - Add a test covering `despawn` swap-remove when a component exists only
+     on the row that moves.
+   - Add or extend a snapshot round-trip test proving heterogeneous
+     registered components serialize and restore with the same per-entity
+     component membership.
+
+   **Halt conditions**:
+   - The fix requires `unsafe`, global registries, reflection, wrapper
+     component types, or a public type-erased insertion API.
+   - The fix requires real archetype migration or a broad ECS redesign
+     rather than sparse rows in the existing catch-all archetype.
+   - The fix requires changing snapshot wire format or weakening existing
+     snapshot determinism tests.
+   - The fix requires any edit outside the allowed file surface.
+   - `cargo test -p rge-kernel-ecs` or `.ai/dispatch.verify.ps1` fails for
+     reasons that cannot be fixed inside the allowed file surface.
+
+   **Scope-preserving halt clause** - the orchestrator's canonical verify
+   gate (`.ai/dispatch.verify.ps1`) runs after Claude execute. If verify
+   fails on a target outside the allowed file surface (`kernel/ecs/src/*`,
+   `kernel/ecs/tests/*`, or this dispatch's own handoff/log packet), the
+   orchestrator may auto-route a CORRECTION packet asking the executor to
+   fix the failure. When that happens the executor MUST halt: write an
+   EXECUTION_REPORT with `EXEC_STATUS: blocked` and `STATUS: NEEDS_HUMAN`,
+   do NOT execute the correction.
+
+   **Verbatim review-gate strings** - the autonomous selector MUST copy
+   these eight strings, character-for-character, into the filed GitHub
+   issue body. No paraphrasing, no substitution, no reflowing. A packet
+   that lacks any one of them verbatim is bounced at review:
+
+   ```
+   MUST make the existing single catch-all kernel/ecs archetype support sparse component rows where an entity may lack a component column value that another entity has
+   MUST make World::insert and World::insert_erased handle the first insertion of a component type at a nonzero entity row without panic or row misalignment
+   MUST make EntityRef::contains<C>() row-specific, not a global column-existence check across the whole archetype
+   MUST preserve row-to-entity alignment for get, get_mut, query, remove, replace, despawn swap-remove, and snapshot serialize/restore
+   MUST add kernel/ecs tests covering heterogeneous typed insert/get/contains/query, nonzero-row first insert, sparse remove/replace, sparse despawn swap-remove, and heterogeneous snapshot round-trip
+   MUST NOT edit Cargo.toml, Cargo.lock, crates/rge-scene-loader/**, crates/rge-data/**, golden-projects/**, component crates, kernel/types/**, crates/macros-reflect/**, editor/**, runtime/**, crates/gfx/**, crates/brep-render/**, crates/io-*/**, crates/asset-store/**, or any production source outside kernel/ecs/**
+   MUST NOT introduce unsafe code, Reflect, global registries, wrapper component types, SnapshotComponent changes, snapshot wire-format changes, or public ECS API breaks
+   MUST run cargo test -p rge-kernel-ecs and the canonical .ai/dispatch.verify.ps1 gate successfully
+   ```
+
+   **Done-criterion**:
+   - `kernel/ecs` supports heterogeneous component membership in the
+     existing catch-all archetype without row misalignment.
+   - Row-specific `contains`, `get`, query, remove/replace, despawn, and
+     snapshot restore behavior is covered by focused tests.
+   - `cargo test -p rge-kernel-ecs` exits 0.
    - `.ai/dispatch.verify.ps1` exits 0.
    - No file outside the allowed surface changes, except this dispatch's
      own handoff/log artifacts.
