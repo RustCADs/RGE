@@ -5980,7 +5980,15 @@ is the only safeguard against selector drift.
    - Keep this task measurement-only. Future tasks will consume the JSONL
      data; this task only emits it.
 
-51. **Speed up empty autonomous ticks by removing steady-state sleeps.**
+51. **[DONE 2026-05-25 via PR #189 / commit `8e38df7`] Speed up empty autonomous ticks by removing steady-state sleeps.**
+   Landed via PR #189. `Invoke-AiDispatchAuto.ps1` now removes the two
+   steady-state five-second primary queue retries before the cap check and
+   immediately falls through to the existing REST queue cross-check when the
+   primary query returns zero. Queued-work-before-cap semantics,
+   ambiguous-queue skip behavior, post-issue-creation visibility polling, and
+   existing console/JSONL trace behavior were preserved. The original brief is
+   preserved below.
+
    The JSONL/trace data from recent ticks shows an avoidable 10-second delay
    on empty/cap ticks: `Invoke-AiDispatchAuto.ps1` retries the primary
    `gh issue list --label ai-dispatch` query twice with 5-second sleeps before
