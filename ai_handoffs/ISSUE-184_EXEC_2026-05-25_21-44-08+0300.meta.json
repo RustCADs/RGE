@@ -1,0 +1,17 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-184",
+    "packet_type": "EXEC",
+    "author": "Executor / Claude",
+    "timestamp": "2026-05-25T21:44:21+03:00",
+    "related_files": [
+                          "Invoke-AiDispatchLoop.ps1 — added `-EnablePreflightAudit` switch, `Invoke-CodexPreflightAudit` helper, and conditional checklist injection into the Claude execute (round 0) and Codex control (every round) prompts",
+                          "ai_handoffs/ISSUE-184_TASK_2026-05-25_21-31-00+0300.md — TASK packet executed",
+                          "ai_handoffs/ISSUE-184_TASK_2026-05-25_21-31-00+0300.meta.json — TASK packet sidecar",
+                          "ai_handoffs/ISSUE-184_EXEC_2026-05-25_21-44-08+0300.md — this report"
+                      ],
+    "status": "AWAITING_REVIEW",
+    "handoff_status": "COMPLETE",
+    "next_role": "REVIEWER_AI",
+    "exit_code": 0
+}

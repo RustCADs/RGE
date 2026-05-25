@@ -1,0 +1,22 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-184",
+    "packet_type": "TASK",
+    "author": "Planner / OpenAI Codex",
+    "timestamp": "2026-05-25_21-31-00+0300",
+    "related_files": [
+                          "Invoke-AiDispatchLoop.ps1",
+                          "ai_handoffs/ISSUE-184_TASK_2026-05-25_21-31-00+0300.md",
+                          "ai_handoffs/ISSUE-184_TASK_2026-05-25_21-31-00+0300.meta.json",
+                          "ai_handoffs/ISSUE-184_EXEC_*.md",
+                          "ai_handoffs/ISSUE-184_EXEC_*.meta.json",
+                          "ai_handoffs/ISSUE-184_CORRECT_*.md",
+                          "ai_handoffs/ISSUE-184_CORRECT_*.meta.json",
+                          "ai_dispatch_logs/log_*.md",
+                          "GitHub issue #184"
+                      ],
+    "status": "OPEN",
+    "handoff_status": "COMPLETE",
+    "next_role": "EXECUTOR_AI",
+    "exit_code": 0
+}
