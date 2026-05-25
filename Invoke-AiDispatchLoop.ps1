@@ -82,7 +82,7 @@ param(
     [ValidateRange(120, 14400)]
     [int]$VerifyTimeoutSec = 3600,
 
-    [ValidateRange(0, 7200)]
+    [ValidateRange(0, 3600)]
     [int]$CodexStallThresholdSec = 300,
 
     [Parameter(Mandatory, ParameterSetName = 'ResumeTask')]
@@ -188,17 +188,16 @@ function Invoke-WithTimeout {
     # the scheduled task kills the entire queue. Arguments are passed via a
     # clixml params file so the call operator quotes them correctly, including
     # a multi-line prompt argument. stdout goes to OutFile; stderr to ErrFile
-    # if given, else merged into OutFile. Returns @{ Code; TimedOut }.
+    # if given, else merged into OutFile. Returns @{ Code; TimedOut; Stalled }.
     #
     # Optional Codex-only stall watchdog: when -StallThresholdSec is greater
     # than 0, the child is polled and OutFile is watched for progress. The
     # watchdog only arms once OutFile becomes non-empty, then treats output
-    # activity as an increase in OutFile.Length or an advance in
-    # LastWriteTimeUtc. If neither advances for StallThresholdSec, the same
-    # process tree is killed and the result becomes @{ Code = 125; TimedOut
-    # = $true; Stalled = $true }. When -StallThresholdSec is 0 or omitted,
-    # the legacy hard-timeout path runs verbatim and the return shape is
-    # unchanged so non-Codex callers see no behavior difference.
+    # activity as an increase in OutFile.Length. If the size does not advance
+    # for StallThresholdSec, the same process tree is killed and the result
+    # becomes @{ Code = 125; TimedOut = $true; Stalled = $true }. When
+    # -StallThresholdSec is 0 or omitted, the legacy hard-timeout control flow
+    # runs unchanged and the additive Stalled field remains $false.
     param(
         [string]$Exe,
         [string[]]$Arguments,
@@ -206,7 +205,7 @@ function Invoke-WithTimeout {
         [int]$TimeoutSec,
         [string]$StdinFile = '',
         [string]$ErrFile = '',
-        [ValidateRange(0, 7200)]
+        [ValidateRange(0, 3600)]
         [int]$StallThresholdSec = 0,
         [ValidateRange(1, 600)]
         [int]$PollIntervalSec = 5
@@ -262,7 +261,6 @@ exit $LASTEXITCODE
             $hardDeadline = [DateTime]::UtcNow.AddSeconds($TimeoutSec)
             $armed = $false
             $lastSize = [long]0
-            $lastWrite = [DateTime]::MinValue
             $stallDeadline = [DateTime]::MaxValue
             while ($true) {
                 if ($proc.HasExited) {
@@ -283,15 +281,12 @@ exit $LASTEXITCODE
                 }
                 if ($fi -and $fi.Length -gt 0) {
                     $curSize = [long]$fi.Length
-                    $curWrite = $fi.LastWriteTimeUtc
                     if (-not $armed) {
                         $armed = $true
                         $lastSize = $curSize
-                        $lastWrite = $curWrite
                         $stallDeadline = $now.AddSeconds($StallThresholdSec)
-                    } elseif ($curSize -gt $lastSize -or $curWrite -gt $lastWrite) {
+                    } elseif ($curSize -gt $lastSize) {
                         $lastSize = $curSize
-                        $lastWrite = $curWrite
                         $stallDeadline = $now.AddSeconds($StallThresholdSec)
                     } elseif ($now -ge $stallDeadline) {
                         $stalled = $true
@@ -319,9 +314,6 @@ exit $LASTEXITCODE
     } finally {
         Remove-Item -LiteralPath $base, $paramsFile, $launcherFile -Force -ErrorAction SilentlyContinue
     }
-    if ($StallThresholdSec -le 0) {
-        return [pscustomobject]@{ Code = $code; TimedOut = $timedOut }
-    }
     return [pscustomobject]@{ Code = $code; TimedOut = $timedOut; Stalled = $stalled }
 }
 
@@ -347,12 +339,10 @@ function Invoke-CodexPrompt {
 
     $r = Invoke-WithTimeout -Exe 'codex' -Arguments $args -StdinFile $promptPath `
         -OutFile $LogPath -TimeoutSec $ModelTimeoutSec -StallThresholdSec $CodexStallThresholdSec
+    if ($r.Stalled) {
+        Fail "codex exec stalled: no log growth for ${CodexStallThresholdSec}s after first output. Killed process tree. See $LogPath"
+    }
     if ($r.TimedOut) {
-        $isStalled = $false
-        if ($r.PSObject.Properties['Stalled']) { $isStalled = [bool]$r.Stalled }
-        if ($isStalled) {
-            Fail "codex exec stalled: no output progress for ${CodexStallThresholdSec}s (StallThresholdSec). See $LogPath"
-        }
         Fail "codex exec timed out after ${ModelTimeoutSec}s (terminal infrastructure failure). See $LogPath"
     }
     if ($r.Code -ne 0) {
