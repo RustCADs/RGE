@@ -4558,3 +4558,194 @@ is the only safeguard against selector drift.
    - `git status --short --untracked-files=no` is clean before and
      after execution, except for this dispatch's own packet/log
      artifacts.
+
+40. **Make the four simple-scene component types ECS-attachable via direct `impl rge_kernel_ecs::Component`.**
+   Task #39 produced a `NEEDS_HUMAN` audit for the typed
+   `ComponentValue` bridge; issue #165 closed the arbiter decision with
+   the default recommendation: new `rge-scene-loader` Tier-2 crate as
+   the bridge owner, explicit match table for the four canonical
+   `type_id` strings, direct `impl rge_kernel_ecs::Component` for the
+   four component types in their owning crates, no global runtime
+   registry, Reflect-driven loading deferred.
+
+   This task implements the **first load-bearing source change** from
+   that decision: the `impl Component` edge in the three component
+   crates. It is deliberately separated from the `rge-scene-loader`
+   crate creation (task #41 follow-up) because the new
+   `rge-kernel-ecs` dependency edges from `components-spatial`,
+   `components-render`, and `components-visibility` are the load-bearing
+   dependency-direction change and want their own bounded dispatch
+   before the loader crate lands on top.
+
+   **Runtime invocation note**: this task is a deliberate named +1 on
+   top of the freeze-at-117 posture set by task #39. Run as
+   `.\Invoke-AiDispatchAuto.ps1 -PublishMode branch -MaxAutonomousTasks 118`
+   so the cap accommodates exactly this one dispatch. The scheduler
+   remains disabled and must not be re-enabled by this task.
+
+   **Arbiter decisions to encode** (from #165 resolution):
+   - Direct `impl rge_kernel_ecs::Component` for `Transform`, `Camera`,
+     `Light`, and `Visibility` in their owning component crates. No
+     wrapper types, no `SnapshotComponent` indirection for these four.
+   - No `#[derive(Reflect)]`, no global runtime registry, no derive-emitted
+     mapping — the bridge that consumes these impls (task #41) will use
+     an explicit match table, not a Reflect lookup.
+   - `rge-data` stays schema-only; this task adds no dep edge to or
+     from `rge-data`.
+
+   **Allowed file surface**:
+   - EDIT `crates/components-spatial/Cargo.toml` to add
+     `rge-kernel-ecs = { workspace = true }` (or
+     `{ path = "../../kernel/ecs" }`, whichever matches workspace
+     convention) as a regular (non-dev) dependency.
+   - EDIT `crates/components-render/Cargo.toml` same way.
+   - EDIT `crates/components-visibility/Cargo.toml` same way.
+   - EDIT the source files that own the four component types to add
+     `impl rge_kernel_ecs::Component for <TypeName>` blocks:
+     - `crates/components-spatial/src/transform.rs` or
+       `crates/components-spatial/src/lib.rs` — for `Transform`.
+     - `crates/components-render/src/camera.rs` — for `Camera`.
+     - `crates/components-render/src/light.rs` — for `Light`.
+     - `crates/components-visibility/src/visibility.rs` or
+       `crates/components-visibility/src/lib.rs` — for `Visibility`.
+   - MAY add focused tests in the same crates, either as a
+     `#[cfg(test)] mod tests` block in the source file or as a new
+     `crates/components-*/tests/*.rs` integration test file.
+   - MAY edit `Cargo.lock` only for the three mechanical new dep
+     edges from each component crate to `rge-kernel-ecs`.
+   - MAY add this dispatch's own `ai_handoffs/ISSUE-*_TASK_*.md`,
+     `ai_handoffs/ISSUE-*_EXEC_*.md`, `ai_handoffs/ISSUE-*_CORRECT_*.md`
+     packets plus `.meta.json` sidecars if produced by the orchestrator,
+     and the queue-runner's own `ai_dispatch_logs/log_*.md`.
+
+   **Tests required**:
+   - At least one focused test per component crate (three tests
+     minimum, four ideal — one per impl) proving each component type
+     can be inserted into a fresh `rge_kernel_ecs::World` and
+     retrieved through the current ECS API. The exact attach/retrieve
+     surface is whichever public API `rge_kernel_ecs::World` currently
+     exposes for `Component`-implementing types — the ISSUE-163 audit
+     (`ai_handoffs/ISSUE-163_EXEC_*.md`) is the authoritative
+     reference for that surface.
+   - Each test spawns an `EntityId`, attaches the component, retrieves
+     it, and asserts the retrieved value equals what was attached. No
+     scene-loading, no `rge-data` round-trip, no editor/runtime
+     integration — pure component-trait acceptance.
+
+   **Files that MUST NOT be touched**:
+   - `crates/rge-data/**` — `rge-data` stays schema-only; no
+     bidirectional dep edge.
+   - `crates/rge-scene-loader/**` — that crate is the **next**
+     dispatch (#41), not this one. Do not create it now.
+   - `kernel/**` — this dispatch consumes the existing `kernel/ecs`
+     surface; it does NOT modify the kernel, including no extension to
+     `Component` trait, no new `World` API, no kernel-side helper.
+   - `crates/macros-reflect/**` — Reflect-driven loading is explicitly
+     deferred by the #165 decision.
+   - `editor/**`, `crates/editor-shell/**`, `runtime/**`,
+     `crates/script-host/**`, `crates/script-bench/**`, `crates/gfx/**`,
+     `crates/brep-render/**`, any `crates/io-*/**`,
+     `crates/asset-store/**`, or any other crate.
+   - `golden-projects/**` — the simple-scene fixture from task #38
+     stays as-is; no fixture edits in this task.
+   - Workspace root `Cargo.toml` (no new workspace member, no
+     `[workspace.dependencies]` additions beyond what already exists for
+     `rge-kernel-ecs`). If `rge-kernel-ecs` is not currently a
+     `[workspace.dependencies]` entry and adding it there is required to
+     reach `{ workspace = true }`, that single workspace-manifest line
+     is permitted; halt if any other workspace-manifest change becomes
+     necessary.
+   - Any `.github/**` workflow, PowerShell script, schema, doctrine,
+     status doc, ADR, plan, README, or existing handoff packet.
+   - Any GitHub label or issue metadata except the queue runner's
+     normal issue lifecycle for this dispatch.
+
+   **Cargo.lock policy**:
+   - The three new dep edges from each component crate to
+     `rge-kernel-ecs` are the only permitted lockfile changes. Any
+     other package addition, version bump, checksum change, or source
+     change halts with `NEEDS_HUMAN`.
+
+   **Halt conditions**:
+   - `rge_kernel_ecs::Component` trait does not exist today, is sealed,
+     `#[non_exhaustive]` in a way that blocks downstream impls, or
+     has a method shape that cannot be satisfied by `Transform` /
+     `Camera` / `Light` / `Visibility` without modifying the kernel.
+     Halt with `NEEDS_HUMAN`; the kernel-side fix is its own dispatch.
+   - Implementing `Component` for any of the four types requires
+     touching `kernel/ecs` source, the kernel `Component` trait, or
+     any other kernel surface beyond consumption.
+   - The impl requires `#[derive(Reflect)]`, a `register_component!`
+     macro call, a global runtime registry, or any indirection beyond
+     a direct trait impl in the owning crate. The #165 decision was
+     explicitly direct-impl-only; halt rather than re-interpret.
+   - The test surface requires a new dev-dependency beyond what's
+     already available to the component crates (or what
+     `rge-kernel-ecs` re-exports).
+   - The bridge-loader crate `rge-scene-loader` must be created in this
+     dispatch for the impls to compile. The `Component` impl should
+     compile and test purely on its own (kernel-ecs surface is all the
+     impls touch); if compilation requires the loader crate, halt.
+   - Adding the dep edge causes a workspace-level architectural change
+     (new workspace member, new `[workspace.dependencies]` entry beyond
+     the single `rge-kernel-ecs` entry if not already present,
+     forbidden-dep rule violation).
+   - Cargo.lock churn beyond the three new dep edges.
+   - The focused test or canonical verification gate fails for any
+     reason outside the allowed file surface.
+
+   **Scope-preserving halt clause** - the orchestrator's canonical
+   verify gate (`.ai/dispatch.verify.ps1`) runs after Claude execute.
+   If verify fails on a target OUTSIDE the allowed file surface
+   (anything beyond the three component crates' `Cargo.toml`, the
+   four component source files, focused test additions in those
+   three crates, the single permitted workspace-manifest line if
+   strictly required, the three permitted Cargo.lock dep-edge
+   additions, or this dispatch's own `ai_handoffs/` packet), the
+   orchestrator may auto-route a CORRECTION packet asking the
+   executor to fix the failure. When that happens **the executor MUST
+   halt**: write an EXECUTION_REPORT with `EXEC_STATUS: blocked` and
+   `STATUS: NEEDS_HUMAN`, do NOT execute the correction. Scope
+   discipline is the entire reason this task is bounded narrowly; a
+   correction-round source fix to an unrelated failure expands a
+   four-impl + three-dep-edge dispatch into a multi-crate fix and
+   must become its own ticket.
+
+   **Verbatim review-gate strings** - the autonomous selector MUST
+   copy these eight strings, character-for-character, into the filed
+   GitHub issue body. No paraphrasing, no substitution, no
+   reflowing. A packet that lacks any one of them verbatim is
+   bounced at review:
+
+   ```
+   MUST add rge-kernel-ecs as a regular (non-dev) workspace-path dependency to exactly three Cargo.toml files: crates/components-spatial/Cargo.toml, crates/components-render/Cargo.toml, and crates/components-visibility/Cargo.toml
+   MUST impl rge_kernel_ecs::Component for Transform in components-spatial, Camera and Light in components-render, and Visibility in components-visibility — four impls total
+   MUST NOT use Reflect, derive_Reflect, a register_component macro, a global runtime registry, or any indirection — direct trait impl in the owning crate is the entire decision being implemented per issue #165
+   MUST NOT touch crates/rge-data/**, kernel/**, editor/**, runtime/**, crates/editor-shell/**, crates/script-host/**, crates/script-bench/**, crates/gfx/**, crates/brep-render/**, crates/io-*/**, crates/asset-store/**, crates/macros-reflect/**, golden-projects/**, or any production source outside the three component crates
+   MUST NOT create the rge-scene-loader crate or any other new workspace member; the loader crate is the NEXT dispatch (#41), not this one
+   MUST add at least one focused test per component crate proving each component type can be inserted into a fresh rge_kernel_ecs::World and retrieved through the current ECS API
+   MUST halt with NEEDS_HUMAN if rge_kernel_ecs::Component trait does not exist, is sealed, is non_exhaustive in a way blocking downstream impls, or has a shape that requires modifying the kernel to satisfy
+   MUST run cargo test -p rge-components-spatial -p rge-components-render -p rge-components-visibility and the canonical .ai/dispatch.verify.ps1 gate successfully
+   ```
+
+   **Done-criterion**:
+   - `crates/components-spatial/Cargo.toml`,
+     `crates/components-render/Cargo.toml`, and
+     `crates/components-visibility/Cargo.toml` each gain exactly one
+     new regular dep entry on `rge-kernel-ecs` (workspace path).
+   - Four `impl rge_kernel_ecs::Component` blocks land:
+     - `Transform` in `crates/components-spatial/src/...`,
+     - `Camera` in `crates/components-render/src/camera.rs`,
+     - `Light` in `crates/components-render/src/light.rs`,
+     - `Visibility` in `crates/components-visibility/src/...`.
+   - Each of the three component crates has at least one focused test
+     proving its component type(s) can be inserted into a fresh
+     `rge_kernel_ecs::World` and retrieved through the current ECS API.
+   - `cargo test -p rge-components-spatial -p rge-components-render -p rge-components-visibility`
+     exits 0.
+   - `.ai/dispatch.verify.ps1` exits 0 (architecture-lint
+     forbidden-dep rules stay green; the new edges go up the
+     dependency tree, not down).
+   - Cargo.lock has exactly three new dep edges and no other change.
+   - No tracked file outside the allowed surface changes, except this
+     dispatch's own handoff/log artifacts.
