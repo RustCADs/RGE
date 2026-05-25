@@ -1,0 +1,15 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-169",
+    "packet_type": "EXEC",
+    "author": "Executor / Claude",
+    "timestamp": "2026-05-25_10-02-46+0300",
+    "related_files": [
+                          "kernel/ecs/src/archetype.rs — narrowed `Archetype::has_component_at_row` from `pub` to `pub(crate)`; updated the `has_component` doc cross-reference to point at the public `EntityRef::contains` instead.",
+                          "kernel/ecs/tests/sparse_rows.rs — rewrote `heterogeneous_snapshot_round_trip_exercises_erased_nonzero_row_insert` to derive `first`/`middle`/`last` by sorting freshly spawned `EntityId`s, so `Speed` deterministically lands on the entity that sorts last and its first ever erased restore insert is guaranteed to land at row 2 regardless of `Ulid::new` creation order."
+                      ],
+    "status": "AWAITING_REVIEW",
+    "handoff_status": "COMPLETE",
+    "next_role": "REVIEWER_AI",
+    "exit_code": 0
+}

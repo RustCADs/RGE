@@ -95,9 +95,14 @@ impl<'w> EntityRef<'w> {
     }
 
     /// Returns `true` when the entity carries a component of type `C`.
+    ///
+    /// This is row-specific: it reflects whether *this* entity currently has
+    /// a `C` value, not merely whether some other entity in the same archetype
+    /// happens to. It always agrees with `self.get::<C>().is_some()`.
     #[must_use]
     pub fn contains<C: Component>(&self) -> bool {
-        self.archetype.has_component(ComponentId::of::<C>())
+        self.archetype
+            .has_component_at_row(ComponentId::of::<C>(), self.row)
     }
 }
 
