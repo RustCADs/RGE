@@ -252,6 +252,129 @@ function Get-BlockText {
     return ''
 }
 
+function Get-RecoveryDecision {
+    # Pure decision helper for one-shot transient recovery. Given the list of
+    # OPEN failed autonomous issues plus the label set this loop uses, return
+    # the eligibility verdict and the exact intended label transition. No
+    # GitHub side effects, so the same function is callable from a non-mutating
+    # verification harness with hand-crafted inputs.
+    #
+    # Eligibility (fail-closed by default) requires ALL of:
+    #   - exactly one open failed autonomous issue,
+    #   - it has no 'ai-dispatch-recovered-transient' marker,
+    #   - it has exactly one ai-dispatch-failure-* taxonomy label,
+    #   - and that taxonomy label is one of the explicit transient labels.
+    param(
+        [object[]]$Issues,
+        [string]$FailLabel,
+        [string]$QueueLabel,
+        [string]$DoneLabel,
+        [string]$RetryLabel,
+        [string]$RecoverLabel,
+        [string[]]$TransientLabels
+    )
+    $decision = [pscustomobject]@{
+        Eligible       = $false
+        Reason         = ''
+        Issue          = $null
+        TransientLabel = $null
+        LabelsToRemove = @()
+        LabelsToAdd    = @()
+    }
+    $list = @($Issues)
+    if ($list.Count -eq 0) {
+        $decision.Reason = 'no open failed autonomous issues'
+        return $decision
+    }
+    if ($list.Count -gt 1) {
+        $decision.Reason = "$($list.Count) open failed autonomous issues (recovery requires exactly one)"
+        return $decision
+    }
+    $cand = $list[0]
+    $labels = @()
+    if ($cand.labels) {
+        $labels = @($cand.labels | ForEach-Object {
+            if ($_ -is [string]) { $_ } else { $_.name }
+        })
+    }
+    $taxonomy     = @($labels | Where-Object { $_ -like 'ai-dispatch-failure-*' })
+    $transient    = @($labels | Where-Object { $TransientLabels -contains $_ })
+    $nonTransient = @($taxonomy | Where-Object { $TransientLabels -notcontains $_ })
+    $alreadyRecovered = ($labels -contains $RecoverLabel)
+
+    if ($alreadyRecovered) {
+        $decision.Reason = "issue #$($cand.number) already carries '$RecoverLabel'"
+        return $decision
+    }
+    if ($taxonomy.Count -eq 0) {
+        $decision.Reason = "issue #$($cand.number) has no failure taxonomy label"
+        return $decision
+    }
+    if ($nonTransient.Count -gt 0) {
+        $decision.Reason = "issue #$($cand.number) has non-transient taxonomy label(s): " + ($nonTransient -join ', ')
+        return $decision
+    }
+    if ($taxonomy.Count -gt 1) {
+        $decision.Reason = "issue #$($cand.number) has multiple taxonomy labels: " + ($taxonomy -join ', ')
+        return $decision
+    }
+    if ($transient.Count -ne 1) {
+        $decision.Reason = "issue #$($cand.number) has no transient taxonomy label"
+        return $decision
+    }
+
+    $remove = @($FailLabel)
+    if ($labels -contains $DoneLabel) { $remove += $DoneLabel }
+    $add = @($QueueLabel, $RetryLabel, $RecoverLabel)
+
+    $decision.Eligible       = $true
+    $decision.Issue          = $cand
+    $decision.TransientLabel = $transient[0]
+    $decision.LabelsToRemove = $remove
+    $decision.LabelsToAdd    = $add
+    return $decision
+}
+
+function Get-PostRecoveryQueueState {
+    # After a successful recovery label mutation, decide what queue state this
+    # tick should use given whether the relabeled issue is visible under the
+    # queue label search. Pure function so the verdict is exercisable from a
+    # non-mutating verification harness.
+    #
+    #   'Drain'   -> Seed openQueue with the recovered issue and SKIP the
+    #                primary queue label re-fetch this tick. A stale empty
+    #                label-index read on the same recovered issue must not
+    #                route the tick into new task selection.
+    #   'EndTick' -> Visibility never confirmed within the poll budget. The
+    #                caller MUST exit 0 immediately, before any cap check,
+    #                Codex task selection, gh issue create, or queue
+    #                invocation can run. A later tick will drain the issue
+    #                once GitHub's label index catches up.
+    param(
+        [Parameter(Mandatory)] $RecoveredIssue,
+        [bool] $VisibilityConfirmed,
+        [int]  $VisibilityElapsedSeconds = 0
+    )
+    if ($VisibilityConfirmed) {
+        $seed = @([pscustomobject]@{
+            number = $RecoveredIssue.number
+            title  = $RecoveredIssue.title
+        })
+        return [pscustomobject]@{
+            Action      = 'Drain'
+            SeededQueue = $seed
+            ElapsedSecs = $VisibilityElapsedSeconds
+            Reason      = "Recovered issue #$($RecoveredIssue.number) is listable after ${VisibilityElapsedSeconds}s; seeding queue from the recovery result and skipping the label re-fetch this tick."
+        }
+    }
+    return [pscustomobject]@{
+        Action      = 'EndTick'
+        SeededQueue = @()
+        ElapsedSecs = $VisibilityElapsedSeconds
+        Reason      = "Recovered issue #$($RecoveredIssue.number) not visible to queue label search after ${VisibilityElapsedSeconds}s; ending this tick to avoid filing new work on top of an unconfirmed recovery. A later tick will drain it."
+    }
+}
+
 $script:AutoLockPath = Join-Path $env:TEMP 'rge-ai-dispatch-auto.lock'
 $script:AutoLockHeld = $false
 
@@ -370,6 +493,117 @@ if (Test-Path -LiteralPath $haltSentinel) {
     exit 0
 }
 
+# --- 1b. One-shot transient recovery ---------------------------------------
+# Narrow Auto-layer repair hook: when the only thing blocking the loop is a
+# single open autonomous issue whose terminal failure taxonomy is clearly
+# transient (stall or timeout), requeue it ONCE. The 'ai-dispatch-recovered-
+# transient' marker guarantees this is a one-shot per issue; the original
+# taxonomy label is kept as audit evidence. Every other ineligible state --
+# closed failures, multiple failed issues, mixed taxonomy, non-transient
+# taxonomy, missing taxonomy, already-recovered -- falls through to the
+# existing human-review halt below. Recovery never runs ahead of the local
+# sentinel check above.
+
+$recoverLabel    = 'ai-dispatch-recovered-transient'
+$retryLabel      = 'ai-dispatch-retry'
+$doneLabel       = 'ai-dispatch-done'
+$transientLabels = @('ai-dispatch-failure-stall', 'ai-dispatch-failure-timeout')
+
+# Set when a successful recovery mutation seeds $openQueue from the recovered
+# issue. The queue-check below MUST honour this flag and skip the primary
+# label re-fetch -- a stale empty result on the same issue must not let the
+# rest of the tick route into new task selection.
+$script:RecoveryDrainSeeded = $false
+
+Write-TimingTrace "auto.recovery-check: start"
+$openFailedAuto = Get-IssuesJson @(
+    'issue', 'list', '--repo', $repoSlug, '--label', $autoLabel,
+    '--label', $failLabel, '--state', 'open', '--limit', '100',
+    '--json', 'number,title,labels')
+$decision = Get-RecoveryDecision -Issues $openFailedAuto `
+    -FailLabel $failLabel -QueueLabel $queueLabel -DoneLabel $doneLabel `
+    -RetryLabel $retryLabel -RecoverLabel $recoverLabel `
+    -TransientLabels $transientLabels
+
+if ($decision.Eligible) {
+    $cand = $decision.Issue
+    Write-Output ''
+    Write-Output "Transient recovery candidate: open autonomous issue #$($cand.number) ('$($cand.title)') with '$($decision.TransientLabel)'."
+    Write-Output ("  Remove labels: " + ($decision.LabelsToRemove -join ', '))
+    Write-Output ("  Add labels:    " + ($decision.LabelsToAdd -join ', '))
+    Write-Output ("  Keep label:    $($decision.TransientLabel) (audit evidence)")
+    if ($DryRun) {
+        Write-Output 'DryRun: no label mutation; queue not run for this recovery.'
+        Write-TimingTrace "auto.recovery-check: dry-run eligible (issue=#$($cand.number), label=$($decision.TransientLabel))"
+        Write-TimingTrace "auto.tick: end (exit=0, dry-run=true, recovery=eligible)"
+        exit 0
+    }
+    # Ensure the recovery marker and retry labels exist before the edit. The
+    # queue script also defines the retry label; recreating it with --force is
+    # idempotent. The recover marker is owned by this Auto layer.
+    Invoke-Tool -Exe 'gh' -CmdArgs @(
+        'label', 'create', $recoverLabel, '--repo', $repoSlug,
+        '--color', 'fbca04',
+        '--description', 'AI dispatch one-shot transient recovery marker; do not remove',
+        '--force') | Out-Null
+    Invoke-Tool -Exe 'gh' -CmdArgs @(
+        'label', 'create', $retryLabel, '--repo', $repoSlug,
+        '--color', 'd4c5f9',
+        '--description', 'AI dispatch re-queued for one retry',
+        '--force') | Out-Null
+
+    $editArgs = @('issue', 'edit', [string]$cand.number, '--repo', $repoSlug)
+    foreach ($lbl in $decision.LabelsToRemove) { $editArgs += @('--remove-label', $lbl) }
+    foreach ($lbl in $decision.LabelsToAdd)    { $editArgs += @('--add-label',    $lbl) }
+    Write-TimingTrace "auto.recovery-mutate: start (issue=#$($cand.number))"
+    $editResult = Invoke-Tool -Exe 'gh' -CmdArgs $editArgs
+    Write-TimingTrace "auto.recovery-mutate: done (exit=$($editResult.Code))"
+    if ($editResult.Code -ne 0) {
+        Fail "Could not requeue recovered issue #$($cand.number) (exit $($editResult.Code)):`n$($editResult.Text)"
+    }
+    Write-Output "Issue #$($cand.number) requeued: '$failLabel' removed, '$recoverLabel' set, '$($decision.TransientLabel)' kept."
+
+    # GitHub label index lag: queue label search may not see the relabeled
+    # issue immediately. Poll until visibility confirms, then either seed
+    # the queue from the recovery result (drain path) or end this tick.
+    # The tick MUST NOT fall through to the cap check, Codex task selection,
+    # gh issue create, or queue invocation when recovery succeeded -- a
+    # stale empty label-index read on the same recovered issue must not let
+    # the loop file new work in the same tick (Codex control round 0
+    # finding for ISSUE-196).
+    $visibilityElapsedSeconds = 0
+    $visible = $false
+    for ($poll = 1; $poll -le 12; $poll++) {
+        Start-Sleep -Seconds 5
+        $visibilityElapsedSeconds = $poll * 5
+        $check = Get-IssuesJson @(
+            'issue', 'list', '--repo', $repoSlug, '--label', $queueLabel,
+            '--state', 'open', '--limit', '100', '--json', 'number')
+        if (@($check | ForEach-Object { $_.number }) -contains [int]$cand.number) {
+            $visible = $true
+            break
+        }
+    }
+    $postRecovery = Get-PostRecoveryQueueState `
+        -RecoveredIssue $cand -VisibilityConfirmed $visible `
+        -VisibilityElapsedSeconds $visibilityElapsedSeconds
+    Write-Output $postRecovery.Reason
+    Write-TimingTrace "auto.recovery-visibility: action=$($postRecovery.Action) elapsed=$($postRecovery.ElapsedSecs)s"
+    if ($postRecovery.Action -eq 'EndTick') {
+        Write-TimingTrace "auto.tick: end (exit=0, recovered=true, visibility=ambiguous)"
+        exit 0
+    }
+    $openQueue = $postRecovery.SeededQueue
+    $script:RecoveryDrainSeeded = $true
+} elseif ($openFailedAuto.Count -gt 0) {
+    Write-Output ''
+    Write-Output "Transient recovery not eligible: $($decision.Reason)."
+    Write-Output "Falling through to the human-review halt."
+    Write-TimingTrace "auto.recovery-check: ineligible ($($decision.Reason))"
+} else {
+    Write-TimingTrace "auto.recovery-check: no open failed autonomous issues"
+}
+
 $failedAuto = Get-IssuesJson @(
     'issue', 'list', '--repo', $repoSlug, '--label', $autoLabel,
     '--label', $failLabel, '--state', 'all', '--limit', '100',
@@ -390,11 +624,19 @@ Write-TimingTrace "auto.halt-checks: done"
 # creation of NEW autonomous tasks, so an already-filed task is never
 # stranded behind the cap.
 
-Write-TimingTrace "auto.queue-check: primary start"
-$openQueue = Get-IssuesJson @(
-    'issue', 'list', '--repo', $repoSlug, '--label', $queueLabel,
-    '--state', 'open', '--limit', '100', '--json', 'number,title')
-Write-TimingTrace "auto.queue-check: primary done (count=$($openQueue.Count))"
+if ($script:RecoveryDrainSeeded) {
+    # Recovery confirmed visibility and seeded $openQueue from the recovery
+    # result. A re-query here could return an intermittently stale empty
+    # label-index read on the recovered issue and route the tick into new
+    # task selection; skip it.
+    Write-TimingTrace "auto.queue-check: skipped (recovery seeded queue, count=$($openQueue.Count))"
+} else {
+    Write-TimingTrace "auto.queue-check: primary start"
+    $openQueue = Get-IssuesJson @(
+        'issue', 'list', '--repo', $repoSlug, '--label', $queueLabel,
+        '--state', 'open', '--limit', '100', '--json', 'number,title')
+    Write-TimingTrace "auto.queue-check: primary done (count=$($openQueue.Count))"
+}
 
 $queueStateAmbiguous = $false
 if ($openQueue.Count -eq 0) {
