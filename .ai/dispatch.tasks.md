@@ -5509,7 +5509,13 @@ is the only safeguard against selector drift.
    - No file outside the allowed surface changes, except this dispatch's own
      handoff/log artifacts.
 
-47. **Guard queue staging against out-of-scope dispatch files.**
+47. **[DONE 2026-05-25 via PR #181 / commit `f8b2246`] Guard queue staging against out-of-scope dispatch files.**
+   Landed via PR #181. Queue now runs a fail-closed scope guard after
+   `Write-DispatchLog` and before `git add -A`; it allows active dispatch
+   handoff artifacts, the exact queue log, and positive TASK packet allowlist
+   paths, and rejects out-of-scope changed/untracked paths before staging. The
+   original brief is preserved below.
+
    ISSUE-175 was blocked because an unrelated live-root
    `AUTOMATION_IMPROVEMENTS.md` file was swept into the queue commit by the
    broad `git add -A` publish path. Add a commit-path guard so the queue
