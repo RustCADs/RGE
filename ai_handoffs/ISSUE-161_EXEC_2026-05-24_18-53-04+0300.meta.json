@@ -1,0 +1,16 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-161",
+    "packet_type": "EXEC",
+    "author": "Executor / Claude",
+    "timestamp": "2026-05-24_18-53-04+0300",
+    "related_files": [
+                          "golden-projects/simple-scene/scenes/main.rge-scene — added typed raw component envelopes (Transform/Camera/Visibility on the existing camera entity, Transform/Light on a new KeyLight entity) and a second root entity entry",
+                          "crates/rge-data/tests/golden_simple_scene_schema.rs — revised the schema test to pin canonical `rge::components::*` type_ids, exact raw RON payload strings, and a `ron::Value`-shape inspection that proves `fov_y_radians: 1.0471976` sits inside the Perspective projection variant",
+                          "ai_handoffs/ISSUE-161_TASK_2026-05-24_18-35-49+0300.md — TASK packet executed by this report"
+                      ],
+    "status": "AWAITING_REVIEW",
+    "handoff_status": "COMPLETE",
+    "next_role": "REVIEWER_AI",
+    "exit_code": 0
+}
