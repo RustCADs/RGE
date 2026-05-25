@@ -86,7 +86,9 @@ param(
     [int]$CodexStallThresholdSec = 300,
 
     [Parameter(Mandatory, ParameterSetName = 'ResumeTask')]
-    [switch]$ResumeApprovedTask
+    [switch]$ResumeApprovedTask,
+
+    [switch]$EnablePreflightAudit
 )
 
 $ErrorActionPreference = 'Stop'
@@ -350,6 +352,153 @@ function Invoke-CodexPrompt {
     }
 }
 
+function Invoke-CodexPreflightAudit {
+    # Opt-in pitfall audit: run Codex in a read-only sandbox, extract a
+    # marker-delimited Markdown body from the current audit output, validate
+    # the required headings and stable Pn / Vn IDs, write
+    # .ai/dispatch-<id>/codex.preflight.md only after validation succeeds,
+    # and return the validated checklist text for prompt injection.
+    #
+    # On any failure, Fail is called -- no codex.preflight.md is written,
+    # so a stale pre-existing checklist cannot be reused by a later step.
+    param([System.IO.FileInfo]$TaskPacket)
+
+    $taskRel = Get-RepoRelativePath $TaskPacket.FullName
+    $log = Join-Path $script:RunDir 'codex.preflight.log'
+    $checklistPath = Join-Path $script:RunDir 'codex.preflight.md'
+    $beginMarker = '<<<PREFLIGHT_AUDIT_BEGIN>>>'
+    $endMarker = '<<<PREFLIGHT_AUDIT_END>>>'
+
+    $prompt = @"
+You are Codex Pre-flight Auditor for an automated RGE dispatch loop.
+
+Read this TASK packet:
+
+$taskRel
+
+Your job is to identify scope-preserving pitfalls and verification focus items
+that will help Claude execute the TASK and Codex control review the result.
+You may inspect repository context needed to identify pitfalls. You must not
+edit files, stage, commit, or push. You must not expand scope: the TASK
+packet remains authoritative; this checklist is advisory only.
+
+Emit exactly one Markdown block between the two markers below. Do not write
+any other prose, headings, fences, or commentary outside the markers. Each
+marker must appear on its own line, anchored at column 1, exactly as shown.
+
+$beginMarker
+# Pre-flight Audit
+
+TASK_PACKET: $taskRel
+
+## Boundary
+
+The TASK packet remains authoritative. This checklist is advisory and must not
+expand scope.
+
+## Pitfall Checklist
+
+- [ ] P1: <scope-preserving pitfall text>
+- [ ] P2: <scope-preserving pitfall text>
+
+## Verification Checklist
+
+- [ ] V1: <verification focus text>
+- [ ] V2: <verification focus text>
+$endMarker
+
+Rules:
+- Use stable IDs P1, P2, P3, ... for the Pitfall Checklist items.
+- Use stable IDs V1, V2, V3, ... for the Verification Checklist items.
+- IDs must be unique within the audit (no duplicate Pn or Vn values).
+- Provide at least one Pn item and at least one Vn item.
+- Keep the four headings exactly as shown: ``# Pre-flight Audit``,
+  ``## Boundary``, ``## Pitfall Checklist``, ``## Verification Checklist``.
+- Do not authorize edits, tests, or scope changes beyond the TASK packet.
+"@
+
+    Invoke-CodexPrompt -Prompt $prompt -Sandbox 'read-only' -LogPath $log
+
+    if (-not (Test-Path -LiteralPath $log)) {
+        Fail "Pre-flight audit produced no log file. See $(Get-RepoRelativePath $log)"
+    }
+    $logText = Get-Content -Raw -LiteralPath $log
+    if (-not $logText) {
+        Fail "Pre-flight audit log is empty. See $(Get-RepoRelativePath $log)"
+    }
+
+    # LastIndexOf so any earlier marker mention in Codex reasoning cannot
+    # outrank the final emitted block.
+    $startIdx = $logText.LastIndexOf($beginMarker)
+    if ($startIdx -lt 0) {
+        Fail "Pre-flight audit output is missing the begin marker '$beginMarker'. See $(Get-RepoRelativePath $log)"
+    }
+    $bodyStart = $startIdx + $beginMarker.Length
+    $endIdx = $logText.IndexOf($endMarker, $bodyStart)
+    if ($endIdx -lt 0) {
+        Fail "Pre-flight audit output is missing the end marker '$endMarker' after the begin marker. See $(Get-RepoRelativePath $log)"
+    }
+    $body = $logText.Substring($bodyStart, $endIdx - $bodyStart).Trim()
+    if (-not $body) {
+        Fail "Pre-flight audit body between markers is empty. See $(Get-RepoRelativePath $log)"
+    }
+
+    foreach ($required in @(
+        '# Pre-flight Audit',
+        '## Boundary',
+        '## Pitfall Checklist',
+        '## Verification Checklist'
+    )) {
+        $pattern = '(?m)^' + [regex]::Escape($required) + '\s*$'
+        if ($body -notmatch $pattern) {
+            Fail "Pre-flight audit body is missing required heading '$required'. See $(Get-RepoRelativePath $log)"
+        }
+    }
+
+    # Slice the body by '## ' section starts so item parsing cannot leak
+    # between sections.
+    $sections = [regex]::Split($body, '(?m)^(?=## )')
+    $pitfallText = ($sections | Where-Object { $_ -match '^## Pitfall Checklist\b' } | Select-Object -First 1)
+    $verifyText = ($sections | Where-Object { $_ -match '^## Verification Checklist\b' } | Select-Object -First 1)
+    if (-not $pitfallText -or -not $verifyText) {
+        Fail "Pre-flight audit body is missing a required checklist section. See $(Get-RepoRelativePath $log)"
+    }
+
+    $pItems = @()
+    foreach ($line in ($pitfallText -split "`r?`n")) {
+        if ($line -match '^\s*-\s*\[\s*\]\s*(P\d+)\s*:') {
+            $pItems += $matches[1]
+        }
+    }
+    $vItems = @()
+    foreach ($line in ($verifyText -split "`r?`n")) {
+        if ($line -match '^\s*-\s*\[\s*\]\s*(V\d+)\s*:') {
+            $vItems += $matches[1]
+        }
+    }
+
+    if ($pItems.Count -lt 1) {
+        Fail "Pre-flight audit has no '- [ ] Pn:' items in the Pitfall Checklist. See $(Get-RepoRelativePath $log)"
+    }
+    if ($vItems.Count -lt 1) {
+        Fail "Pre-flight audit has no '- [ ] Vn:' items in the Verification Checklist. See $(Get-RepoRelativePath $log)"
+    }
+
+    $pDupes = @($pItems | Group-Object | Where-Object { $_.Count -gt 1 })
+    if ($pDupes.Count -gt 0) {
+        $names = ($pDupes | ForEach-Object { $_.Name }) -join ', '
+        Fail "Pre-flight audit has duplicate P-number IDs: $names. See $(Get-RepoRelativePath $log)"
+    }
+    $vDupes = @($vItems | Group-Object | Where-Object { $_.Count -gt 1 })
+    if ($vDupes.Count -gt 0) {
+        $names = ($vDupes | ForEach-Object { $_.Name }) -join ', '
+        Fail "Pre-flight audit has duplicate V-number IDs: $names. See $(Get-RepoRelativePath $log)"
+    }
+
+    Write-TextFile $checklistPath $body
+    return $body
+}
+
 function Test-PacketForbidsSidecar {
     param([System.IO.FileInfo]$Packet)
 
@@ -604,17 +753,42 @@ in Markdown, quotes, or a code block.
 }
 
 function Invoke-ClaudeExecute {
-    param([System.IO.FileInfo]$ActivePacket, [string]$PacketKind, [int]$Round)
+    param(
+        [System.IO.FileInfo]$ActivePacket,
+        [string]$PacketKind,
+        [int]$Round,
+        [string]$PreflightChecklist = ''
+    )
 
     $packetRel = Get-RepoRelativePath $ActivePacket.FullName
     $out = Join-Path $script:RunDir ("claude.execute.round{0}.md" -f $Round)
+
+    # Round 0 only: advisory pre-flight checklist. Corrections (rounds > 0)
+    # must follow the CORRECTION_PACKET directly without re-injecting the
+    # initial audit.
+    $preflightBlock = ''
+    if ($Round -eq 0 -and $PreflightChecklist) {
+        $preflightBlock = @"
+
+Advisory Codex pre-flight checklist (read-only audit aid, round 0 only):
+
+$PreflightChecklist
+
+The TASK packet above remains authoritative. This pre-flight checklist is
+advisory only. It does not expand scope, does not authorize edits or tests
+outside the TASK packet's allowed surface, and must be ignored wherever it
+conflicts with the TASK packet. Preserve the Pn and Vn IDs when you refer to
+items so control can match them.
+"@
+    }
+
     $prompt = @"
 You are Executor / Claude in the RGE repository.
 
 Read and execute this $PacketKind packet:
 
 $packetRel
-
+$preflightBlock
 Protocol rules:
 - Execute only the enumerated scope.
 - Do not commit.
@@ -699,7 +873,8 @@ function Invoke-CodexControl {
         [System.IO.FileInfo]$TaskPacket,
         [System.IO.FileInfo]$ExecPacket,
         [int]$Round,
-        [string]$VerificationLog = ''
+        [string]$VerificationLog = '',
+        [string]$PreflightChecklist = ''
     )
 
     $taskRel = Get-RepoRelativePath $TaskPacket.FullName
@@ -712,6 +887,22 @@ function Invoke-CodexControl {
     $out = Join-Path $script:RunDir ("codex.control.round{0}.json" -f $Round)
     $log = Join-Path $script:RunDir ("codex.control.round{0}.log" -f $Round)
 
+    # Advisory checklist injected on every control round when present.
+    $preflightBlock = ''
+    if ($PreflightChecklist) {
+        $preflightBlock = @"
+
+Advisory Codex pre-flight checklist (read-only audit aid):
+
+$PreflightChecklist
+
+The TASK packet above remains authoritative. This pre-flight checklist is
+advisory only. It does not expand scope, does not authorize edits or tests
+outside the TASK packet's allowed surface, and must be ignored wherever it
+conflicts with the TASK packet. Reference items by their Pn and Vn IDs.
+"@
+    }
+
     $prompt = @"
 You are Codex Controller / Reviewer for an automated RGE dispatch loop.
 
@@ -722,7 +913,7 @@ $taskRel
 
 Latest execution report:
 $execRel
-
+$preflightBlock
 Also inspect:
 - git status --short --branch
 - git diff
@@ -994,6 +1185,14 @@ if ($ResumeApprovedTask) {
     }
 }
 
+$preflightChecklist = ''
+if ($EnablePreflightAudit) {
+    Write-Output "Running Codex pre-flight pitfall audit (read-only)..."
+    $preflightChecklist = Invoke-CodexPreflightAudit -TaskPacket $taskPacket
+    $checklistRel = Get-RepoRelativePath (Join-Path $script:RunDir 'codex.preflight.md')
+    Write-Output "Pre-flight checklist written: $checklistRel"
+}
+
 $activePacket = $taskPacket
 $activeKind = 'TASK'
 $lastExecPacket = $null
@@ -1001,7 +1200,8 @@ $finalControl = $null
 $verification = $null
 
 for ($round = 0; $round -le $MaxCorrectionRounds; $round++) {
-    $execResult = Invoke-ClaudeExecute -ActivePacket $activePacket -PacketKind $activeKind -Round $round
+    $execResult = Invoke-ClaudeExecute -ActivePacket $activePacket -PacketKind $activeKind -Round $round `
+        -PreflightChecklist $preflightChecklist
     Write-Output "Claude execution round ${round}: $($execResult.status)"
 
     if ($execResult.status -ne 'executed') {
@@ -1060,7 +1260,8 @@ for ($round = 0; $round -le $MaxCorrectionRounds; $round++) {
     # -SkipVerification (the log exists but records a skip).
     $verifyLogForControl = if ($verification.Skipped) { '' } else { $verification.Log }
     $finalControl = Invoke-CodexControl -TaskPacket $taskPacket -ExecPacket $lastExecPacket `
-        -Round $round -VerificationLog $verifyLogForControl
+        -Round $round -VerificationLog $verifyLogForControl `
+        -PreflightChecklist $preflightChecklist
     Write-Output "Codex control round ${round}: $($finalControl.verdict)"
 
     if ($finalControl.verdict -eq 'pass') {
