@@ -45,6 +45,10 @@
     Report the halt/cap state and the task Codex would select; create no
     issue and run no dispatch.
 
+.PARAMETER TraceTiming
+    Emit timing trace lines for automation phase diagnosis. Can also be enabled
+    by setting RGE_AI_DISPATCH_TRACE_TIMING=1.
+
 .EXAMPLE
     .\Invoke-AiDispatchAuto.ps1 -DryRun
     .\Invoke-AiDispatchAuto.ps1                      # branch mode (default)
@@ -70,10 +74,23 @@ param(
     [ValidateRange(0, 5)]
     [int]$MaxCorrectionRounds = 2,
 
-    [switch]$DryRun
+    [switch]$DryRun,
+
+    [switch]$TraceTiming
 )
 
 $ErrorActionPreference = 'Stop'
+
+$script:TraceTimingEnabled = [bool]$TraceTiming -or ($env:RGE_AI_DISPATCH_TRACE_TIMING -match '^(1|true|yes|on)$')
+$script:TraceTimingStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+
+function Write-TimingTrace {
+    param([string]$Message)
+    if ($script:TraceTimingEnabled) {
+        $elapsed = '{0:n3}' -f $script:TraceTimingStopwatch.Elapsed.TotalSeconds
+        Write-Output "[TRACE $(Get-Date -Format 'HH:mm:ss.fff') +${elapsed}s] $Message"
+    }
+}
 
 function Fail {
     param([string]$Message)
@@ -268,6 +285,7 @@ $autoLabel  = 'ai-auto'
 $failLabel  = 'ai-dispatch-failed'
 
 Write-Output "Autonomous dispatch tick - repo $repoSlug"
+Write-TimingTrace "auto.tick: start (PID=$PID, repo=$repoSlug, mode=$PublishMode)"
 Write-Output "Publish mode: $PublishMode   Task cap: $MaxAutonomousTasks"
 
 # Serialize autonomous ticks: without this, two overlapping ticks could both
@@ -275,6 +293,7 @@ Write-Output "Publish mode: $PublishMode   Task cap: $MaxAutonomousTasks"
 if (-not $DryRun) {
     if (-not (Acquire-AutoLock)) {
         Write-Output "Another autonomous dispatch tick is already running; skipping this tick."
+        Write-TimingTrace "auto.tick: end (exit=0, skipped=lock-held)"
         exit 0
     }
 }
@@ -282,6 +301,7 @@ if (-not $DryRun) {
 try {
 # --- 1. Halt checks --------------------------------------------------------
 
+Write-TimingTrace "auto.halt-checks: start"
 $haltSentinel = Join-Path $script:RepoRoot '.ai\dispatch.auto-halt'
 if (Test-Path -LiteralPath $haltSentinel) {
     Write-Output ''
@@ -289,6 +309,8 @@ if (Test-Path -LiteralPath $haltSentinel) {
     $haltText = (Get-Content -Raw -LiteralPath $haltSentinel -ErrorAction SilentlyContinue)
     if ($haltText) { Write-Output "  $($haltText.Trim())" }
     Write-Output "Investigate, then delete that file to resume."
+    Write-TimingTrace "auto.halt-checks: halted (sentinel=$haltSentinel)"
+    Write-TimingTrace "auto.tick: end (exit=0, halted=true)"
     exit 0
 }
 
@@ -301,17 +323,22 @@ if ($failedAuto.Count -gt 0) {
     Write-Output ''
     Write-Output "HALTED: autonomous task #$($f.number) ('$($f.title)') is marked '$failLabel'."
     Write-Output "Review it, then remove the '$failLabel' label to resume (closing the issue alone does not clear the halt)."
+    Write-TimingTrace "auto.halt-checks: halted (issue=#$($f.number), label=$failLabel)"
+    Write-TimingTrace "auto.tick: end (exit=0, halted=true)"
     exit 0
 }
+Write-TimingTrace "auto.halt-checks: done"
 
 # --- 2. Is the queue already holding work? ---------------------------------
 # Existing queued work is always drained. The task cap gates only the
 # creation of NEW autonomous tasks, so an already-filed task is never
 # stranded behind the cap.
 
+Write-TimingTrace "auto.queue-check: primary start"
 $openQueue = Get-IssuesJson @(
     'issue', 'list', '--repo', $repoSlug, '--label', $queueLabel,
     '--state', 'open', '--limit', '100', '--json', 'number,title')
+Write-TimingTrace "auto.queue-check: primary done (count=$($openQueue.Count))"
 
 $queueStateAmbiguous = $false
 if ($openQueue.Count -eq 0) {
@@ -357,17 +384,21 @@ if ($openQueue.Count -gt 0) {
     Write-Output ''
     Write-Output "Queue state ambiguous after primary check and cross-check; skipping this autonomous tick without filing new work."
     Write-Output "A later tick will retry, or run Invoke-AiDispatchQueue.ps1 directly if a queued issue is visible."
+    Write-TimingTrace "auto.tick: end (exit=0, skipped=queue-ambiguous)"
     exit 0
 } else {
     # --- 3. Cap check (gates NEW task selection only) ----------------------
 
+    Write-TimingTrace "auto.cap-check: start"
     $allAuto = Get-IssuesJson @(
         'issue', 'list', '--repo', $repoSlug, '--label', $autoLabel,
         '--state', 'all', '--limit', '200', '--json', 'number')
+    Write-TimingTrace "auto.cap-check: done (count=$($allAuto.Count), cap=$MaxAutonomousTasks)"
     if ($allAuto.Count -ge $MaxAutonomousTasks) {
         Write-Output ''
         Write-Output "HALTED for review: autonomous task cap reached ($($allAuto.Count) of $MaxAutonomousTasks). Queue is empty; nothing to drain."
         Write-Output "Re-run with a higher -MaxAutonomousTasks to continue."
+        Write-TimingTrace "auto.tick: end (exit=0, halted=cap-reached)"
         exit 0
     }
 
@@ -376,17 +407,20 @@ if ($openQueue.Count -gt 0) {
     if (-not (Test-Path -LiteralPath $briefPath)) {
         Write-Output ''
         Write-Output "No task brief at $briefPath - nothing to select. Create it to arm the loop."
+        Write-TimingTrace "auto.tick: end (exit=0, skipped=no-brief)"
         exit 0
     }
     $brief = Get-Content -Raw -LiteralPath $briefPath
     if (-not $brief -or -not $brief.Trim()) {
         Write-Output "Task brief $briefPath is empty; nothing to select."
+        Write-TimingTrace "auto.tick: end (exit=0, skipped=empty-brief)"
         exit 0
     }
     # Deterministic arming check: while the brief carries the UNARMED marker
     # the loop selects nothing -- no reliance on Codex interpreting prose.
     if ($brief -match '(?m)^\s*DISPATCH-TASKS-UNARMED\s*$') {
         Write-Output "Task brief $briefPath carries the DISPATCH-TASKS-UNARMED marker; the autonomous loop is not armed. Nothing selected."
+        Write-TimingTrace "auto.tick: end (exit=0, skipped=brief-unarmed)"
         exit 0
     }
 
@@ -435,6 +469,7 @@ This text becomes the dispatch goal that Codex plans and Claude executes.>
 
     Write-Output ''
     Write-Output 'Queue is empty; asking Codex to select the next task...'
+    Write-TimingTrace "auto.select: codex start"
     # --output-last-message captures ONLY Codex's final message. Scanning the
     # full transcript instead would match the sentinel block echoed from this
     # very prompt and mistake the template placeholder for a real selection.
@@ -451,6 +486,7 @@ This text becomes the dispatch goal that Codex plans and Claude executes.>
     if ($LASTEXITCODE -ne 0) {
         Fail "codex exec (task selection) failed. See $codexLog"
     }
+    Write-TimingTrace "auto.select: codex done (exit=$LASTEXITCODE)"
     $codexOut = (Get-Content -Raw -LiteralPath $codexAnswer -ErrorAction SilentlyContinue)
     if (-not $codexOut -or -not ([string]$codexOut).Trim()) {
         # Fallback only: no last-message file. The placeholder guard below
@@ -463,6 +499,7 @@ This text becomes the dispatch goal that Codex plans and Claude executes.>
     if (-not $block) {
         if ($codexOut -match '(?im)^\s*AUTO_SELECTION:\s*none\b') {
             Write-Output 'Codex reports no real task to select (brief empty/placeholder, or all tasks done).'
+            Write-TimingTrace "auto.tick: end (exit=0, skipped=no-selection)"
             exit 0
         }
         Fail "Codex did not return a parseable task block. See $codexLog"
@@ -500,6 +537,7 @@ This text becomes the dispatch goal that Codex plans and Claude executes.>
         Write-Output '--- end ---'
         Write-Output ''
         Write-Output 'DryRun: no issue created, queue not run.'
+        Write-TimingTrace "auto.tick: end (exit=0, dry-run=true)"
         exit 0
     }
 
@@ -517,9 +555,11 @@ This text becomes the dispatch goal that Codex plans and Claude executes.>
     $issueBody = "$taskBody`r`n`r`n_Filed automatically by Invoke-AiDispatchAuto.ps1 - Codex-selected from $briefName._"
     $bodyFile = Join-Path $env:TEMP 'rge-ai-auto-issue-body.txt'
     Write-Utf8 $bodyFile $issueBody
+    Write-TimingTrace "auto.issue-create: start"
     $created = Invoke-Tool -Exe 'gh' -CmdArgs @(
         'issue', 'create', '--repo', $repoSlug, '--title', $taskTitle,
         '--body-file', $bodyFile, '--label', $queueLabel, '--label', $autoLabel)
+    Write-TimingTrace "auto.issue-create: done (exit=$($created.Code))"
     Remove-Item -LiteralPath $bodyFile -Force -ErrorAction SilentlyContinue
     if ($created.Code -ne 0) {
         Fail "Could not create the autonomous task issue (exit $($created.Code)):`n$($created.Text)"
@@ -554,6 +594,7 @@ This text becomes the dispatch goal that Codex plans and Claude executes.>
 if ($DryRun) {
     Write-Output ''
     Write-Output 'DryRun: queue not run.'
+    Write-TimingTrace "auto.tick: end (exit=0, dry-run=true)"
     exit 0
 }
 
@@ -561,10 +602,12 @@ if ($DryRun) {
 
 Write-Output ''
 Write-Output "Running the dispatch queue ($PublishMode mode)..."
+Write-TimingTrace "auto.tick: queue-invocation start"
 Write-Output '================================================================'
 $queueArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $queueScript,
     '-MaxPlanRevisions', $MaxPlanRevisions, '-MaxCorrectionRounds', $MaxCorrectionRounds)
 if ($PublishMode -eq 'branch') { $queueArgs += '-NoPublish' }
+if ($TraceTiming) { $queueArgs += '-TraceTiming' }
 
 $prevEap = $ErrorActionPreference
 $ErrorActionPreference = 'Continue'
@@ -576,6 +619,7 @@ try {
 }
 $queueExit = $LASTEXITCODE
 Write-Output '================================================================'
+Write-TimingTrace "auto.tick: queue-invocation done (exit=$queueExit)"
 Write-Output "Dispatch queue exited with code $queueExit."
 if ($queueExit -ne 0) {
     # A non-zero queue exit means the tick could not be cleanly finalized
@@ -589,6 +633,7 @@ if ($PublishMode -eq 'branch') {
 } else {
     Write-Output 'Main mode: a passed task was fast-forwarded onto origin/main.'
 }
+Write-TimingTrace "auto.tick: end (exit=$queueExit)"
 exit $queueExit
 } finally {
     Release-AutoLock

@@ -30,6 +30,10 @@
     .\Invoke-AiDispatchQueue.ps1
     # Process the oldest queued issue end to end and publish if control passes.
 
+.PARAMETER TraceTiming
+    Emit timing trace lines for automation phase diagnosis. Can also be enabled
+    by setting RGE_AI_DISPATCH_TRACE_TIMING=1.
+
 .NOTES
     Requires local `git`, `gh` (authenticated), `codex`, `claude`,
     `powershell.exe`, and Invoke-AiDispatchLoop.ps1 in the repo root.
@@ -52,10 +56,23 @@ param(
     [int]$MaxPlanRevisions = 1,
 
     [ValidateRange(0, 5)]
-    [int]$MaxCorrectionRounds = 2
+    [int]$MaxCorrectionRounds = 2,
+
+    [switch]$TraceTiming
 )
 
 $ErrorActionPreference = 'Stop'
+
+$script:TraceTimingEnabled = [bool]$TraceTiming -or ($env:RGE_AI_DISPATCH_TRACE_TIMING -match '^(1|true|yes|on)$')
+$script:TraceTimingStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+
+function Write-TimingTrace {
+    param([string]$Message)
+    if ($script:TraceTimingEnabled) {
+        $elapsed = '{0:n3}' -f $script:TraceTimingStopwatch.Elapsed.TotalSeconds
+        Write-Output "[TRACE $(Get-Date -Format 'HH:mm:ss.fff') +${elapsed}s] $Message"
+    }
+}
 
 $script:LockPath = Join-Path $env:TEMP 'rge-ai-dispatch-queue.lock'
 $script:LockHeld = $false
@@ -826,6 +843,7 @@ try {
     Write-Output ""
     Write-Output "Starting dispatch loop for $id. Live loop output follows:"
     Write-Output "----------------------------------------------------------------"
+    Write-TimingTrace "queue.loop: start (dispatch=$id, branch=$branch)"
     $prevEap = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     $global:LASTEXITCODE = 0
@@ -840,6 +858,7 @@ try {
     $loopExit = $LASTEXITCODE
     Write-Output "----------------------------------------------------------------"
     Write-Output "Dispatch loop exited with code $loopExit."
+    Write-TimingTrace "queue.loop: done (exit=$loopExit)"
 
     $loopText = (Get-Content -Raw -LiteralPath $loopLog -ErrorAction SilentlyContinue)
     # Read the Codex control verdict from the structured run-dir JSON the loop
@@ -847,14 +866,19 @@ try {
     $runDir = Join-Path $script:RepoRoot (Join-Path '.ai' "dispatch-$id")
     $verdict = Get-ControlVerdict -RunDir $runDir
     $execStatus = Get-ExecutionStatus -RunDir $runDir -DispatchId $id
+    Write-TimingTrace "queue.control: verdict-read (verdict=$verdict, execStatus=$execStatus)"
 
     # --- Write detailed audit log, then commit the branch ------------------
 
+    Write-TimingTrace "queue.commit: dispatch-log start"
     $dispatchLogPath = Write-DispatchLog -Id $id -Issue $issue -Branch $branch `
         -LoopLog $loopLog -LoopText ([string]$loopText) -LoopExit $loopExit -Verdict $verdict
     Write-Output "Detailed dispatch log written: $(Get-RepoRelativePathForQueue $dispatchLogPath)"
+    Write-TimingTrace "queue.commit: dispatch-log done"
 
+    Write-TimingTrace "queue.commit: git-add start"
     Git-Step @('add', '-A') | Out-Null
+    Write-TimingTrace "queue.commit: git-add done"
     $staged = Invoke-Tool -Exe 'git' -CmdArgs @('diff', '--cached', '--quiet')
     $committed = $false
     $commitSha = ''
@@ -875,22 +899,33 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 "@
         $msgFile = Join-Path $env:TEMP "rge-ai-dispatch-msg-$id.txt"
         Write-Utf8 $msgFile $msg
+        Write-TimingTrace "queue.commit: git-commit start"
         Git-Step @('commit', '-F', $msgFile) | Out-Null
+        Write-TimingTrace "queue.commit: git-commit done"
         Remove-Item -LiteralPath $msgFile -Force -ErrorAction SilentlyContinue
         $commitSha = (Git-Step @('rev-parse', '--short', 'HEAD')).Trim()
         $committed = $true
+        Write-TimingTrace "queue.commit: committed (sha=$commitSha)"
+    } else {
+        Write-TimingTrace "queue.commit: no staged changes"
     }
 
+    Write-TimingTrace "queue.commit: checkout-main start"
     Git-Step @('checkout', 'main') | Out-Null
+    Write-TimingTrace "queue.commit: checkout-main done"
     if (-not $committed) {
+        Write-TimingTrace "queue.commit: delete-empty-branch start"
         Git-Step @('branch', '-D', $branch) | Out-Null
+        Write-TimingTrace "queue.commit: delete-empty-branch done"
     }
 
     # --- Restore the parked untracked clutter ------------------------------
 
     $stashWarning = ''
     if ($stashed) {
+        Write-TimingTrace "queue.stash: restore start"
         $pop = Invoke-Tool -Exe 'git' -CmdArgs @('stash', 'pop')
+        Write-TimingTrace "queue.stash: restore done (exit=$($pop.Code))"
         if ($pop.Code -ne 0) {
             $stashWarning = "WARNING: 'git stash pop' failed; parked untracked files " +
                 "are still stashed. Run 'git stash pop' by hand.`n$($pop.Text)"
@@ -908,8 +943,11 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 
     if ($eligibleForPublish -and -not $NoPublish) {
         Write-Output "Codex control passed; publishing $branch to origin/main."
+        Write-TimingTrace "queue.publish: block-entry; eligibleForPublish=true"
 
+        Write-TimingTrace "queue.publish: git-fetch start"
         $fetch = Invoke-Tool -Exe 'git' -CmdArgs @('fetch', '--quiet', 'origin', '+main:refs/remotes/origin/main')
+        Write-TimingTrace "queue.publish: git-fetch done (exit=$($fetch.Code))"
         if ($fetch.Code -ne 0) {
             $publishFailed = $true
             $publishHardFailed = $true
@@ -922,13 +960,17 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
                 $publishHardFailed = $true
                 $publishDetail = "origin/main moved during dispatch ($($originMainSha.Substring(0,8)) != local main $($preMergeSha.Substring(0,8))); leaving $branch local."
             } else {
+                Write-TimingTrace "queue.publish: ff-merge start (branch=$branch)"
                 $merge = Invoke-Tool -Exe 'git' -CmdArgs @('merge', '--ff-only', $branch)
+                Write-TimingTrace "queue.publish: ff-merge done (exit=$($merge.Code))"
                 if ($merge.Code -ne 0) {
                     $publishFailed = $true
                     $publishHardFailed = $true
                     $publishDetail = "git merge --ff-only $branch failed (exit $($merge.Code)): $($merge.Text)"
                 } else {
+                    Write-TimingTrace "queue.publish: git-push start"
                     $push = Invoke-Tool -Exe 'git' -CmdArgs @('push', 'origin', 'main')
+                    Write-TimingTrace "queue.publish: git-push done (exit=$($push.Code))"
                     if ($push.Code -ne 0) {
                         # Push failed AFTER the local ff-merge: local main is now
                         # ahead of origin. Reset it back so the next tick's
@@ -946,7 +988,9 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
                         $published = $true
                         $publishedSha = (Git-Step @('rev-parse', '--short', 'HEAD')).Trim()
                         $publishDetail = "Published to origin/main as $publishedSha."
+                        Write-TimingTrace "queue.publish: published as $publishedSha; branch-delete start"
                         $delete = Invoke-Tool -Exe 'git' -CmdArgs @('branch', '-d', $branch)
+                        Write-TimingTrace "queue.publish: branch-delete done (exit=$($delete.Code))"
                         if ($delete.Code -ne 0) {
                             $publishDetail += "`nWARNING: published, but could not delete local branch $branch (exit $($delete.Code)): $($delete.Text)"
                         }
@@ -954,13 +998,17 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
                 }
             }
         }
+        Write-TimingTrace "queue.publish: block-exit (published=$published, publishFailed=$publishFailed, publishHardFailed=$publishHardFailed)"
     } elseif ($eligibleForPublish -and $NoPublish) {
         $publishDetail = "NoPublish set; kept $branch local."
+        Write-TimingTrace "queue.publish: skipped (NoPublish=true, eligibleForPublish=true)"
     } elseif ($committed) {
         $publishFailed = $true
         $publishDetail = "Not published because loop exit code was $loopExit and Codex control verdict was '$verdict'."
+        Write-TimingTrace "queue.publish: skipped (eligibleForPublish=false, loopExit=$loopExit, verdict=$verdict)"
     } else {
         $publishDetail = "No branch commit was created."
+        Write-TimingTrace "queue.publish: skipped (committed=false)"
     }
 
     # --- Post the result comment and finalize labels -----------------------
@@ -1043,8 +1091,10 @@ $footerLine
 "@
     $commentFile = Join-Path $env:TEMP "rge-ai-dispatch-comment-$id.txt"
     Write-Utf8 $commentFile $commentBody
+    Write-TimingTrace "queue.github: comment start"
     $comment = Invoke-Tool -Exe 'gh' -CmdArgs @(
         'issue', 'comment', "$($issue.number)", '--repo', $repoSlug, '--body-file', $commentFile)
+    Write-TimingTrace "queue.github: comment done (exit=$($comment.Code))"
     Remove-Item -LiteralPath $commentFile -Force -ErrorAction SilentlyContinue
     if ($comment.Code -ne 0) {
         Write-Output "WARNING: could not post result comment (exit $($comment.Code)): $($comment.Text)"
@@ -1061,7 +1111,9 @@ $footerLine
         if ($isRetry) { $relabel += @('--remove-label', $retryLabel) }
         if ($runFailed) { $relabel += @('--add-label', $failLabel) }
     }
+    Write-TimingTrace "queue.github: relabel start"
     $rl = Invoke-Tool -Exe 'gh' -CmdArgs $relabel
+    Write-TimingTrace "queue.github: relabel done (exit=$($rl.Code))"
     # Verify the label mutation actually took. A partial gh edit (e.g. removed
     # running but did not add retry) would otherwise loop forever or never halt.
     $labelOk = $false
@@ -1097,6 +1149,7 @@ $footerLine
         $close = Invoke-Tool -Exe 'gh' -CmdArgs @(
             'issue', 'close', "$($issue.number)", '--repo', $repoSlug,
             '--comment', $closeComment)
+        Write-TimingTrace "queue.github: close done (exit=$($close.Code))"
         if ($close.Code -ne 0) {
             Write-Output "WARNING: could not close issue #$($issue.number) (exit $($close.Code)): $($close.Text)"
         }
