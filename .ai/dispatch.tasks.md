@@ -5606,7 +5606,14 @@ is the only safeguard against selector drift.
    - No file outside the allowed surface changes, except this dispatch's own
      handoff/log artifacts.
 
-48. **Add Codex stall watchdog to `Invoke-WithTimeout`.**
+48. **[DONE 2026-05-25 via PR #183 / commit `5fe0321`] Add Codex stall watchdog to `Invoke-WithTimeout`.**
+   Landed via PR #183. `Invoke-WithTimeout` now has an opt-in stall watchdog
+   used only by `Invoke-CodexPrompt`: it arms after first non-zero log output,
+   treats `OutFile.Length` growth as progress, returns
+   `Stalled=$true`/`TimedOut=$true`/`Code=125` on stall, and preserves the
+   original hard-timeout control flow when `StallThresholdSec` is zero. The
+   original brief is preserved below.
+
    `Invoke-AiDispatchLoop.ps1` currently caps Codex CLI calls with only the
    wall-clock `-ModelTimeoutSec` timeout. ISSUE-180 attempt 1 showed a more
    specific failure mode: Codex stayed alive while the log stopped growing,
