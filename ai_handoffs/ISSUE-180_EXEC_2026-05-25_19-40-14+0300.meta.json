@@ -1,0 +1,16 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-180",
+    "packet_type": "EXEC",
+    "author": "Executor / Claude",
+    "timestamp": "2026-05-25_19-40-14+0300",
+    "related_files": [
+                          "Invoke-AiDispatchQueue.ps1 — extended `Get-QueueStatusEntries` status alphabet to include `T` (type-change) and converted the silent porcelain-shape-but-unknown-code branch to fail closed before staging",
+                          "ai_handoffs/ISSUE-180_CORRECT_2026-05-25_19-33-41+0300.md — correction packet driving this round",
+                          "ai_handoffs/ISSUE-180_EXEC_2026-05-25_19-40-14+0300.md — this execution report"
+                      ],
+    "status": "AWAITING_REVIEW",
+    "handoff_status": "COMPLETE",
+    "next_role": "REVIEWER_AI",
+    "exit_code": 0
+}

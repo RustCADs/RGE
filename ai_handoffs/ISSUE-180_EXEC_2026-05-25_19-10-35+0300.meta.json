@@ -1,0 +1,16 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-180",
+    "packet_type": "EXEC",
+    "author": "Executor / Claude",
+    "timestamp": "2026-05-25_19-10-35+0300",
+    "related_files": [
+                          "Invoke-AiDispatchQueue.ps1 — added queue scope guard plus helpers; wired guard between Write-DispatchLog and `git add -A`",
+                          "ai_handoffs/ISSUE-180_TASK_2026-05-25_18-55-31+0300.md — task packet driving this run",
+                          "ai_handoffs/ISSUE-180_EXEC_2026-05-25_19-10-35+0300.md — this execution report"
+                      ],
+    "status": "AWAITING_REVIEW",
+    "handoff_status": "COMPLETE",
+    "next_role": "REVIEWER_AI",
+    "exit_code": 0
+}
