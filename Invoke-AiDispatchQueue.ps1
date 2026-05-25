@@ -299,6 +299,306 @@ function Get-RepoRelativePathForQueue {
     return ($full -replace '\\', '/')
 }
 
+# --- Queue scope guard helpers --------------------------------------------
+# Validate that, after Write-DispatchLog returns and before `git add -A`, the
+# only changed or untracked paths in the worktree are this dispatch's own
+# allowed artifacts plus the positive surface declared in the active TASK
+# packet's `### MAY edit` / `### MAY add new files` sections. This blocks the
+# queue from accidentally staging stray work outside the dispatch's scope.
+
+function Convert-ToRepoRelativePath {
+    # Normalize an already-relative path string to repo-relative,
+    # forward-slash form so it lines up with `git status` output on Windows.
+    param([string]$Path)
+    if (-not $Path) { return '' }
+    $p = ($Path -replace '\\', '/').Trim()
+    if ($p.Length -ge 2 -and $p.StartsWith('"') -and $p.EndsWith('"')) {
+        $p = $p.Substring(1, $p.Length - 2)
+    }
+    while ($p.StartsWith('./')) { $p = $p.Substring(2) }
+    return $p.TrimStart('/')
+}
+
+function Convert-GlobToRegexForQueueGuard {
+    # Glob to anchored regex: `**` -> `.*`, `*` -> `[^/]*`, `?` -> `[^/]`.
+    # `*` stays segment-bounded so a TASK token like `foo/*.md` cannot
+    # accidentally cover `foo/sub/x.md`.
+    param([string]$Glob)
+    $sb = [System.Text.StringBuilder]::new()
+    [void]$sb.Append('^')
+    $i = 0
+    while ($i -lt $Glob.Length) {
+        $c = $Glob[$i]
+        if ($c -eq '*') {
+            if ($i + 1 -lt $Glob.Length -and $Glob[$i + 1] -eq '*') {
+                [void]$sb.Append('.*')
+                $i += 2
+            } else {
+                [void]$sb.Append('[^/]*')
+                $i++
+            }
+        } elseif ($c -eq '?') {
+            [void]$sb.Append('[^/]')
+            $i++
+        } else {
+            [void]$sb.Append([regex]::Escape([string]$c))
+            $i++
+        }
+    }
+    [void]$sb.Append('$')
+    return $sb.ToString()
+}
+
+function Test-TaskTokenMatchesPath {
+    # Match a repo-relative path against one positive TASK token. Glob tokens
+    # go through Convert-GlobToRegexForQueueGuard. Non-glob tokens match
+    # exactly OR as a path-boundary directory prefix, so `some/dir` allows
+    # `some/dir/file.txt` without leaking to `some/dir2/file.txt`.
+    param([string]$Path, [string]$Token)
+    if (-not $Token) { return $false }
+    if ($Token -match '[*?]') {
+        return [regex]::IsMatch($Path, (Convert-GlobToRegexForQueueGuard -Glob $Token))
+    }
+    $tok = $Token.TrimEnd('/')
+    if (-not $tok) { return $false }
+    if ($Path -eq $tok) { return $true }
+    return $Path.StartsWith($tok + '/')
+}
+
+function Test-LooksLikePathToken {
+    # Decide whether a backtick-quoted token in a MAY section is a path
+    # candidate. Bare identifiers like `Write-DispatchLog` or `git add` are
+    # not paths and must not enter the allowlist.
+    param([string]$Token)
+    if (-not $Token) { return $false }
+    if ($Token -match '\s') { return $false }
+    if ($Token.Contains('/')) { return $true }
+    if ($Token.Contains('*')) { return $true }
+    if ($Token -match '\.[A-Za-z0-9]{1,8}$') { return $true }
+    return $false
+}
+
+function Get-ActiveTaskPacketPathForQueueGuard {
+    # Return the newest TASK packet for this dispatch under ai_handoffs/, or
+    # $null. Sorting by Name picks the lexicographically latest timestamp,
+    # which is also the latest in time given new-handoff.ps1's filename shape.
+    param([string]$DispatchId)
+    $handoffDir = Join-Path $script:RepoRoot 'ai_handoffs'
+    if (-not (Test-Path -LiteralPath $handoffDir)) { return $null }
+    $packet = Get-ChildItem -LiteralPath $handoffDir -File -Filter "${DispatchId}_TASK_*.md" -ErrorAction SilentlyContinue |
+        Sort-Object Name |
+        Select-Object -Last 1
+    if ($packet) { return $packet.FullName }
+    return $null
+}
+
+function Get-TaskPositiveAllowedTokens {
+    # Parse only the active TASK packet's `### MAY edit` and
+    # `### MAY add new files` sections. Extract backtick-quoted path tokens,
+    # quarantine anything under `ai_handoffs/` or `ai_dispatch_logs/` (those
+    # trees are governed exclusively by the hard-coded artifact rules and the
+    # exact just-written queue log), and skip fenced code blocks so a `#`
+    # inside a code sample is not misread as a section heading.
+    param([string]$TaskPath)
+    if (-not (Test-Path -LiteralPath $TaskPath)) { return @() }
+    $content = Get-Content -Raw -LiteralPath $TaskPath
+    if (-not $content) { return @() }
+    $lines = @($content -split "`r?`n")
+    $tokens = @()
+    $inAllowedSection = $false
+    $inFence = $false
+    foreach ($line in $lines) {
+        if ($line -match '^[ \t]*(```|~~~)') {
+            $inFence = -not $inFence
+            continue
+        }
+        if ($inFence) { continue }
+        if ($line -match '^#{1,6}\s') {
+            $inAllowedSection = ($line -match '^###\s+MAY\s+(edit|add\s+new\s+files)\s*$')
+            continue
+        }
+        if (-not $inAllowedSection) { continue }
+        foreach ($m in [regex]::Matches($line, '`([^`]+)`')) {
+            $raw = $m.Groups[1].Value.Trim()
+            if (-not (Test-LooksLikePathToken $raw)) { continue }
+            $norm = Convert-ToRepoRelativePath $raw
+            if (-not $norm) { continue }
+            if ($norm -match '^(ai_handoffs|ai_dispatch_logs)(/|$)') { continue }
+            $tokens += $norm
+        }
+    }
+    return @($tokens | Select-Object -Unique)
+}
+
+function Test-ActiveDispatchArtifactPath {
+    # Allow only one-segment basenames directly under ai_handoffs/. A broad
+    # -like 'ai_handoffs/ISSUE-180_EXEC_*.md' would wrongly cover nested
+    # paths like ai_handoffs/ISSUE-180_EXEC_x/nested.md, because `*` there
+    # matches `/`. The explicit `^ai_handoffs/([^/]+)$` shape rules that out.
+    # The basename must additionally carry the `new-handoff.ps1` timestamp
+    # shape `yyyy-MM-dd_HH-mm-ss<+|->HHMM`, so arbitrary suffixes like
+    # `ISSUE-180_EXEC_x.md` or `ISSUE-180_EXEC_x.meta.json` are rejected.
+    param([string]$Path, [string]$DispatchId)
+    if ($Path -notmatch '^ai_handoffs/([^/]+)$') { return $false }
+    $base = $Matches[1]
+    $idEsc = [regex]::Escape($DispatchId)
+    $tsPat = '\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}[+-]\d{4}'
+    return ($base -match "^${idEsc}_(TASK|EXEC|CORRECT)_${tsPat}\.(md|meta\.json)$")
+}
+
+function Test-ExactQueueLogPath {
+    # Allow exactly the dispatch log path Write-DispatchLog just returned,
+    # and only when it lives directly under ai_dispatch_logs/ as log_*.md.
+    # A TASK token like `ai_dispatch_logs/log_*.md` is quarantined elsewhere
+    # so it cannot broaden this single-path allowance.
+    param([string]$Path, [string]$LogPath)
+    if (-not $LogPath) { return $false }
+    $logRel = Convert-ToRepoRelativePath (Get-RepoRelativePathForQueue $LogPath)
+    if (-not $logRel) { return $false }
+    if ($logRel -notmatch '^ai_dispatch_logs/log_[^/]+\.md$') { return $false }
+    return ($Path -eq $logRel)
+}
+
+function Get-QueueStatusEntries {
+    # Parse `git status --short --untracked-files=all` into entries. Capture
+    # stdout and stderr separately so git stderr noise (e.g., permission
+    # warnings for $HOME/.config/git/ignore) is never fed into path
+    # validation. Each surviving stdout line must additionally match the
+    # porcelain short-status shape (`XY <path>` with X, Y from the documented
+    # status-code alphabet ' MADRCUT?!') as defense in depth. core.quotepath=false
+    # keeps non-ASCII bytes raw rather than octal-escaped so the path strings
+    # compare directly with TASK tokens. Rename and copy entries carry both
+    # an old and a new repo-relative path; every other status carries one
+    # path. A non-zero git exit still fails closed. A stdout line with
+    # porcelain short-status shape (space at column 3) but an unrecognized
+    # status code in columns 1-2 is also failed closed so future real status
+    # codes cannot be silently dropped before broad staging.
+    $tmpOut = [System.IO.Path]::GetTempFileName()
+    $tmpErr = [System.IO.Path]::GetTempFileName()
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    $global:LASTEXITCODE = 0
+    $exitCode = 0
+    $stdoutText = ''
+    $stderrText = ''
+    try {
+        # PS 5.1 note: keep stderr in its own file (no `2>&1` merge) so a
+        # warning line on stderr never looks like a porcelain record. EAP is
+        # Continue here so native stderr writes do not raise a terminating
+        # error before the exit code is read.
+        & 'git' '-c' 'core.quotepath=false' 'status' '--short' '--untracked-files=all' 1> $tmpOut 2> $tmpErr
+        $exitCode = $LASTEXITCODE
+        $stdoutText = Get-Content -Raw -LiteralPath $tmpOut -ErrorAction SilentlyContinue
+        $stderrText = Get-Content -Raw -LiteralPath $tmpErr -ErrorAction SilentlyContinue
+        if ($null -eq $stdoutText) { $stdoutText = '' }
+        if ($null -eq $stderrText) { $stderrText = '' }
+    } finally {
+        $ErrorActionPreference = $prevEap
+        Remove-Item -LiteralPath $tmpOut -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $tmpErr -Force -ErrorAction SilentlyContinue
+    }
+    if ($exitCode -ne 0) {
+        $msg = "Queue scope guard: 'git status --short --untracked-files=all' failed (exit $exitCode)"
+        if ($stderrText) { $msg += ":`n$stderrText" }
+        Fail $msg
+    }
+    $entries = @()
+    foreach ($line in @($stdoutText -split "`r?`n")) {
+        if (-not $line -or $line.Length -lt 4) { continue }
+        # Strict porcelain short-status shape: two status-code chars from the
+        # documented set (' ', 'M', 'A', 'D', 'R', 'C', 'U', 'T', '?', '!')
+        # and a space at column 3. 'T' covers a regular-file -> symlink (or
+        # equivalent) type change which git status reports just like a
+        # modification but which would otherwise be dropped from guard
+        # validation before `git add -A`.
+        if ($line.Substring(2, 1) -ne ' ') {
+            # Not porcelain shape (no separator at column 3). Skip - this is
+            # not a status record. Stderr is captured separately, so warning
+            # text reaching here would be malformed in some other way; the
+            # length-4 guard above also weeds out very short noise.
+            continue
+        }
+        $statusCode = $line.Substring(0, 2)
+        if ($statusCode -notmatch '^[ MADRCUT?!][ MADRCUT?!]$') {
+            # Porcelain-shaped but with an unknown status code. Fail closed
+            # so a status alphabet expansion in a future git release cannot
+            # bypass the scope guard and have its path silently staged by
+            # the broad `git add -A` that follows.
+            Fail ("Queue scope guard: 'git status --short --untracked-files=all' returned " +
+                "a porcelain-shaped record with an unrecognized status code: '$line'. " +
+                "Refusing to stage or commit until the status alphabet is updated.")
+        }
+        $rest = $line.Substring(3)
+        $hasRenameOrCopy = ($statusCode.IndexOf('R') -ge 0 -or $statusCode.IndexOf('C') -ge 0)
+        if ($hasRenameOrCopy -and $rest -match '^(.+?)\s+->\s+(.+)$') {
+            $oldPath = Convert-ToRepoRelativePath $Matches[1]
+            $newPath = Convert-ToRepoRelativePath $Matches[2]
+            $entries += [pscustomobject]@{ Code = $statusCode; Paths = @($oldPath, $newPath) }
+        } else {
+            $entries += [pscustomobject]@{ Code = $statusCode; Paths = @((Convert-ToRepoRelativePath $rest)) }
+        }
+    }
+    return ,$entries
+}
+
+function Invoke-QueueScopeGuard {
+    # Block the queue from staging or publishing anything outside the active
+    # dispatch's allowed surface. Allowed surfaces:
+    #   * Active-dispatch TASK / EXEC / CORRECT packets and matching
+    #     .meta.json sidecars, single basename directly under ai_handoffs/.
+    #   * The exact queue log path that Write-DispatchLog just returned.
+    #   * Positive path tokens parsed from the active TASK packet's
+    #     `### MAY edit` and `### MAY add new files` sections.
+    # Fails closed if the active TASK packet cannot be located or yields no
+    # positive tokens. Renames and copies require BOTH paths to be allowed.
+    param([string]$DispatchId, [string]$DispatchLogPath)
+
+    $taskPath = Get-ActiveTaskPacketPathForQueueGuard -DispatchId $DispatchId
+    if (-not $taskPath) {
+        Fail ("Queue scope guard: no active TASK packet for $DispatchId found under " +
+            "ai_handoffs/; refusing to stage or commit.")
+    }
+
+    $tokens = Get-TaskPositiveAllowedTokens -TaskPath $taskPath
+    if ($tokens.Count -eq 0) {
+        Fail ("Queue scope guard: active TASK packet '$(Get-RepoRelativePathForQueue $taskPath)' " +
+            "declares no positive allowed-path tokens (no path-like tokens in " +
+            "'### MAY edit' or '### MAY add new files'); failing closed before staging.")
+    }
+
+    $entries = Get-QueueStatusEntries
+    $disallowed = @()
+    foreach ($entry in $entries) {
+        foreach ($p in $entry.Paths) {
+            if (-not $p) { continue }
+            $allowed = $false
+            if (Test-ActiveDispatchArtifactPath -Path $p -DispatchId $DispatchId) {
+                $allowed = $true
+            } elseif (Test-ExactQueueLogPath -Path $p -LogPath $DispatchLogPath) {
+                $allowed = $true
+            } else {
+                foreach ($t in $tokens) {
+                    if (Test-TaskTokenMatchesPath -Path $p -Token $t) {
+                        $allowed = $true
+                        break
+                    }
+                }
+            }
+            if (-not $allowed) {
+                $disallowed += "  [$($entry.Code)] $p"
+            }
+        }
+    }
+    if ($disallowed.Count -gt 0) {
+        Fail ("Queue scope guard: $($disallowed.Count) changed or untracked path(s) " +
+            "fall outside the active TASK packet's positive allowed surface for " +
+            "$DispatchId. Refusing to stage, commit, merge, push, or publish.`n" +
+            "Disallowed paths:`n" + ($disallowed -join "`n") +
+            "`nActive TASK packet: $(Get-RepoRelativePathForQueue $taskPath)" +
+            "`nDispatch log path: $(Get-RepoRelativePathForQueue $DispatchLogPath)")
+    }
+}
+
 function Get-NewestRoundFile {
     # Pick the highest-numbered round file (codex.control.round<N>.json,
     # verification.round<N>.log, ...) by parsing the round number rather than
@@ -875,6 +1175,14 @@ try {
         -LoopLog $loopLog -LoopText ([string]$loopText) -LoopExit $loopExit -Verdict $verdict
     Write-Output "Detailed dispatch log written: $(Get-RepoRelativePathForQueue $dispatchLogPath)"
     Write-TimingTrace "queue.commit: dispatch-log done"
+
+    # Scope guard: validate the worktree against the active TASK packet
+    # BEFORE any broad staging, commit, checkout-to-main, merge, push, or
+    # publish step. Stray work outside the dispatch's declared surface aborts
+    # the run here -- nothing is staged, committed, or published.
+    Write-TimingTrace "queue.guard: scope-check start"
+    Invoke-QueueScopeGuard -DispatchId $id -DispatchLogPath $dispatchLogPath
+    Write-TimingTrace "queue.guard: scope-check done"
 
     Write-TimingTrace "queue.commit: git-add start"
     Git-Step @('add', '-A') | Out-Null
