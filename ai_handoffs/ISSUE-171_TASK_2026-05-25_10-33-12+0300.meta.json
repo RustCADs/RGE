@@ -1,0 +1,28 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-171",
+    "packet_type": "TASK",
+    "author": "Planner / OpenAI Codex",
+    "timestamp": "2026-05-25_10-33-12+0300",
+    "related_files": [
+                          "Cargo.toml",
+                          "Cargo.lock",
+                          "crates/rge-scene-loader/Cargo.toml",
+                          "crates/rge-scene-loader/src/**/*.rs",
+                          "crates/rge-scene-loader/tests/**/*.rs",
+                          "crates/rge-data/src/scene.rs",
+                          "crates/rge-data/src/entity_ref.rs",
+                          "crates/components-spatial/src/transform.rs",
+                          "crates/components-render/src/camera.rs",
+                          "crates/components-render/src/light.rs",
+                          "crates/components-visibility/src/visibility.rs",
+                          "golden-projects/simple-scene/.rge-project",
+                          "golden-projects/simple-scene/scenes/main.rge-scene",
+                          ".ai/dispatch.verify.ps1",
+                          "GitHub issue #171"
+                      ],
+    "status": "OPEN",
+    "handoff_status": "COMPLETE",
+    "next_role": "EXECUTOR_AI",
+    "exit_code": 0
+}

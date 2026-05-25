@@ -1,0 +1,22 @@
+[package]
+name        = "rge-scene-loader"
+description = "Bridge: load an rge-data Scene into an rge-kernel-ecs World"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+authors.workspace      = true
+publish                = false
+
+[dependencies]
+rge-data                  = { path = "../rge-data" }
+rge-kernel-ecs            = { workspace = true }
+rge-components-spatial    = { path = "../components-spatial" }
+rge-components-render     = { path = "../components-render" }
+rge-components-visibility = { path = "../components-visibility" }
+ron                       = { workspace = true }
+thiserror                 = { workspace = true }
+
+[lints]
+workspace = true

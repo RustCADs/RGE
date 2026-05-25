@@ -4860,6 +4860,19 @@ name = "rge-runtime-web"
 version = "0.0.1"
 
 [[package]]
+name = "rge-scene-loader"
+version = "0.0.1"
+dependencies = [
+ "rge-components-render",
+ "rge-components-spatial",
+ "rge-components-visibility",
+ "rge-data",
+ "rge-kernel-ecs",
+ "ron",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "rge-script-aot"
 version = "0.0.1"
 

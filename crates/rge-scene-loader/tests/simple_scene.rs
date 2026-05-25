@@ -1,0 +1,91 @@
+//! Golden simple-scene loader tests.
+//!
+//! Loads the tracked `golden-projects/simple-scene/scenes/main.rge-scene`
+//! fixture into a [`World`] via [`load_scene_into_world`] and asserts that
+//! the two pinned entities (`Camera`, `KeyLight`) come back with the typed
+//! components the scene file declares.
+
+use std::path::PathBuf;
+use std::str::FromStr;
+
+use rge_components_render::{Camera, Light};
+use rge_components_spatial::Transform;
+use rge_components_visibility::Visibility;
+use rge_data::{EntityId as SceneEntityId, Scene};
+use rge_kernel_ecs::EntityId;
+use rge_scene_loader::load_scene_into_world;
+
+/// Canonical ULID for the `Camera` entity in the golden simple-scene fixture.
+const CAMERA_ULID: &str = "0000000000000G000000000000";
+/// Canonical ULID for the `KeyLight` entity in the golden simple-scene fixture.
+const KEYLIGHT_ULID: &str = "00000000000010000000000000";
+
+/// Read the tracked golden fixture from disk. Read-only — never modifies
+/// anything under `golden-projects/`.
+fn load_golden_scene() -> Scene {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let scene_path = manifest_dir
+        .parent()
+        .and_then(|crates_dir| crates_dir.parent())
+        .expect("workspace root")
+        .join("golden-projects/simple-scene/scenes/main.rge-scene");
+    let raw = std::fs::read_to_string(&scene_path)
+        .unwrap_or_else(|e| panic!("read {}: {e}", scene_path.display()));
+    ron::from_str(&raw).unwrap_or_else(|e| panic!("parse {}: {e}", scene_path.display()))
+}
+
+fn scene_entity_to_ecs(id_str: &str) -> EntityId {
+    let scene_id = SceneEntityId::from_str(id_str).expect("canonical golden ULID must parse");
+    EntityId::from_ulid(*scene_id.as_ulid())
+}
+
+#[test]
+fn golden_camera_has_transform_camera_and_visible() {
+    let scene = load_golden_scene();
+    let world = load_scene_into_world(&scene).expect("load golden scene");
+
+    let camera_id = scene_entity_to_ecs(CAMERA_ULID);
+    let camera_entity = world
+        .entity(camera_id)
+        .expect("camera entity preserved via spawn_with_id + from_ulid");
+
+    assert!(
+        camera_entity.get::<Transform>().is_some(),
+        "camera must carry Transform"
+    );
+    assert!(
+        camera_entity.get::<Camera>().is_some(),
+        "camera must carry Camera"
+    );
+    let vis = camera_entity
+        .get::<Visibility>()
+        .expect("camera must carry Visibility");
+    assert_eq!(*vis, Visibility::Visible);
+}
+
+#[test]
+fn golden_keylight_has_transform_and_light() {
+    let scene = load_golden_scene();
+    let world = load_scene_into_world(&scene).expect("load golden scene");
+
+    let light_id = scene_entity_to_ecs(KEYLIGHT_ULID);
+    let light_entity = world
+        .entity(light_id)
+        .expect("key light entity preserved via spawn_with_id + from_ulid");
+
+    assert!(
+        light_entity.get::<Transform>().is_some(),
+        "key light must carry Transform"
+    );
+    assert!(
+        light_entity.get::<Light>().is_some(),
+        "key light must carry Light"
+    );
+}
+
+#[test]
+fn golden_scene_loads_two_entities_total() {
+    let scene = load_golden_scene();
+    let world = load_scene_into_world(&scene).expect("load golden scene");
+    assert_eq!(world.entity_count(), 2);
+}
