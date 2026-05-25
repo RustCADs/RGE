@@ -11,7 +11,7 @@ use std::str::FromStr;
 use rge_components_render::{Camera, Light};
 use rge_components_spatial::Transform;
 use rge_components_visibility::Visibility;
-use rge_data::{EntityId as SceneEntityId, Scene};
+use rge_data::{EntityId as SceneEntityId, Project, Scene};
 use rge_kernel_ecs::EntityId;
 use rge_scene_loader::load_scene_into_world;
 
@@ -20,15 +20,30 @@ const CAMERA_ULID: &str = "0000000000000G000000000000";
 /// Canonical ULID for the `KeyLight` entity in the golden simple-scene fixture.
 const KEYLIGHT_ULID: &str = "00000000000010000000000000";
 
-/// Read the tracked golden fixture from disk. Read-only — never modifies
-/// anything under `golden-projects/`.
+/// Read the tracked golden project manifest, resolve its first scene reference,
+/// and parse that scene from disk. Read-only — never modifies anything under
+/// `golden-projects/`.
 fn load_golden_scene() -> Scene {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let scene_path = manifest_dir
+    let project_path = manifest_dir
         .parent()
         .and_then(|crates_dir| crates_dir.parent())
         .expect("workspace root")
-        .join("golden-projects/simple-scene/scenes/main.rge-scene");
+        .join("golden-projects/simple-scene/.rge-project");
+
+    let project_raw = std::fs::read_to_string(&project_path)
+        .unwrap_or_else(|e| panic!("read {}: {e}", project_path.display()));
+    let project: Project = ron::from_str(&project_raw)
+        .unwrap_or_else(|e| panic!("parse {}: {e}", project_path.display()));
+
+    let project_dir = project_path
+        .parent()
+        .expect("golden project manifest path has a parent directory");
+    let scene_rel = project
+        .scenes
+        .first()
+        .expect("golden simple-scene project references a scene");
+    let scene_path = project_dir.join(scene_rel.as_str());
     let raw = std::fs::read_to_string(&scene_path)
         .unwrap_or_else(|e| panic!("read {}: {e}", scene_path.display()));
     ron::from_str(&raw).unwrap_or_else(|e| panic!("parse {}: {e}", scene_path.display()))
@@ -87,5 +102,6 @@ fn golden_keylight_has_transform_and_light() {
 fn golden_scene_loads_two_entities_total() {
     let scene = load_golden_scene();
     let world = load_scene_into_world(&scene).expect("load golden scene");
-    assert_eq!(world.entity_count(), 2);
+    assert_eq!(world.entity_count(), scene.entities.len());
+    assert_eq!(scene.entities.len(), 2);
 }
