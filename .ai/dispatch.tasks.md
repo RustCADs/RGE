@@ -5231,7 +5231,12 @@ is the only safeguard against selector drift.
    - No file outside the allowed surface changes, except this dispatch's
      own handoff/log artifacts.
 
-44. **Add `rge-scene-loader` golden simple-scene load+tick regression.**
+44. **[DONE 2026-05-25 via PR #174 / commit `39f33ee`] Add `rge-scene-loader` golden simple-scene load+tick regression.**
+   Landed via PR #174. The loader crate now owns a golden simple-scene
+   load+tick regression that preserves the existing `rge-data`
+   identity-only test boundary and avoids a dev-dependency cycle. The
+   original brief is preserved below.
+
    The original `crates/rge-data` load+tick regression remains
    identity-only by design, and `rge-data` must not gain a dev-dependency
    cycle back to `rge-scene-loader`. Now that task #43 landed the loader
@@ -5311,3 +5316,81 @@ is the only safeguard against selector drift.
    - `.ai/dispatch.verify.ps1` exits 0.
    - No file outside the allowed surface changes, except this dispatch's
      own handoff/log artifacts.
+
+45. **Read-only preflight: first `rge-scene-loader` runtime/editor consumer.**
+   `rge-scene-loader` now has typed import coverage and a loader-owned
+   load+tick regression. Before wiring it into an app/runtime/editor path,
+   audit the current project/scene loading surfaces and dependency graph so
+   the first consumer is chosen deliberately. This is an audit-only task;
+   do not implement a consumer.
+
+   **Runtime invocation note**: this task is a deliberate named +1 on top
+   of the cap-122 posture used by task #44. Run as
+   `.\Invoke-AiDispatchAuto.ps1 -PublishMode branch -MaxAutonomousTasks 123`
+   so the cap accommodates exactly this one dispatch. The scheduler
+   remains disabled and must not be re-enabled by this task.
+
+   **Allowed file surface**:
+   - READ only. Inspect `crates/rge-scene-loader/**`, `crates/rge-data/**`,
+     `runtime/**`, `editor/**`, `crates/editor-*`, `crates/asset-*`,
+     `crates/io-*`, `kernel/app`, `kernel/asset*`, and any existing tests
+     or docs needed to identify current scene/project load surfaces.
+   - MAY add this dispatch's own `ai_handoffs/ISSUE-*_TASK_*.md`,
+     `ai_handoffs/ISSUE-*_EXEC_*.md`, and `.meta.json` sidecars if produced
+     by the orchestrator, plus the queue-runner's own
+     `ai_dispatch_logs/log_*.md`.
+
+   **Files that MUST NOT be touched**:
+   - No production source, tests, fixtures, manifests, Cargo.lock, docs,
+     scripts, workflows, schemas, or status files.
+   - No `CORRECT` packet should be needed because there is no code change.
+   - Any GitHub label or issue metadata except the queue runner's normal
+     issue lifecycle for this dispatch.
+
+   **Audit questions required**:
+   - Q1: What current code path(s), if any, parse `rge_data::Project` or
+     `rge_data::Scene` outside tests? Include file/line references.
+   - Q2: Which runtime/editor/application crate is the smallest valid first
+     consumer of `rge-scene-loader` under the current dependency rules?
+     Explicitly rule out invalid directions, including any path that would
+     make `rge-data` depend on `rge-scene-loader`.
+   - Q3: Is there already an app/runtime/editor API surface where a loaded
+     `World` can be produced or handed off without introducing a new global
+     service or registry? Include file/line references.
+   - Q4: What exact implementation dispatch should come next if Q1-Q3 are
+     already justified by current code? It must name one smallest source
+     change, allowed files, and tests.
+   - Q5: If any of Q1-Q3 is missing or ambiguous, return `NEEDS_HUMAN` and
+     identify the specific owner/dependency/API decision required. Do not
+     invent a consumer architecture.
+
+   **Halt conditions**:
+   - If the executor cannot answer Q1-Q3 from current code with line-cited
+     evidence, the packet must end `NEEDS_HUMAN`.
+   - If more than one plausible first consumer remains after current-code
+     evidence, the packet must end `NEEDS_HUMAN` and list the options.
+   - If answering requires modifying code or running a speculative prototype,
+     halt; this is read-only.
+
+   **Verbatim review-gate strings** - the autonomous selector MUST copy
+   these eight strings, character-for-character, into the filed GitHub
+   issue body. No paraphrasing, no substitution, no reflowing. A packet
+   that lacks any one of them verbatim is bounced at review:
+
+   ```
+   MUST be read-only except for this dispatch's own ai_handoffs and ai_dispatch_logs artifacts
+   MUST answer Q1 with file/line evidence for every current non-test rge_data::Project or rge_data::Scene parse/load surface found
+   MUST answer Q2 by naming the smallest valid first consumer crate for rge-scene-loader or returning NEEDS_HUMAN if current code does not justify exactly one
+   MUST explicitly rule out any dependency direction that makes rge-data depend on rge-scene-loader
+   MUST answer Q3 with file/line evidence for any current app/runtime/editor API that can receive or produce a loaded World without a new global registry
+   MUST name exactly one smallest implementation dispatch in Q4 only if Q1, Q2, and Q3 are all justified from current code
+   MUST return NEEDS_HUMAN in Q5 if the first consumer, dependency direction, or World handoff API is ambiguous
+   MUST NOT modify source, tests, fixtures, manifests, Cargo.lock, docs, scripts, workflows, schemas, status files, or existing handoff/log artifacts
+   ```
+
+   **Done-criterion**:
+   - EXEC packet answers Q1-Q5 with line-cited evidence.
+   - Either Q4 names one bounded implementation dispatch, or Q5 returns
+     `NEEDS_HUMAN` with the exact arbiter decision needed.
+   - No tracked file changes outside this dispatch's own handoff/log
+     artifacts.
