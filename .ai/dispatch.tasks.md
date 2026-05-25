@@ -5400,3 +5400,104 @@ is the only safeguard against selector drift.
      `NEEDS_HUMAN` with the exact arbiter decision needed.
    - No tracked file changes outside this dispatch's own handoff/log
      artifacts.
+
+46. **Wire `runtime-headless` as the first `rge-scene-loader` consumer.**
+   Task #45 / ISSUE-175 selected `runtime/runtime-headless` as the smallest
+   justified first non-test consumer for `rge-scene-loader`. Implement that
+   bounded follow-up only: parse a project manifest, resolve the first scene,
+   load it through the existing scene loader, advance one tick, and report the
+   resulting world count/tick.
+
+   **Runtime invocation note**: this task is a deliberate named +1 after the
+   recovered task #45. Current `ai-auto` count is 122 after #175 salvage label
+   cleanup. Run as
+   `.\Invoke-AiDispatchAuto.ps1 -PublishMode branch -MaxAutonomousTasks 123`
+   so the cap accommodates exactly this one dispatch. The scheduler remains
+   disabled and must not be re-enabled by this task.
+
+   **Allowed file surface**:
+   - EDIT `runtime/runtime-headless/Cargo.toml`.
+   - EDIT `runtime/runtime-headless/src/main.rs`.
+   - MAY add exactly one integration test under
+     `runtime/runtime-headless/tests/**`.
+   - MAY edit `Cargo.lock` only for the mechanical dependency-list update
+     caused by adding deps to `rge-runtime-headless`; no unrelated lockfile
+     churn.
+   - MAY add this dispatch's own `ai_handoffs/ISSUE-*_TASK_*.md`,
+     `ai_handoffs/ISSUE-*_EXEC_*.md`, `ai_handoffs/ISSUE-*_CORRECT_*.md`
+     packets plus `.meta.json` sidecars if produced by the orchestrator,
+     and the queue-runner's own `ai_dispatch_logs/log_*.md`.
+
+   **Files that MUST NOT be touched**:
+   - No changes under `crates/rge-scene-loader/**`, `crates/rge-data/**`,
+     `kernel/**`, `crates/components-*/**`, `editor/**`,
+     `crates/editor-*`, `crates/asset-*`, `crates/io-*`, other
+     `runtime/runtime-{desktop,mobile,web}/**` stubs, tools, workflows,
+     docs, schemas, plans, ADRs, status files, golden fixtures, or existing
+     handoff/log artifacts.
+   - No workspace member changes, no `[workspace.dependencies]` changes, no
+     feature flags, no global registry, no reflection machinery, no
+     snapshot-restore path, and no editor-shell constructor work.
+   - Any GitHub label or issue metadata except the queue runner's normal
+     issue lifecycle for this dispatch.
+
+   **Implementation behavior required**:
+   - `runtime-headless` accepts exactly one positional `<project-path>`
+     argument. No optional flags or multi-argument CLI in this task.
+   - Read the project file with `std::fs::read_to_string` and parse it as
+     `rge_data::Project` using `ron::from_str`.
+   - Resolve the first scene reference relative to the project manifest
+     directory, read that scene file, and parse it as `rge_data::Scene`.
+   - Call `rge_scene_loader::load_scene_into_world(&scene)`.
+   - Call `world.advance_tick()` exactly once after loading.
+   - Print one concise stdout line containing the loaded entity count and the
+     current tick after the advance, using `world.entity_count()` and
+     `world.current_tick()`.
+   - Return a non-zero process exit on parse, I/O, missing-scene, or loader
+     errors.
+
+   **Test behavior required**:
+   - Add one focused integration test for the `runtime-headless` binary.
+   - The test invokes the binary with
+     `golden-projects/simple-scene/.rge-project`.
+   - The test asserts successful exit and stdout evidence that the loaded
+     world has 2 entities and `current_tick` is 1 after the tick advance.
+   - The test must not edit or regenerate any golden fixture.
+
+   **Halt conditions**:
+   - Halt if this cannot be implemented without editing `rge-scene-loader`,
+     `rge-data`, kernel, component crates, editor/editor-shell, other runtime
+     stubs, golden fixtures, workspace-level dependency configuration, or any
+     source outside `runtime/runtime-headless/**`.
+   - Halt if the current loader API cannot load the golden simple-scene
+     fixture without a loader/schema/kernel change.
+   - Halt if architecture lints reject `runtime-headless -> rge-data` or
+     `runtime-headless -> rge-scene-loader`.
+   - Halt if a global registry, reflection, snapshot restore, editor shell
+     handoff, or CLI convention decision is required.
+
+   **Verbatim review-gate strings** - the autonomous selector MUST copy
+   these eight strings, character-for-character, into the filed GitHub
+   issue body. No paraphrasing, no substitution, no reflowing. A packet
+   that lacks any one of them verbatim is bounced at review:
+
+   ```
+   MUST edit only runtime/runtime-headless/Cargo.toml, runtime/runtime-headless/src/main.rs, one optional runtime/runtime-headless/tests/** integration test, Cargo.lock mechanical rge-runtime-headless dependency-list churn, and this dispatch's own ai_handoffs and ai_dispatch_logs artifacts
+   MUST make runtime-headless accept exactly one positional <project-path> argument and no optional flags
+   MUST parse the project as rge_data::Project, resolve the first scene relative to the project manifest directory, and parse that scene as rge_data::Scene
+   MUST load the parsed scene through rge_scene_loader::load_scene_into_world and call World::advance_tick exactly once after load
+   MUST print stdout evidence of entity_count 2 and current_tick 1 when run against golden-projects/simple-scene/.rge-project
+   MUST add one runtime-headless integration test that invokes the binary against golden-projects/simple-scene/.rge-project and asserts successful exit plus the stdout count/tick evidence
+   MUST NOT modify crates/rge-scene-loader/**, crates/rge-data/**, kernel/**, component crates, editor/**, other runtime stubs, golden-projects/**, workspace membership/dependency configuration, scripts, workflows, docs, schemas, plans, status files, or existing handoff/log artifacts
+   MUST run cargo build -p rge-runtime-headless, cargo test -p rge-runtime-headless --no-fail-fast, cargo run -q -p rge-tool-architecture-lints -- all, and the canonical .ai/dispatch.verify.ps1 gate successfully
+   ```
+
+   **Done-criterion**:
+   - `runtime-headless` is the first non-test consumer of `rge-scene-loader`.
+   - Running the binary with the golden simple-scene project path loads the
+     scene into a `World`, advances one tick, and reports 2 entities at
+     current tick 1.
+   - The focused runtime-headless integration test passes.
+   - The required verification gates pass.
+   - No file outside the allowed surface changes, except this dispatch's own
+     handoff/log artifacts.
