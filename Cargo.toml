@@ -92,6 +92,7 @@ members = [
     "crates/asset-pipeline",
     "crates/pak-format",
     "crates/rge-data",
+    "crates/rge-scene-loader",
 
     # Tier 2 — Importers / exporters
     "crates/io-gltf",
