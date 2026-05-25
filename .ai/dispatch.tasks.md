@@ -6350,7 +6350,14 @@ is the only safeguard against selector drift.
    - Keep this a retry-policy task only. Aggregation, alerts, recovery routes,
      execute/correction retries, and any UI/dashboard work are later tasks.
 
-54. **Add JSONL dispatch trend aggregator and local alerts CLI.**
+54. **[DONE 2026-05-26 via PR #195 / commit `93bbcad`] Add JSONL dispatch trend aggregator and local alerts CLI.**
+   Landed via PR #195. Added `Get-AiDispatchTrends.ps1`, a read-only local
+   CLI that consumes existing `.ai/dispatch-trace/*.jsonl` files and reports
+   Summary, Phase Durations, and Alerts blocks with average/p50/p95/max phase
+   metrics. It handles no-data and malformed-line cases, supports threshold
+   alerts plus `-FailOnAlert`, and does not alter emitters, trace schema, or
+   dispatch behavior. The original brief is preserved below.
+
    The trace emitter now writes opt-in JSONL files under
    `.ai/dispatch-trace/`, and several automation upgrades have produced real
    timing data. Add a read-only local CLI that aggregates those JSONL events
