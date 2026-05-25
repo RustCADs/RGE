@@ -5086,7 +5086,14 @@ is the only safeguard against selector drift.
    - No file outside the allowed surface changes, except this dispatch's
      own handoff/log artifacts.
 
-43. **Retry `rge-scene-loader` bridge after sparse ECS columns.**
+43. **[DONE 2026-05-25 via PR #172 / commit `1d32fd3`] Retry `rge-scene-loader` bridge after sparse ECS columns.**
+   Landed via PR #172. The new `rge-scene-loader` crate loads the typed
+   simple-scene `ComponentValue` envelopes through an explicit four-arm
+   match table and preserves scene ULIDs in `World`. A reviewer follow-up
+   commit tightened the golden integration test to parse `.rge-project` and
+   follow its scene reference, matching this brief exactly. The original
+   retry brief is preserved below.
+
    Task #41 / ISSUE-168 produced a good loader scaffold but correctly
    blocked because the kernel could not attach heterogeneous component
    sets. Task #42 / PR #170 fixed that kernel prerequisite on `main`.
@@ -5219,6 +5226,87 @@ is the only safeguard against selector drift.
      component type IDs.
    - Tests in the new crate prove the golden simple-scene bridge for Camera
      and KeyLight plus unsupported-type behavior.
+   - `cargo test -p rge-scene-loader` exits 0.
+   - `.ai/dispatch.verify.ps1` exits 0.
+   - No file outside the allowed surface changes, except this dispatch's
+     own handoff/log artifacts.
+
+44. **Add `rge-scene-loader` golden simple-scene load+tick regression.**
+   The original `crates/rge-data` load+tick regression remains
+   identity-only by design, and `rge-data` must not gain a dev-dependency
+   cycle back to `rge-scene-loader`. Now that task #43 landed the loader
+   crate, add the equivalent load+tick regression in the loader crate
+   itself: parse the tracked golden project manifest, resolve the scene,
+   load it through `rge_scene_loader`, assert typed component presence, and
+   prove `World::advance_tick` behavior on the loaded world.
+
+   **Runtime invocation note**: this task is a deliberate named +1 on top
+   of the cap-121 posture used by task #43. Run as
+   `.\Invoke-AiDispatchAuto.ps1 -PublishMode branch -MaxAutonomousTasks 122`
+   so the cap accommodates exactly this one dispatch. The scheduler
+   remains disabled and must not be re-enabled by this task.
+
+   **Allowed file surface**:
+   - EDIT only files under `crates/rge-scene-loader/tests/**`.
+   - MAY add one new focused test file under `crates/rge-scene-loader/tests/`
+     if that is cleaner than extending `simple_scene.rs`.
+   - MAY add this dispatch's own `ai_handoffs/ISSUE-*_TASK_*.md`,
+     `ai_handoffs/ISSUE-*_EXEC_*.md`, `ai_handoffs/ISSUE-*_CORRECT_*.md`
+     packets plus `.meta.json` sidecars if produced by the orchestrator,
+     and the queue-runner's own `ai_dispatch_logs/log_*.md`.
+
+   **Files that MUST NOT be touched**:
+   - `Cargo.toml`, `Cargo.lock`, or any crate manifest.
+   - `crates/rge-data/**` - no dev-dependency cycle and no migration of the
+     existing identity-only test in this task.
+   - `kernel/**`, component crates, `golden-projects/**`, editor/runtime/gfx
+     crates, scripts, workflows, docs, schemas, or existing handoff/log
+     artifacts.
+   - Any GitHub label or issue metadata except the queue runner's normal
+     issue lifecycle for this dispatch.
+
+   **Test behavior required**:
+   - Parse `golden-projects/simple-scene/.rge-project` as `rge_data::Project`.
+   - Resolve the first scene reference relative to the project manifest
+     directory and parse it as `rge_data::Scene`.
+   - Load the parsed scene through `rge_scene_loader::load_scene_into_world`.
+   - Assert `world.entity_count() == scene.entities.len()`.
+   - Assert the Camera entity still has `Transform`, `Camera`, and
+     `Visibility::Visible`.
+   - Assert the KeyLight entity still has `Transform` and `Light`.
+   - Capture `current_tick()` and `last_tick()`, call `advance_tick()`, then
+     assert current tick increments by one and last tick captures the prior
+     current tick.
+
+   **Halt conditions**:
+   - The regression cannot be added without editing `crates/rge-data/**`,
+     manifests, Cargo.lock, kernel, component crates, or the golden fixture.
+   - The current loader API cannot support the tick regression without a
+     production-code change.
+   - The test requires relation/root-entity semantics or runtime/editor
+     integration. That belongs to a later preflight and implementation task.
+
+   **Verbatim review-gate strings** - the autonomous selector MUST copy
+   these eight strings, character-for-character, into the filed GitHub
+   issue body. No paraphrasing, no substitution, no reflowing. A packet
+   that lacks any one of them verbatim is bounced at review:
+
+   ```
+   MUST edit only crates/rge-scene-loader/tests/** plus this dispatch's own ai_handoffs and ai_dispatch_logs artifacts
+   MUST parse golden-projects/simple-scene/.rge-project as rge_data::Project and resolve the referenced scene path relative to the manifest directory
+   MUST load the referenced scene through rge_scene_loader::load_scene_into_world and assert world.entity_count() equals scene.entities.len()
+   MUST assert the golden Camera entity has Transform, Camera, and Visibility::Visible after loader import
+   MUST assert the golden KeyLight entity has Transform and Light after loader import
+   MUST assert World::advance_tick increments current_tick by one and sets last_tick to the prior current_tick on the loaded world
+   MUST NOT modify Cargo.toml, Cargo.lock, crates/rge-data/**, kernel/**, component crates, golden-projects/**, editor/**, runtime/**, scripts, workflows, docs, schemas, or production source
+   MUST run cargo test -p rge-scene-loader and the canonical .ai/dispatch.verify.ps1 gate successfully
+   ```
+
+   **Done-criterion**:
+   - `rge-scene-loader` owns a golden simple-scene load+tick regression.
+   - The regression proves project-manifest scene resolution, typed loader
+     import, entity-count parity, Camera/KeyLight component presence, and
+     `advance_tick` behavior.
    - `cargo test -p rge-scene-loader` exits 0.
    - `.ai/dispatch.verify.ps1` exits 0.
    - No file outside the allowed surface changes, except this dispatch's
