@@ -1,0 +1,16 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-169",
+    "packet_type": "EXEC",
+    "author": "Executor / Claude",
+    "timestamp": "2026-05-25_09-46-27+0300",
+    "related_files": [
+                          "kernel/ecs/src/archetype.rs — convert columns to `Vec\u003cOption\u003cColumnRow\u003e\u003e`; pad-on-insert; per-row removal leaves placeholder; entity-aware swap-remove; new `has_component_at_row`; archetype-level sparse unit tests.",
+                          "kernel/ecs/src/entity.rs — make `EntityRef::contains\u003cC\u003e()` row-specific via `Archetype::has_component_at_row`.",
+                          "kernel/ecs/tests/sparse_rows.rs — new integration tests covering heterogeneous insert/get/contains/query, first-insert-at-nonzero-row (typed and via `EntityMut`), `spawn_with` interleaved with sparse columns, sparse remove/replace, sparse despawn swap-remove (including swapped entity lacking a column, and last-row truncation), and a heterogeneous snapshot round-trip that forces the erased restore path to land first at a nonzero row."
+                      ],
+    "status": "AWAITING_REVIEW",
+    "handoff_status": "COMPLETE",
+    "next_role": "REVIEWER_AI",
+    "exit_code": 0
+}
