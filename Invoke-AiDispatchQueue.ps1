@@ -65,12 +65,68 @@ $ErrorActionPreference = 'Stop'
 
 $script:TraceTimingEnabled = [bool]$TraceTiming -or ($env:RGE_AI_DISPATCH_TRACE_TIMING -match '^(1|true|yes|on)$')
 $script:TraceTimingStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+$script:TraceTimingScriptLeaf = 'Invoke-AiDispatchQueue.ps1'
+$script:TraceTimingJsonlPath = $null
+$script:TraceTimingJsonlInitialized = $false
+
+function Initialize-TimingTraceJsonl {
+    if ($script:TraceTimingJsonlInitialized) { return }
+    $script:TraceTimingJsonlInitialized = $true
+    try {
+        $traceDir = Join-Path $PSScriptRoot '.ai\dispatch-trace'
+        if (-not (Test-Path -LiteralPath $traceDir)) {
+            New-Item -ItemType Directory -Path $traceDir -Force | Out-Null
+        }
+        $leaf  = [System.IO.Path]::GetFileNameWithoutExtension($script:TraceTimingScriptLeaf)
+        $stamp = (Get-Date).ToString('yyyyMMdd-HHmmss-fff')
+        $script:TraceTimingJsonlPath = Join-Path $traceDir "$leaf-$stamp-$PID.jsonl"
+    } catch {
+        $script:TraceTimingJsonlPath = $null
+    }
+}
 
 function Write-TimingTrace {
     param([string]$Message)
-    if ($script:TraceTimingEnabled) {
-        $elapsed = '{0:n3}' -f $script:TraceTimingStopwatch.Elapsed.TotalSeconds
-        Write-Output "[TRACE $(Get-Date -Format 'HH:mm:ss.fff') +${elapsed}s] $Message"
+    if (-not $script:TraceTimingEnabled) { return }
+    $now = Get-Date
+    $elapsedSeconds = $script:TraceTimingStopwatch.Elapsed.TotalSeconds
+    $elapsed = '{0:n3}' -f $elapsedSeconds
+    Write-Output "[TRACE $($now.ToString('HH:mm:ss.fff')) +${elapsed}s] $Message"
+
+    # Best-effort JSONL persistence; never throws and never affects exit code.
+    try {
+        Initialize-TimingTraceJsonl
+        if (-not $script:TraceTimingJsonlPath) { return }
+
+        $eventName = $Message
+        $colonIdx  = $Message.IndexOf(':')
+        if ($colonIdx -gt 0) {
+            $eventName = $Message.Substring(0, $colonIdx)
+        } else {
+            $wsIdx = $Message.IndexOfAny(@(' ', "`t"))
+            if ($wsIdx -gt 0) { $eventName = $Message.Substring(0, $wsIdx) }
+        }
+
+        $repo = [ordered]@{}
+        if ($script:RepoRoot) { $repo.root = [string]$script:RepoRoot }
+        if ($script:repoSlug) { $repo.slug = [string]$script:repoSlug }
+
+        $entry = [ordered]@{
+            timestamp       = $now.ToString('o')
+            elapsed_seconds = $elapsedSeconds
+            script          = $script:TraceTimingScriptLeaf
+            pid             = $PID
+            event           = $eventName
+            message         = $Message
+            repo            = $repo
+        }
+        $json = $entry | ConvertTo-Json -Compress -Depth 5
+        [System.IO.File]::AppendAllText(
+            $script:TraceTimingJsonlPath,
+            $json + "`n",
+            [System.Text.UTF8Encoding]::new($false))
+    } catch {
+        # Swallow: JSONL trace persistence must never block dispatch progress.
     }
 }
 

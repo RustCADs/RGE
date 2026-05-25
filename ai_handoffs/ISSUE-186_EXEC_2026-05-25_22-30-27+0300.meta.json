@@ -1,0 +1,17 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-186",
+    "packet_type": "EXEC",
+    "author": "Executor / Claude",
+    "timestamp": "2026-05-25_22-30-27+0300",
+    "related_files": [
+                          "Invoke-AiDispatchAuto.ps1 — Added Initialize-TimingTraceJsonl helper and extended Write-TimingTrace with best-effort JSONL append; console output unchanged.",
+                          "Invoke-AiDispatchQueue.ps1 — Same extension applied to the queue runner\u0027s trace helper so child-process traces persist when env-var-inherited.",
+                          "ai_handoffs/ISSUE-186_TASK_2026-05-25_22-18-29+0300.md — Source TASK packet.",
+                          "ai_handoffs/ISSUE-186_EXEC_2026-05-25_22-30-27+0300.md — This execution report."
+                      ],
+    "status": "AWAITING_REVIEW",
+    "handoff_status": "COMPLETE",
+    "next_role": "REVIEWER_AI",
+    "exit_code": 0
+}
