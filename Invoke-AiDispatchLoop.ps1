@@ -61,6 +61,9 @@ param(
     [ValidateRange(0, 5)]
     [int]$MaxCorrectionRounds = 1,
 
+    [ValidateRange(0, 5)]
+    [int]$MutationRetryCount = 1,
+
     [ValidateSet('acceptEdits', 'auto', 'bypassPermissions', 'default', 'dontAsk', 'plan')]
     [string]$ClaudePermissionMode = 'acceptEdits',
 
@@ -158,6 +161,185 @@ function Invoke-WithSamePhaseRetry {
         }
     } finally {
         $script:RetryableFailEnabled = $false
+    }
+}
+
+function New-MutationSnapshot {
+    # Capture a phase-entry snapshot of the worktree.
+    #
+    # Tracked changes (staged + unstaged) go into a `git stash create`
+    # commit, pinned via a dedicated ref under refs/dispatch-snapshot/ so a
+    # stray `git gc` cannot reap it during the retry window. A clean tracked
+    # state yields an empty SHA and no ref is pinned.
+    #
+    # Untracked non-ignored files are captured into an in-memory byte map.
+    # This avoids `git stash create -u`, whose untracked parent tree is not
+    # reliably extracted by `git stash apply` on Git for Windows, and keeps
+    # ignored paths (the .ai/dispatch-*/ run dir, *.log, build outputs)
+    # outside the snapshot so external caches survive across retries.
+    param([Parameter(Mandatory)] [string]$Label)
+
+    $rootResult = Invoke-GitCapture @('rev-parse', '--show-toplevel')
+    if ($rootResult.Code -ne 0 -or -not $rootResult.Lines) {
+        Fail "Mutation snapshot: cannot resolve git repository root."
+    }
+    $repoRoot = ($rootResult.Lines -join "`n").Trim()
+    # git on Windows returns forward slashes; normalize so Join-Path with
+    # platform separators produces a single canonical path.
+    $repoRoot = $repoRoot -replace '/', [System.IO.Path]::DirectorySeparatorChar
+
+    $shaResult = Invoke-GitCapture @('stash', 'create')
+    if ($shaResult.Code -ne 0) {
+        Fail "Mutation snapshot: 'git stash create' failed (exit $($shaResult.Code))."
+    }
+    $sha = ($shaResult.Lines -join "`n").Trim()
+    if (-not $sha) { $sha = $null }
+
+    $refName = $null
+    if ($sha) {
+        $safe = ($Label -replace '[^A-Za-z0-9._\-]', '-')
+        $refName = "refs/dispatch-snapshot/$safe"
+        $update = Invoke-GitCapture @('update-ref', $refName, $sha)
+        if ($update.Code -ne 0) {
+            Fail "Mutation snapshot: 'git update-ref $refName $sha' failed (exit $($update.Code))."
+        }
+    }
+
+    $lsResult = Invoke-GitCapture @('ls-files', '--others', '--exclude-standard')
+    if ($lsResult.Code -ne 0) {
+        Fail "Mutation snapshot: 'git ls-files --others' failed (exit $($lsResult.Code))."
+    }
+    # Ordered hashtable so restore is deterministic in path order.
+    $untracked = [ordered]@{}
+    foreach ($rel in $lsResult.Lines) {
+        $rel = [string]$rel
+        if (-not $rel) { continue }
+        $full = Join-Path $repoRoot ($rel -replace '/', [System.IO.Path]::DirectorySeparatorChar)
+        if (Test-Path -LiteralPath $full -PathType Leaf) {
+            $untracked[$rel] = [System.IO.File]::ReadAllBytes($full)
+        }
+    }
+
+    return [pscustomobject]@{
+        Sha       = $sha
+        Ref       = $refName
+        Untracked = $untracked
+        RepoRoot  = $repoRoot
+    }
+}
+
+function Restore-MutationSnapshot {
+    # Restore the worktree to the state captured by New-MutationSnapshot:
+    #   1. `git reset --hard HEAD`  -- discard staged + unstaged tracked
+    #      changes from the failed attempt.
+    #   2. `git clean -fd`           -- delete untracked non-ignored files
+    #      and directories created by the failed attempt. Ignored files
+    #      (run-dir transcripts, *.log, /target/) are preserved.
+    #   3. `git stash apply --index` -- replay the snapshot's tracked
+    #      changes back onto the working tree and index.
+    #   4. Rewrite the captured untracked manifest so phase-entry untracked
+    #      non-ignored files come back with their original bytes.
+    # All git invocations are scoped to the repository root captured at
+    # snapshot time; no paths outside the repository are touched.
+    param([Parameter(Mandatory)] [pscustomobject]$Snapshot)
+
+    $reset = Invoke-GitCapture @('reset', '--hard', '--quiet', 'HEAD')
+    if ($reset.Code -ne 0) {
+        Fail "Mutation snapshot restore: 'git reset --hard HEAD' failed (exit $($reset.Code))."
+    }
+    $clean = Invoke-GitCapture @('clean', '-fd', '--quiet')
+    if ($clean.Code -ne 0) {
+        Fail "Mutation snapshot restore: 'git clean -fd' failed (exit $($clean.Code))."
+    }
+    if ($Snapshot.Sha) {
+        $apply = Invoke-GitCapture @('stash', 'apply', '--index', '--quiet', $Snapshot.Sha)
+        if ($apply.Code -ne 0) {
+            Fail "Mutation snapshot restore: 'git stash apply --index $($Snapshot.Sha)' failed (exit $($apply.Code))."
+        }
+    }
+    if ($Snapshot.Untracked -and $Snapshot.Untracked.Count -gt 0) {
+        foreach ($entry in $Snapshot.Untracked.GetEnumerator()) {
+            $rel = [string]$entry.Key
+            $bytes = [byte[]]$entry.Value
+            $full = Join-Path $Snapshot.RepoRoot ($rel -replace '/', [System.IO.Path]::DirectorySeparatorChar)
+            $parent = Split-Path -Parent $full
+            if ($parent -and -not (Test-Path -LiteralPath $parent)) {
+                New-Item -ItemType Directory -Path $parent -Force | Out-Null
+            }
+            [System.IO.File]::WriteAllBytes($full, $bytes)
+        }
+    }
+}
+
+function Remove-MutationSnapshot {
+    # Drop the pinned snapshot ref so the stash commit is no longer kept
+    # alive and a later `git gc` can reclaim it. Safe to call with a null
+    # snapshot or one that recorded no changes.
+    param([pscustomobject]$Snapshot)
+
+    if ($Snapshot -and $Snapshot.Ref) {
+        Invoke-GitCapture @('update-ref', '-d', $Snapshot.Ref) | Out-Null
+    }
+}
+
+function Invoke-WithMutationRetry {
+    # Snapshot-backed same-phase retry for the two dispatch-loop mutation
+    # phases that can edit the repository (Invoke-ClaudeExecute and
+    # Invoke-CorrectionPacket). RetryCount=0 short-circuits to the previous
+    # single-attempt behavior: no snapshot, no restore, no retry output, and
+    # Fail still exits the process directly so unrelated callers see the
+    # original failure path. With RetryCount > 0, a phase-entry snapshot is
+    # captured once; on each attempt failure the worktree is restored from
+    # that snapshot before the next attempt runs. On retry exhaustion the
+    # original failure path is taken via the existing Fail helper, so the
+    # terminal wording the queue runner relies on is preserved.
+    param(
+        [Parameter(Mandatory)] [string]$PhaseLabel,
+        [Parameter(Mandatory)] [scriptblock]$Action,
+        [ValidateRange(0, 5)]
+        [int]$RetryCount = 1
+    )
+
+    if ($RetryCount -le 0) {
+        return & $Action
+    }
+
+    $label = "{0}-{1}" -f $DispatchId, [System.IO.Path]::GetRandomFileName().Substring(0, 8)
+    $snapshot = New-MutationSnapshot -Label $label
+    $script:RetryableFailEnabled = $true
+    try {
+        $maxAttempts = 1 + $RetryCount
+        for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+            try {
+                $result = & $Action
+                if ($attempt -gt 1) {
+                    Write-Host "[mutation-retry] $PhaseLabel succeeded on attempt $attempt of $maxAttempts."
+                }
+                return $result
+            } catch {
+                $message = [string]$_.Exception.Message
+                if ($attempt -ge $maxAttempts) {
+                    Write-Host "[mutation-retry] $PhaseLabel same-phase retry exhausted ($maxAttempts/$maxAttempts); failing via the original failure path."
+                    $script:RetryableFailEnabled = $false
+                    Fail $message
+                    return
+                }
+                Write-Host "[mutation-retry] $PhaseLabel attempt $attempt failed: $message"
+                Write-Host "[mutation-retry] $PhaseLabel restoring worktree to phase-entry snapshot before retry..."
+                try {
+                    Restore-MutationSnapshot -Snapshot $snapshot
+                } catch {
+                    $restoreErr = [string]$_.Exception.Message
+                    $script:RetryableFailEnabled = $false
+                    Fail "Mutation retry restore failed for $PhaseLabel after attempt ${attempt}: $restoreErr"
+                    return
+                }
+                Write-Host "[mutation-retry] $PhaseLabel worktree restored to phase-entry state; retrying (attempt $($attempt + 1) of $maxAttempts)..."
+            }
+        }
+    } finally {
+        $script:RetryableFailEnabled = $false
+        Remove-MutationSnapshot -Snapshot $snapshot
     }
 }
 
@@ -1267,8 +1449,18 @@ $finalControl = $null
 $verification = $null
 
 for ($round = 0; $round -le $MaxCorrectionRounds; $round++) {
-    $execResult = Invoke-ClaudeExecute -ActivePacket $activePacket -PacketKind $activeKind -Round $round `
-        -PreflightChecklist $preflightChecklist
+    # Mutation retry wraps ONLY the Invoke-ClaudeExecute invocation: this
+    # covers retryable contract/invocation failures (timeouts, missing
+    # markers, malformed envelopes, the canonical-packet check). The
+    # EXEC_STATUS semantic check below is intentionally outside the wrapper
+    # so blocked/failed verdicts remain terminal and are never retried.
+    $execResult = Invoke-WithMutationRetry `
+        -PhaseLabel "Claude execution round $round" `
+        -RetryCount $MutationRetryCount `
+        -Action {
+            Invoke-ClaudeExecute -ActivePacket $activePacket -PacketKind $activeKind -Round $round `
+                -PreflightChecklist $preflightChecklist
+        }
     Write-Output "Claude execution round ${round}: $($execResult.status)"
 
     if ($execResult.status -ne 'executed') {
@@ -1315,8 +1507,18 @@ for ($round = 0; $round -le $MaxCorrectionRounds; $round++) {
             Fail "Verification gate failed (exit $($verification.ExitCode)) and MaxCorrectionRounds=$MaxCorrectionRounds is exhausted. See $(Get-RepoRelativePath $verification.Log)"
         }
         $beforeCorrect = Get-WorktreeChangeSet
-        $activePacket = Invoke-CorrectionPacket -Verification $verification -Round $round
-        Assert-PlannerScopeClean -Before $beforeCorrect -Packet $activePacket -StepName "Correction (verification) round $round"
+        # Mutation retry covers both the correction-packet write AND the
+        # planner scope-clean guard. If the planner's workspace-write step
+        # edits any path outside its own packet, the snapshot restore wipes
+        # those stray edits before the retry attempt.
+        $activePacket = Invoke-WithMutationRetry `
+            -PhaseLabel "Correction (verification) round $round" `
+            -RetryCount $MutationRetryCount `
+            -Action {
+                $pkt = Invoke-CorrectionPacket -Verification $verification -Round $round
+                Assert-PlannerScopeClean -Before $beforeCorrect -Packet $pkt -StepName "Correction (verification) round $round"
+                return $pkt
+            }
         $activeKind = 'CORRECTION'
         Write-Output "CORRECTION finalized (verification failure): $(Get-RepoRelativePath $activePacket.FullName)"
         continue
@@ -1349,8 +1551,17 @@ for ($round = 0; $round -le $MaxCorrectionRounds; $round++) {
     }
 
     $beforeCorrect = Get-WorktreeChangeSet
-    $activePacket = Invoke-CorrectionPacket -ControlResult $finalControl -Round $round
-    Assert-PlannerScopeClean -Before $beforeCorrect -Packet $activePacket -StepName "Correction (control) round $round"
+    # Mutation retry as above: the planner scope-clean guard runs inside
+    # the retried action so an out-of-scope correction attempt is restored
+    # to the phase-entry snapshot before the next attempt.
+    $activePacket = Invoke-WithMutationRetry `
+        -PhaseLabel "Correction (control) round $round" `
+        -RetryCount $MutationRetryCount `
+        -Action {
+            $pkt = Invoke-CorrectionPacket -ControlResult $finalControl -Round $round
+            Assert-PlannerScopeClean -Before $beforeCorrect -Packet $pkt -StepName "Correction (control) round $round"
+            return $pkt
+        }
     $activeKind = 'CORRECTION'
     Write-Output "CORRECTION finalized: $(Get-RepoRelativePath $activePacket.FullName)"
 }
