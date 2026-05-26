@@ -6757,3 +6757,121 @@ is the only safeguard against selector drift.
      is the main correctness requirement.
    - Keep this loop-local. Do not move retry policy into the queue, do not add
      new recovery labels, and do not change autonomous selection behavior.
+
+57. **Read-only audit: post-sequence automation safety and throughput validation.**
+   The seven self-improving automation dispatches have landed:
+   watchdog, opt-in preflight audit, JSONL trace persistence, empty-tick
+   speedup, failure taxonomy, read-only same-phase retry, transient recovery,
+   and snapshot-backed mutation retry. Before wiring the next implementation
+   change, run a read-only audit over the current automation state and produce
+   an EXEC packet with concrete findings and exactly one smallest safe
+   follow-up, or `NEEDS_HUMAN` if the next step requires arbitration.
+
+   **Runtime invocation note**: current `ai-auto` count is 133. Run as
+   `.\Invoke-AiDispatchAuto.ps1 -PublishMode branch -MaxAutonomousTasks 134 -TraceTiming`
+   so the cap accommodates exactly this one audit and the trace stream records
+   the new tick. The scheduler remains disabled and must not be re-enabled by
+   this task.
+
+   **Required TASK packet shape**:
+   - The generated TASK packet MUST make this an audit-only dispatch.
+   - The generated TASK packet MUST NOT list any production source, test,
+     docs, Cargo, workflow, schema, task brief, or automation script path in
+     `### MAY edit`.
+   - The generated TASK packet MAY add only this dispatch's own
+     `ai_handoffs/ISSUE-*_TASK_*.md`,
+     `ai_handoffs/ISSUE-*_EXEC_*.md`,
+     `ai_handoffs/ISSUE-*_CORRECT_*.md` packets, matching `.meta.json`
+     sidecars, and its own `ai_dispatch_logs/log_*.md` queue log.
+   - Because the queue scope guard currently requires at least one positive
+     allowed-path token in a `### MAY edit` or `### MAY add new files` section,
+     the generated TASK packet MUST include this optional ignored run-dir
+     scratch token in `### MAY add new files`:
+     `.ai/dispatch-ISSUE-*/automation-audit-scratch.md`. The executor does
+     not need to create it; it exists only to keep read-only audit tasks
+     compatible with the current fail-closed guard.
+
+   **Allowed file surface**:
+   - EDIT no tracked files.
+   - MAY add this dispatch's own handoff packets, handoff sidecars, and queue
+     log as produced by the orchestrator/queue.
+   - MAY create the optional ignored run-dir scratch file
+     `.ai/dispatch-ISSUE-*/automation-audit-scratch.md`, but only if useful
+     for local notes. It must not be staged or published.
+
+   **Files that MUST NOT be touched**:
+   - Do not edit `Invoke-AiDispatchAuto.ps1`, `Invoke-AiDispatchQueue.ps1`,
+     `Invoke-AiDispatchLoop.ps1`, `Get-AiDispatchTrends.ps1`,
+     `Get-AiDispatchHealth.ps1`, scheduler scripts, trace emitters, failure
+     taxonomy labels, recovery logic, scope guard logic, docs, task brief,
+     workflows, schemas, Rust source, Cargo files, tests, fixtures, status
+     files, existing handoff/log artifacts, or sandbox worktrees.
+   - Do not add code, tests, dashboards, new agents, scheduled tasks, GitHub
+     labels, GitHub comments outside the queue's normal bookkeeping, or new
+     automation behavior.
+
+   **Audit questions required**:
+   - Q1. Feature inventory: confirm from current code whether each recently
+     landed automation feature is present, scoped to its intended files, and
+     still opt-in or bounded where specified: Codex stall watchdog, opt-in
+     preflight audit, JSONL trace persistence, empty-tick speedup, failure
+     taxonomy labels, read-only same-phase retry, one-shot transient recovery,
+     and snapshot-backed mutation retry.
+   - Q2. Safety invariants: inspect the interaction between queue scope guard,
+     retry paths, transient recovery, branch/publish flow, and snapshot
+     restore. Identify any path where automation could stage or publish work
+     outside the active TASK surface, retry a semantic failure, auto-recover a
+     non-transient failure, or lose user work. If none are found, say so
+     explicitly.
+   - Q3. Throughput and trace evidence: use current `.ai/dispatch-trace/*.jsonl`
+     plus recent dispatch artifacts for issues #182 through #198 to summarize
+     observed wall-clock, queue-loop, empty-cap, GitHub finalize, correction,
+     stall, and timeout behavior. Name the current bottleneck based on data,
+     not intuition.
+   - Q4. Activation gaps: verify whether `-EnablePreflightAudit` is currently
+     wired through Auto and Queue into Loop. Verify whether `-TraceTiming` is
+     wired through Auto into Queue. Name any other landed-but-not-activated
+     automation capability discovered from current code.
+   - Q5. Smallest safe follow-up: name exactly one smallest implementation
+     dispatch only if it is justified by Q1-Q4. Include title, allowed files,
+     must-not-touch surfaces, verification gates, and halt conditions. If the
+     safest next step needs human arbitration, end `NEEDS_HUMAN` and state the
+     decision required. Do not propose a broad rewrite, dashboard, new agent,
+     product task, or multi-item bundle as Q5.
+
+   **Halt conditions**:
+   - Halt if answering the audit requires any tracked file edit outside this
+     dispatch's own generated artifacts.
+   - Halt if the current code or trace data is insufficient to answer Q1-Q4
+     without inventing facts; report the missing evidence.
+   - Halt if Q5 cannot name exactly one smallest safe follow-up from current
+     evidence.
+   - Halt if the executor would need to mutate GitHub labels or comments
+     outside normal queue bookkeeping.
+
+   **Verbatim review-gate strings** - the autonomous selector MUST copy these
+   eight strings, character-for-character, into the filed GitHub issue body.
+   No paraphrasing, no substitution, no reflowing. A packet that lacks any one
+   of them verbatim is bounced at review:
+
+   ```
+   MUST perform read-only automation audit only and MUST NOT edit source tests docs Cargo workflows schemas task brief or automation scripts
+   MUST inspect current implementations of watchdog preflight scope guard JSONL trace empty-tick speedup taxonomy read-only retry transient recovery and mutation retry
+   MUST answer whether EnablePreflightAudit is currently wired through Auto and Queue to Loop
+   MUST use current JSONL traces and recent dispatch artifacts to summarize bottlenecks correction rounds stalls and timeouts
+   MUST identify exactly one smallest safe follow-up with allowed files verification gates and halt conditions or return NEEDS_HUMAN
+   MUST NOT propose broad rewrites dashboards new agents product work or multi-item bundles as the immediate follow-up
+   MUST leave only this dispatch's own handoff/log artifacts plus optional ignored .ai dispatch scratch
+   MUST run git diff --check and report git status showing no tracked source/test/doc/Cargo/script changes
+   ```
+
+   **Verification required**:
+   - `git diff --check` reports no whitespace errors.
+   - `git status --short --untracked-files=all` shows no tracked source,
+     test, docs, Cargo, workflow, schema, task brief, or automation script
+     changes.
+   - The EXEC packet answers Q1-Q5 explicitly and names the exact evidence
+     consulted for each answer.
+   - Static inspection confirms the audit did not edit production files.
+   - If Q5 names a follow-up task, it includes exact allowed files,
+     must-not-touch surfaces, verification gates, and halt conditions.
