@@ -7170,7 +7170,14 @@ is the only safeguard against selector drift.
    - The EXEC packet answers Q1-Q5 explicitly with line-cited evidence.
    - Static inspection confirms the audit did not edit production files.
 
-61. **Document delegated-human policy for fully unattended auto-publish mode.**
+61. **[DONE 2026-05-26 via PR #209 / commit `0a5e435`] Document delegated-human policy for fully unattended auto-publish mode.**
+   Landed via PR #209. `AI_DISPATCH_AUTOMATION.md` now documents delegated
+   human mode as bounded opt-in authorization for `-PublishMode main`, with
+   branch mode preserved as the default, finite cap discipline, stop
+   conditions, rollback behavior, audit requirements, and allowed-surface
+   tiers. No automation runtime behavior was changed. The original brief is
+   preserved below.
+
    Before running autonomous dispatch indefinitely with Codex acting as the
    delegated human publisher, add an explicit policy section to the automation
    documentation. This task records the risk model, allowed surfaces, cap
@@ -7279,3 +7286,91 @@ is the only safeguard against selector drift.
    - Static inspection confirms no automation runtime script, scheduler,
      schema, workflow, Rust/Cargo, test, fixture, or task-selection behavior
      changed.
+
+62. **Read-only Phase 9 audit: freeze-validity pressure.**
+   Delegated-main smoke batch task 1 of 10. Audit Phase 9's "freeze validity"
+   pressure axis against current `plans/PLAN.md`, `plans/IMPLEMENTATION.md`,
+   `Status.md`, `HANDOFF.md`, recent `change.md`, and current source layout.
+   Answer whether the frozen architecture is still coherent, where evidence
+   supports or weakens the freeze, and name exactly one smallest safe follow-up
+   or `NEEDS_HUMAN`.
+
+63. **Read-only Phase 9 audit: abstraction-pain pressure.**
+   Delegated-main smoke batch task 2 of 10. Audit current abstraction pain
+   across the most active substrates (`cad-core`, `cad-projection`,
+   `editor-shell`, `gfx`, `rge-scene-loader`, automation scripts) using only
+   existing code and dispatch artifacts. Identify the sharpest pain point and
+   name exactly one smallest safe follow-up or `NEEDS_HUMAN`.
+
+64. **Read-only Phase 9 audit: invalidation-economics pressure.**
+   Delegated-main smoke batch task 3 of 10. Audit cache invalidation and
+   recompute economics across graph-foundation, cad-core tessellation/projection
+   caches, frame-graph resource maps, and script hot-reload evidence. Identify
+   whether any measured or structural invalidation cost deserves the next
+   dispatch, and name exactly one smallest safe follow-up or `NEEDS_HUMAN`.
+
+65. **Read-only Phase 9 audit: reflection-scale pressure.**
+   Delegated-main smoke batch task 4 of 10. Re-audit reflection adoption after
+   the recent typed scene-loader work: search production and test usage of
+   `kernel/types`, `rge-macros-reflect`, typed `ComponentValue`, and any
+   schema/loader bridge references. Decide whether reflection-scale pressure is
+   still untriggered, and name exactly one smallest safe follow-up or
+   `NEEDS_HUMAN`.
+
+66. **Read-only Phase 9 audit: async-orchestration pressure.**
+   Delegated-main smoke batch task 5 of 10. Audit whether job-system,
+   io-scheduler, asset-streaming, asset-view, or shared kernel cavities have
+   gained concrete consumer pressure from current runtime/editor/asset paths.
+   Do not invent substrate work. Name exactly one smallest safe follow-up or
+   `NEEDS_HUMAN`.
+
+67. **Read-only Phase 9 audit: compile-time pressure.**
+   Delegated-main smoke batch task 6 of 10. Audit current compile-time signals
+   from CI logs, local dispatch verify logs, crate/test fanout, and recent
+   dependency churn. Identify whether compile-time pressure has a bounded
+   autonomous follow-up, and name exactly one smallest safe follow-up or
+   `NEEDS_HUMAN`.
+
+68. **Read-only Phase 9 audit: editor-usability pressure.**
+   Delegated-main smoke batch task 7 of 10. Audit current editor usability
+   substrate, including editor-shell, editor-ui, command-bus, runtime-headless,
+   and scene-loader consumers. Distinguish user-visible gaps from substrate
+   prerequisites. Name exactly one smallest safe follow-up or `NEEDS_HUMAN`.
+
+69. **Read-only Phase 9 audit: GPU-pressure axis.**
+   Delegated-main smoke batch task 8 of 10. Audit GPU/render pressure from gfx,
+   frame-graph, render-handoff, editor-shell render path, and baseline docs.
+   Determine whether the next GPU task is measurement, integration, docs
+   reconciliation, or no-op. Name exactly one smallest safe follow-up or
+   `NEEDS_HUMAN`.
+
+70. **Read-only audit: persistent kernel cavity pressure.**
+   Delegated-main smoke batch task 9 of 10. Re-audit the five persistent
+   Tier-1 kernel v0 cavities (`shared`, `asset-streaming`, `io-scheduler`,
+   `job-system`, `asset-view`) against current code and docs. Classify each as
+   still pressure-deferred or newly triggered. Name exactly one smallest safe
+   follow-up or `NEEDS_HUMAN`.
+
+71. **Read-only audit: delegated-main batch outcome synthesis.**
+   Delegated-main smoke batch task 10 of 10. After tasks #62-#70 are filed or
+   completed, synthesize their issue/EXEC outcomes plus JSONL timing traces.
+   Report which Phase 9 axis, if any, should become the next branch-mode
+   implementation task. Name exactly one smallest safe follow-up or
+   `NEEDS_HUMAN`.
+
+   **Common constraints for tasks #62-#71**:
+   - These are read-only audit tasks intended for the first delegated
+     `-PublishMode main` smoke batch.
+   - Do not edit tracked source, tests, docs, Cargo files, workflows, schemas,
+     automation scripts, scheduler configuration, or `.ai/dispatch.tasks.md`.
+   - MAY add only each dispatch's own handoff packets, sidecars, queue log, and
+     optional ignored `.ai/dispatch-*` scratch.
+   - The EXEC packet must answer the task-specific audit question with
+     line-cited evidence and must name exactly one smallest safe follow-up or
+     `NEEDS_HUMAN`.
+   - If a task recommends implementation touching production Rust, scripts,
+     workflows, Cargo, or scheduler behavior, the follow-up must explicitly be
+     branch-mode unless a later human authorization says otherwise.
+   - Verification: `git diff --check`, `git status --short
+     --untracked-files=all`, and static inspection proving no tracked
+     production/doc/script/Cargo/workflow/schema/task-brief files changed.
