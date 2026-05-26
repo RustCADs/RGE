@@ -1,0 +1,29 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-210",
+    "packet_type": "EXEC",
+    "author": "Executor / Claude",
+    "timestamp": "2026-05-26_15-45-39+0300",
+    "related_files": [
+                          "ai_handoffs/ISSUE-210_TASK_2026-05-26_15-11-47+0300.md — read-only audit basis (TASK packet)",
+                          "ai_handoffs/ISSUE-210_CORRECT_2026-05-26_15-43-10+0300.md — round-2 correction packet driving this artifact",
+                          "ai_handoffs/ISSUE-210_CORRECT_2026-05-26_15-32-03+0300.md — prior (round-1) correction packet (read-only reference)",
+                          "ai_handoffs/ISSUE-210_EXEC_2026-05-26_15-35-49+0300.md — prior EXEC (read-only reference; not modified)",
+                          "ai_handoffs/ISSUE-210_EXEC_2026-05-26_15-22-29+0300.md — original EXEC (read-only reference; not modified)",
+                          ".ai/dispatch-ISSUE-210/verification.round1.log — canonical correction-round verification gate (re-checked)",
+                          ".ai/dispatch-ISSUE-210/verification.round0.log — original-round verification gate (re-checked)",
+                          "plans/PLAN.md — read; freeze policy + gates (§0.6, §1.4, §1.15, §13.15, §13.16, §14)",
+                          "plans/IMPLEMENTATION.md — read; Phase 9 production-pressure axes (§9)",
+                          "Status.md — read (lines 1, 9–15, 115–127, 190–203, 225–241, 370–373)",
+                          "HANDOFF.md — read (lines 1–20, 83–98, 1473–1582)",
+                          "change.md — read (Select-String evidence at lines 1637 / 1639 / 1641; file size cross-checked)",
+                          "Cargo.toml — read (workspace members lines 1–140)",
+                          "crates/, kernel/, editor/, runtime/, tools/ — directory listing only",
+                          "crates/editor-state/src/ — file listing only; inspector_snapshot.rs head read",
+                          "crates/editor-egui-host/Cargo.toml — read"
+                      ],
+    "status": "AWAITING_REVIEW",
+    "handoff_status": "COMPLETE",
+    "next_role": "REVIEWER_AI",
+    "exit_code": 0
+}
