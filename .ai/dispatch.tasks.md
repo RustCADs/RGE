@@ -7374,3 +7374,105 @@ is the only safeguard against selector drift.
    - Verification: `git diff --check`, `git status --short
      --untracked-files=all`, and static inspection proving no tracked
      production/doc/script/Cargo/workflow/schema/task-brief files changed.
+
+72. **Add PowerShell CI guardrails for dispatch automation.**
+   Branch-mode infrastructure task. Add the first PowerShell quality gate for
+   the dispatch scripts by combining (a) focused Pester behavior coverage for
+   the queue audit-log writer and (b) repository-wide PSScriptAnalyzer static
+   analysis in a new GitHub Actions workflow. This is the prevention task for
+   audit-log string-template regressions such as literal `$Id` / `$Branch`
+   tokens leaking into committed queue logs.
+
+   **Required TASK packet shape**:
+   - The generated TASK packet MUST state that this task adds PowerShell CI
+     guardrails only and MUST NOT modify Rust runtime/editor/kernel behavior.
+   - The generated TASK packet MUST include a `### MAY edit` section covering
+     `.github/workflows/powershell.yml`, `Invoke-AiDispatchQueue.ps1`,
+     PowerShell test files under `tools/dispatch-tests/**`, optional
+     PSScriptAnalyzer settings, and only those other `*.ps1` / `*.psm1` files
+     that need no-semantics lint cleanups for the analyzer gate to pass.
+   - The generated TASK packet MUST state that `.ai/dispatch.verify.ps1` is
+     not the place for this new smoke gate; keep the new PowerShell checks in
+     the dedicated workflow/tests unless a later task explicitly changes the
+     canonical verify contract.
+
+   **Allowed file surface**:
+   - MAY add `.github/workflows/powershell.yml`.
+   - MAY add `tools/dispatch-tests/**` Pester tests and helper files.
+   - MAY edit `Invoke-AiDispatchQueue.ps1` only to make the audit-log body
+     generation testable through production code and to fix the unexpanded
+     audit-log variables.
+   - MAY add a PSScriptAnalyzer settings file if needed to keep the rule set
+     explicit.
+   - MAY edit other existing `*.ps1` / `*.psm1` files only for narrowly scoped
+     analyzer cleanups that preserve behavior.
+   - MAY add this dispatch's own handoff packets, handoff sidecars, and queue
+     log as produced by the orchestrator/queue.
+
+   **Files that MUST NOT be touched**:
+   - Do not edit Rust source, Cargo files, architecture-lint source, fixtures,
+     PLAN/Status/HANDOFF/change docs, existing handoff/log artifacts, or
+     `.ai/dispatch.tasks.md`.
+   - Do not add the PowerShell smoke test to `.ai/dispatch.verify.ps1`.
+   - Do not change publish policy, scheduler behavior, dispatch queue labels,
+     retry semantics, or auto-publish eligibility.
+
+   **Pester requirement**:
+   - Add at least one Pester test that exercises the production queue
+     audit-log writer/body builder with synthetic issue/run inputs.
+   - The test MUST assert that the generated log contains the synthetic values
+     for dispatch id, branch, loop exit code, Codex verdict, and loop log path.
+   - The test MUST assert that the generated log contains no unexpanded
+     PowerShell variable tokens matching ``\$[A-Za-z_][A-Za-z0-9_]*``.
+   - The test MUST call production code, not a copied template string. A small
+     pure helper such as `New-DispatchLogBody` is acceptable if
+     `Write-DispatchLog` delegates to it.
+
+   **PSScriptAnalyzer requirement**:
+   - The new workflow MUST install or otherwise make available Pester and
+     PSScriptAnalyzer on `windows-latest`.
+   - The workflow MUST run Pester for `tools/dispatch-tests/**`.
+   - The workflow MUST run PSScriptAnalyzer over tracked `*.ps1` / `*.psm1`
+     files while excluding generated/ignored dispatch scratch such as
+     `.ai/dispatch-*` and `OLD/`.
+   - Any suppression or custom analyzer setting MUST be explicit and justified
+     in code/config comments; do not hide real errors by broadly disabling the
+     analyzer.
+
+   **Halt conditions**:
+   - Halt if making the queue log writer testable would require changing
+     queue selection, branch management, publish policy, retry behavior, issue
+     labelling, or scheduler behavior.
+   - Halt if PSScriptAnalyzer produces a large unrelated remediation set that
+     cannot be cleaned without changing behavior; report the findings and
+     propose a smaller baseline task instead.
+   - Halt if the Pester test cannot exercise production queue log generation
+     without duplicating the template.
+   - Halt if any required fix would touch Rust/Cargo/architecture-lint code or
+     existing generated dispatch artifacts.
+
+   **Verbatim review-gate strings** - the autonomous selector MUST copy these
+   seven strings, character-for-character, into the filed GitHub issue body.
+   No paraphrasing, no substitution, no reflowing. A packet that lacks any one
+   of them verbatim is bounced at review:
+
+   ```
+   MUST add a Windows powershell.yml workflow that runs both Pester and PSScriptAnalyzer
+   MUST add a Pester test for the production queue audit-log writer using synthetic inputs
+   MUST assert the generated audit log contains no unexpanded PowerShell variable tokens matching \$[A-Za-z_][A-Za-z0-9_]*
+   MUST run PSScriptAnalyzer over tracked ps1 and psm1 files while excluding generated dispatch scratch
+   MUST keep the new PowerShell smoke gate out of .ai/dispatch.verify.ps1
+   MUST NOT change publish policy scheduler behavior queue labels retry semantics or auto-publish eligibility
+   MUST NOT edit Rust source Cargo files architecture-lint source fixtures status docs task brief or existing dispatch artifacts
+   ```
+
+   **Verification required**:
+   - `git diff --check` reports no whitespace errors.
+   - The new Pester test passes locally on Windows PowerShell or `pwsh`.
+   - PSScriptAnalyzer passes locally with the same target set/settings used by
+     the workflow.
+   - Static inspection confirms `Invoke-AiDispatchQueue.ps1` still writes the
+     same audit-log sections, now with expanded synthetic/runtime values.
+   - Static inspection confirms `.ai/dispatch.verify.ps1`, Rust/Cargo files,
+     architecture-lint source, scheduler behavior, publish policy, retry
+     semantics, and existing dispatch artifacts were not changed.
