@@ -7081,7 +7081,15 @@ is the only safeguard against selector drift.
    - Static inspection confirms `Invoke-AiDispatchLoop.ps1` and all forbidden
      surfaces are untouched.
 
-60. **Read-only audit: PublishMode branch / NoPublish propagation path.**
+60. **[DONE 2026-05-26 via PR #207 / commit `bf5f62d`] Read-only audit: PublishMode branch / NoPublish propagation path.**
+   Landed via PR #207. The audit classified the observed
+   `queue.publish: skipped (NoPublish=true, eligibleForPublish=true)` behavior
+   as intended documented branch-mode behavior: Auto appends `-NoPublish` when
+   `-PublishMode branch` is selected, Queue computes publish eligibility
+   independently, and branch mode leaves the ready commit local for human PR
+   review. No automation code follow-up was recommended. The original brief is
+   preserved below.
+
    ISSUE-202 and ISSUE-204 both completed control-passed dispatches with local
    ready-for-publish commits, but Queue traced
    `queue.publish: skipped (NoPublish=true, eligibleForPublish=true)` even
