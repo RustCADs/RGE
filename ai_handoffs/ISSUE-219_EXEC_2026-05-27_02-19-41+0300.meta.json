@@ -1,0 +1,25 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-219",
+    "packet_type": "EXEC",
+    "author": "Executor / Claude",
+    "timestamp": "2026-05-27_02-19-41+0300",
+    "related_files": [
+                          "ai_handoffs/ISSUE-219_TASK_2026-05-27_01-32-02+0300.md — TASK packet under audit",
+                          "ai_handoffs/ISSUE-219_EXEC_2026-05-27_01-51-02+0300.md — round-0 EXEC (left untouched per CORRECT:64-68); audit-body still applies except where superseded by this packet\u0027s decision block + substrate prerequisite re-derivation",
+                          "ai_handoffs/ISSUE-219_CORRECT_2026-05-27_02-03-06+0300.md — round-0 Planner CORRECT packet (branch-mode fix only)",
+                          "ai_handoffs/ISSUE-219_EXEC_2026-05-27_02-05-41+0300.md — round-1 EXEC (left untouched per CORRECT:64-68); supersedes round-0 only on `FOLLOW_UP_BRANCH_MODE`, and is itself superseded on the substrate prerequisite by this packet",
+                          "ai_handoffs/ISSUE-219_CORRECT_2026-05-27_02-16-10+0300.md — round-1 Planner CORRECT packet driving this round",
+                          ".ai/dispatch-ISSUE-219/codex.control.round1.json — Codex control review verdict driving this correction round (substrate-prerequisite false-premise finding)",
+                          ".ai/dispatch-ISSUE-219/verification.round1.log — canonical orchestrator verification gate; tail reads `VERIFY OK: all 7 verification step(s) passed.`",
+                          "crates/editor-shell/src/lifecycle/mod.rs — `pub fn with_world(mut world: World) -\u003e Self` at line 567; `new` at 560; `with_world_projection_graph` at 638; `with_render_mesh` at 716",
+                          "crates/editor-shell/tests/time_scale_test.rs — production-style usage of `EditorShell::with_world(world)` at lines 277 and 296",
+                          "editor/rge-editor/Cargo.toml — production deps; no `rge-scene-loader` / `rge-data` edges today",
+                          "editor/rge-editor/src/main.rs — CLI surface; `--glb` is the only flag wired; no `load_scene_into_world` call site",
+                          "plans/BASELINE.md — Phase 9 preflights surface; production-doc target of the selected follow-up"
+                      ],
+    "status": "AWAITING_REVIEW",
+    "handoff_status": "COMPLETE",
+    "next_role": "REVIEWER_AI",
+    "exit_code": 0
+}

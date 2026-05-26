@@ -1,0 +1,21 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-219",
+    "packet_type": "EXEC",
+    "author": "Executor / Claude",
+    "timestamp": "2026-05-27_02-05-41+0300",
+    "related_files": [
+                          "ai_handoffs/ISSUE-219_TASK_2026-05-27_01-32-02+0300.md — TASK packet under audit",
+                          "ai_handoffs/ISSUE-219_EXEC_2026-05-27_01-51-02+0300.md — prior (round-0) EXEC packet; supersedes only the decision block, all audit substance still applies",
+                          "ai_handoffs/ISSUE-219_CORRECT_2026-05-27_02-03-06+0300.md — Planner-issued CORRECT packet driving this correction round",
+                          ".ai/dispatch-ISSUE-219/codex.control.round0.json — Codex control review verdict that flagged the FOLLOW_UP_BRANCH_MODE mismatch",
+                          ".ai/dispatch-ISSUE-219/verification.round0.log — canonical orchestrator verification gate log (tail reads `VERIFY OK: all 7 verification step(s) passed.`)",
+                          "AI_DISPATCH_AUTOMATION.md — orchestrator-packet-shape spec; line-cited",
+                          "ai_handoffs/AI_HANDOFF_PROTOCOL.md — manual packet protocol; line-cited",
+                          "plans/BASELINE.md — Phase 9 preflights surface; production-doc target of the selected follow-up"
+                      ],
+    "status": "AWAITING_REVIEW",
+    "handoff_status": "COMPLETE",
+    "next_role": "REVIEWER_AI",
+    "exit_code": 0
+}
