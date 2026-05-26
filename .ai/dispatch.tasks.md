@@ -6758,7 +6758,15 @@ is the only safeguard against selector drift.
    - Keep this loop-local. Do not move retry policy into the queue, do not add
      new recovery labels, and do not change autonomous selection behavior.
 
-57. **Read-only audit: post-sequence automation safety and throughput validation.**
+57. **[DONE 2026-05-26 via PR #201 / commit `4f85bdd`] Read-only audit: post-sequence automation safety and throughput validation.**
+   Landed via PR #201. The audit found no unsafe publish, semantic-retry,
+   non-transient recovery, or user-work-loss path in the current automation
+   stack. It identified the next smallest safe follow-up as a planner-prompt
+   hardening task: require backtick-quoted path tokens in `### MAY edit` and
+   `### MAY add new files` so the queue scope guard's positive-token parser
+   does not fail closed on otherwise valid control-passed dispatches. The
+   original brief is preserved below.
+
    The seven self-improving automation dispatches have landed:
    watchdog, opt-in preflight audit, JSONL trace persistence, empty-tick
    speedup, failure taxonomy, read-only same-phase retry, transient recovery,
@@ -6875,3 +6883,97 @@ is the only safeguard against selector drift.
    - Static inspection confirms the audit did not edit production files.
    - If Q5 names a follow-up task, it includes exact allowed files,
      must-not-touch surfaces, verification gates, and halt conditions.
+
+58. **Harden planner prompt path-token grammar for queue scope guard compatibility.**
+   Implement the single follow-up recommended by ISSUE-200: make the Codex
+   planner prompt require backtick-quoted path tokens in `### MAY edit` and
+   `### MAY add new files`. This prevents the queue scope guard from failing
+   closed on a control-passed dispatch whose TASK packet lists bare paths, for
+   example `- Invoke-AiDispatchLoop.ps1`, instead of the required
+   backtick-quoted form shown below.
+
+   **Runtime invocation note**: current `ai-auto` count is 134. Run as
+   `.\Invoke-AiDispatchAuto.ps1 -PublishMode branch -MaxAutonomousTasks 135 -TraceTiming`
+   so the cap accommodates exactly this one dispatch and the trace stream
+   records the tick. The scheduler remains disabled and must not be re-enabled
+   by this task.
+
+   **Required TASK packet shape**:
+   - The generated TASK packet MUST include a `### MAY edit` section listing
+     exactly `Invoke-AiDispatchLoop.ps1`.
+   - The generated TASK packet MAY include a `### MAY add new files` section
+     only for this dispatch's own `ai_handoffs/ISSUE-*_TASK_*.md`,
+     `ai_handoffs/ISSUE-*_EXEC_*.md`,
+     `ai_handoffs/ISSUE-*_CORRECT_*.md` packets, matching `.meta.json`
+     sidecars, and its own `ai_dispatch_logs/log_*.md` queue log.
+   - The generated TASK packet MUST state that the implementation is scoped to
+     the `Invoke-PlanFill` planner prompt Rules list only.
+
+   **Allowed file surface**:
+   - EDIT only `Invoke-AiDispatchLoop.ps1`.
+   - MAY add this dispatch's own handoff packets, handoff sidecars, and queue
+     log as produced by the orchestrator/queue.
+
+   **Files that MUST NOT be touched**:
+   - Do not edit `Invoke-AiDispatchAuto.ps1`, `Invoke-AiDispatchQueue.ps1`,
+     `Get-AiDispatchTrends.ps1`, `Get-AiDispatchHealth.ps1`, scheduler
+     scripts, scope guard parser logic, queue publish logic, failure taxonomy,
+     retry/recovery behavior, docs, task brief, workflows, schemas, Rust
+     source, Cargo files, tests, fixtures, status files, existing handoff/log
+     artifacts, or sandbox worktrees.
+   - Do not edit `ai_handoffs/templates/TASK_PACKET.md` in this dispatch.
+     Template hardening is a separate policy decision if the prompt-only fix
+     proves insufficient.
+
+   **Implementation behavior required**:
+   - In the `Invoke-PlanFill` Rules list, add an explicit rule that every path
+     or glob token inside `### MAY edit` and `### MAY add new files` MUST be
+     wrapped in backticks.
+   - The rule MUST say that bare-bulleted paths are invalid for the queue
+     scope guard.
+   - Include a tiny worked example in the prompt text, such as
+     ``- `Invoke-AiDispatchLoop.ps1` ``.
+   - Do not change the scope guard parser, the queue script, task templates,
+     schemas, or generated TASK packet grammar outside this prompt rule.
+   - Do not change Loop runtime behavior outside the literal planner prompt
+     string.
+
+   **Halt conditions**:
+   - Halt if the change requires editing anything except
+     `Invoke-AiDispatchLoop.ps1` plus this dispatch's own generated artifacts.
+   - Halt if the fix requires relaxing or modifying `Invoke-QueueScopeGuard`,
+     `Get-TaskPositiveAllowedTokens`, or the queue parser regex.
+   - Halt if the fix requires editing `ai_handoffs/templates/TASK_PACKET.md`,
+     `.ai/codex_control.schema.json`, `.ai/handoff.schema.json`, Auto, Queue,
+     scheduler, docs, Rust/Cargo files, workflows, or the task brief.
+   - Halt if the prompt-string edit cannot be localized to the
+     `Invoke-PlanFill` Rules list.
+   - Halt if PowerShell parser validation, `git diff --check`, or canonical
+     `.ai/dispatch.verify.ps1` fails.
+
+   **Verbatim review-gate strings** - the autonomous selector MUST copy these
+   eight strings, character-for-character, into the filed GitHub issue body.
+   No paraphrasing, no substitution, no reflowing. A packet that lacks any one
+   of them verbatim is bounced at review:
+
+   ```
+   MUST edit only Invoke-AiDispatchLoop.ps1 plus this dispatch's own ai_handoffs and ai_dispatch_logs artifacts
+   MUST scope the implementation to the Invoke-PlanFill planner prompt Rules list only
+   MUST require every path or glob token in ### MAY edit and ### MAY add new files to be wrapped in backticks
+   MUST state that bare-bulleted paths are invalid for the queue scope guard
+   MUST include a tiny worked example of a backtick-quoted allowed path token
+   MUST NOT edit Invoke-AiDispatchQueue.ps1 Invoke-AiDispatchAuto.ps1 scope guard parser templates schemas docs Rust Cargo workflows scheduler or task brief
+   MUST NOT change runtime behavior outside the literal planner prompt string
+   MUST run PowerShell parser validation for Invoke-AiDispatchLoop.ps1, git diff --check, canonical .ai/dispatch.verify.ps1, and static inspection proving the diff is prompt-string-only
+   ```
+
+   **Verification required**:
+   - PowerShell parser validation for `Invoke-AiDispatchLoop.ps1` reports zero
+     parser errors.
+   - `git diff --check` reports no whitespace errors.
+   - `.ai/dispatch.verify.ps1` passes.
+   - Static inspection confirms the diff is limited to the `Invoke-PlanFill`
+     Rules list prompt string.
+   - Static inspection confirms no changes to Auto, Queue, scope guard parser,
+     templates, schemas, docs, Rust/Cargo files, workflows, scheduler scripts,
+     or the task brief.
