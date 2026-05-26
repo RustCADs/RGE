@@ -1,0 +1,27 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-210",
+    "packet_type": "TASK",
+    "author": "Planner / OpenAI Codex",
+    "timestamp": "2026-05-26_15-11-47+0300",
+    "related_files": [
+                          "AI_DISPATCH_AUTOMATION.md",
+                          "ai_handoffs/AI_HANDOFF_PROTOCOL.md",
+                          "plans/PLAN.md",
+                          "plans/IMPLEMENTATION.md",
+                          "Status.md",
+                          "HANDOFF.md",
+                          "change.md",
+                          "Cargo.toml",
+                          "crates/",
+                          "kernel/",
+                          "editor/",
+                          "runtime/",
+                          "tools/",
+                          "GitHub issue #210"
+                      ],
+    "status": "OPEN",
+    "handoff_status": "COMPLETE",
+    "next_role": "EXECUTOR_AI",
+    "exit_code": 0
+}

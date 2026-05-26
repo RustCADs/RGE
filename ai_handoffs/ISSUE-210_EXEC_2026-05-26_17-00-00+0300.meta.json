@@ -1,0 +1,40 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-210",
+    "packet_type": "EXEC",
+    "author": "Executor / Claude (manual human-directed salvage)",
+    "timestamp": "2026-05-26_17-00-00+0300",
+    "related_files": [
+        "ai_handoffs/ISSUE-210_TASK_2026-05-26_15-11-47+0300.md — read-only audit basis (TASK packet)",
+        "ai_handoffs/ISSUE-210_CORRECT_2026-05-26_15-43-10+0300.md — round-2 correction packet (read-only reference)",
+        "ai_handoffs/ISSUE-210_CORRECT_2026-05-26_15-32-03+0300.md — round-1 correction packet (read-only reference)",
+        "ai_handoffs/ISSUE-210_EXEC_2026-05-26_15-45-39+0300.md — superseded round-2 EXEC (read-only reference; preserved unchanged)",
+        "ai_handoffs/ISSUE-210_EXEC_2026-05-26_15-35-49+0300.md — round-1 EXEC (read-only reference; preserved unchanged)",
+        "ai_handoffs/ISSUE-210_EXEC_2026-05-26_15-22-29+0300.md — round-0 EXEC (read-only reference; preserved unchanged)",
+        ".ai/dispatch-ISSUE-210/codex.control.round2.json — round-2 control verdict that directed this salvage",
+        ".ai/dispatch-ISSUE-210/verification.round2.log — round-2 canonical verification gate (re-checked: VERIFY OK)",
+        ".ai/dispatch-ISSUE-210/verification.round1.log — round-1 canonical verification gate (re-checked: VERIFY OK)",
+        "plans/PLAN.md — read; freeze policy + gates (§0.6, §1.4, §1.15, §13.15, §13.16, §14)",
+        "plans/IMPLEMENTATION.md — read; Phase 9 production-pressure axes (§9)",
+        "Status.md — read (lines 1, 9–15, 115–127, 190–203, 225–241, 370–373)",
+        "HANDOFF.md — read (lines 1–20, 83–98, 1473–1582)",
+        "change.md — read (Select-String evidence at lines 1637 / 1639 / 1641; file size cross-checked)",
+        "Cargo.toml — read (workspace members lines 1–140)",
+        "crates/, kernel/, editor/, runtime/, tools/ — directory listing only",
+        "crates/editor-state/src/ — file listing only; inspector_snapshot.rs head read",
+        "crates/editor-egui-host/Cargo.toml — read"
+    ],
+    "status": "AWAITING_REVIEW",
+    "handoff_status": "COMPLETE",
+    "next_role": "REVIEWER_AI",
+    "exit_code": 0,
+    "source_packet": "ai_handoffs/ISSUE-210_TASK_2026-05-26_15-11-47+0300.md",
+    "deviations": [
+        "None — manual salvage stayed strictly within Task Packet scope and the round-2 CORRECTION packet's report-only envelope. No tracked-file changes. Three prior EXEC reports (round-0/1/2) preserved unmodified as historical evidence."
+    ],
+    "open_questions": [
+        "Line-counting discrepancy between Select-String (canonical per round-2 correction packet) and newline-only tools (grep -n / awk / Read-tool / wc -l). This EXEC uses Select-String positions 1637 / 1639 / 1641 per the re-verification gate; underlying entries are the live-inspector / editor-usability / reflection-scale Phase 9 preflights from 2026-05-21.",
+        "Smallest-safe follow-up remains broadened to two locations (HANDOFF.md:1579 + Status.md:196), unchanged from the round-1 expansion. If reviewer prefers a single-location follow-up or NEEDS_HUMAN, redirect via a new CORRECTION.",
+        "This artifact is a manual human-directed salvage replacing the round-2 autonomous EXEC. If reviewer prefers an alternative salvage shape (amend-in-place of round-2 EXEC vs. new artifact), redirect via CORRECTION or close by human arbitration."
+    ]
+}
