@@ -1,0 +1,14 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-208",
+    "packet_type": "EXEC",
+    "author": "Executor / Claude",
+    "timestamp": "2026-05-26_14-15-02+0300",
+    "related_files": [
+                          "AI_DISPATCH_AUTOMATION.md — added §18 \"Delegated-human auto-publish policy\"; added §18 entry to TOC; added §18 cross-reference in §7.1"
+                      ],
+    "status": "AWAITING_REVIEW",
+    "handoff_status": "COMPLETE",
+    "next_role": "REVIEWER_AI",
+    "exit_code": 0
+}

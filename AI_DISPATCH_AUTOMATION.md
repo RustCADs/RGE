@@ -33,6 +33,7 @@ runs.
 15. Porting to another project
 16. Operational notes
 17. Seven-task arc retrospective (2026-05-22)
+18. Delegated-human auto-publish policy
 
 ---
 
@@ -268,7 +269,10 @@ runner. When no `ai-dispatch` issue is pending, Codex reads the task brief
 hands off to `Invoke-AiDispatchQueue.ps1`. Its `-PublishMode` decides what
 happens to a passed task: `branch` (default) leaves the work on its branch for
 a human to merge, while `main` auto-publishes to `origin/main`. It also halts
-for human review once a capped number of autonomous issues exist.
+for human review once a capped number of autonomous issues exist. The bounded
+conditions under which `-PublishMode main` may be used are spelled out in
+**§18 Delegated-human auto-publish policy**; `-PublishMode branch` is the
+default and remains the safest mode.
 
 `Register-AiDispatchSchedule.ps1` is the **recurring-trigger layer**. It
 registers a Windows Scheduled Task that fires one of the two runners on a fixed
@@ -1118,6 +1122,226 @@ of the same shape, not as a celebration.
   pending tasks plus DONE markers for the consumed ones; do
   not seed a new task in the same commit as a retrospective or
   a doctrine update. Mixing them muddles the audit trail.
+
+---
+
+## 18. Delegated-human auto-publish policy
+
+This section makes the bounded conditions under which `-PublishMode main` may
+run legible and auditable. It is **policy documentation only**. Nothing in this
+section enables, registers, schedules, runs, or defaults `-PublishMode main`,
+and nothing here weakens an existing stop condition, finite cap, verification
+gate, control gate, or human-review boundary documented elsewhere in this
+file. It complements — does not replace — §7.1 (unattended operation), §14
+(known gotchas), and §17.4 (current operating policy).
+
+### 18.1 Default mode and the meaning of delegated-human authorization
+
+- **`-PublishMode branch` is the default and the safest mode** for
+  `Invoke-AiDispatchAuto.ps1`. A passing dispatch leaves the work on its
+  per-issue `ai-dispatch/ISSUE-<n>` branch for a human to review, push, open a
+  PR, and merge. The autonomous loop never touches `origin/main` in this mode.
+- **`-PublishMode main` is not a standing authorization, not a recommended
+  default, and not a scheduler behavior.** It is allowed only as an
+  **explicit, bounded, opt-in human authorization** for a single named batch
+  of work. The human reviewer inspects the batch scope and gates first,
+  selects `-PublishMode main` for that batch only, and lets the batch run to
+  its finite cap; the next batch requires a fresh authorization.
+- **A "delegated-human" run** is therefore: one human, one named batch, one
+  finite cap, one review of the scope and gates beforehand, one auditable
+  trail afterwards. It is not "set and forget," it is not blanket approval
+  for all future tasks, and it is not a recurring schedule.
+- **Repeated bounded batches are the only meaning of "indefinite" operation.**
+  Running the autonomous loop "for a while" means a human authorizes batch 1,
+  reviews the result, authorizes batch 2, and so on. It never means removing
+  the finite cap or a stop condition.
+
+### 18.2 Allowed publish surfaces
+
+Not every surface is appropriate for auto-publish even under delegated-human
+authorization. Surfaces split into two risk tiers:
+
+- **Lower-risk surfaces** (most appropriate for `-PublishMode main` under a
+  delegated-human authorization):
+  - Documentation-only changes (`*.md` outside `ai_handoffs/` /
+    `ai_dispatch_logs/` audit artifacts, ADRs, retrospectives) whose diff is
+    fully contained and easily reverted.
+  - Test-only additions or regression-coverage changes whose diff is confined
+    to test crates / test modules and does not touch production code.
+
+- **Higher-risk surfaces** (default to `-PublishMode branch` and a
+  human-owned PR + merge path, even when a delegated-human authorization is
+  in effect for the batch):
+  - Production Rust source under `crates/**`, `kernel/**`, `editor/**`,
+    `tools/**`.
+  - Scripts (`*.ps1` at the repo root, including
+    `Invoke-AiDispatchLoop.ps1` / `Invoke-AiDispatchQueue.ps1` /
+    `Invoke-AiDispatchAuto.ps1` / `Register-AiDispatchSchedule.ps1` /
+    `Get-AiDispatchHealth.ps1` / `Watch-AiDispatch.ps1` /
+    `Wait-GitHubActions.ps1` / `new-handoff.ps1`).
+  - GitHub Actions workflows under `.github/workflows/**`.
+  - JSON schemas under `.ai/*.schema.json`.
+  - Scheduler configuration (registered Windows Scheduled Tasks, the
+    `Register-AiDispatchSchedule.ps1` artifacts).
+  - Dependency edges and Cargo metadata: `Cargo.toml`, `Cargo.lock`, every
+    `**/Cargo.toml`.
+  - The autonomous task brief `.ai/dispatch.tasks.md` and the canonical
+    verification gate `.ai/dispatch.verify.ps1`.
+
+A delegated-human authorization SHOULD scope `-PublishMode main` to the
+lower-risk surface. A batch that drifts into a higher-risk surface mid-run
+SHOULD trip a stop condition (see §18.4) rather than silently auto-publish.
+
+### 18.3 Cap rules
+
+Every cap that bounds a single dispatch or a single autonomous batch remains
+finite under delegated-human authorization. None of them may be raised to
+"unlimited" or removed in the name of running longer unattended.
+
+- **`-MaxAutonomousTasks`** (on `Invoke-AiDispatchAuto.ps1`) MUST remain a
+  finite integer. The auto driver halts the batch after that many issues are
+  filed and processed; the next batch requires a fresh human authorization.
+- **`-MaxPlanRevisions`** (on `Invoke-AiDispatchLoop.ps1`, 0–5, default `1`)
+  MUST remain finite. Once exhausted, the dispatch aborts rather than loop.
+- **`-MaxCorrectionRounds`** (on `Invoke-AiDispatchLoop.ps1`, 0–5, default
+  `1`; queue/auto layers default `2`) MUST remain finite. Once exhausted, the
+  dispatch aborts rather than loop.
+- **One issue, one branch, one dispatch per queue tick.** The single-run lock
+  in `Invoke-AiDispatchQueue.ps1` is not waived.
+- **"Indefinite" autonomous operation** is **only** the pattern: human
+  authorizes a finite batch → batch runs to its cap → human reviews →
+  human authorizes the next finite batch. The caps themselves stay finite
+  forever.
+
+### 18.4 Stop conditions
+
+The autonomous loop MUST halt the current batch — without auto-publishing
+the in-flight dispatch and without silently advancing to the next task — when
+any of the following occurs. These are minimums; a delegated-human
+authorization may add more, never fewer.
+
+- The canonical verification gate `.ai/dispatch.verify.ps1` exits non-zero
+  (CI would not pass).
+- Codex control returns `needs_changes` beyond `-MaxCorrectionRounds`, or
+  returns `block` at any point.
+- The Claude plan gate returns `needs_changes` beyond `-MaxPlanRevisions`, or
+  returns `block`.
+- Scope drift: the diff touches paths the TASK packet listed as MUST NOT
+  edit, or expands beyond MAY edit.
+- Dirty or unexpected diffs: tracked files outside the dispatch's declared
+  surface are modified; unexpected untracked files appear; a `.meta.json`
+  sidecar is missing where one is required, or present where the TASK forbids
+  it.
+- Missing audit artifacts: the queue audit log
+  (`ai_dispatch_logs/log_*.md`), the EXEC packet, or the control verdict
+  cannot be located for the run.
+- Branch / base mismatch: the dispatch is not on the expected
+  `ai-dispatch/ISSUE-<n>` branch, or `origin/main` has diverged from the
+  expected base, or a fast-forward into `main` is no longer possible.
+- Auth or remote failure: `git push`, `gh`, `claude`, or `codex` fails on
+  auth, network, or rate limits.
+- Any attempted change to scheduler configuration, default
+  `-PublishMode`, the canonical verification gate, schemas, workflows, or
+  any other higher-risk surface from §18.2 that the batch was not explicitly
+  authorized to touch.
+- Any attempted edit to a file the TASK packet enumerated as forbidden, or
+  to an existing handoff/log artifact the TASK packet did not authorize.
+
+A halt under any of these conditions MUST leave the work on its branch for
+human review, MUST NOT fast-forward `main`, and MUST NOT proceed to the next
+batch task without a fresh human authorization.
+
+### 18.5 Rollback behavior
+
+Delegated-human authorization does not waive normal rollback discipline.
+
+- **Unpushed local changes** (work that halted before the auto-publish step,
+  or work on an `ai-dispatch/ISSUE-<n>` branch that was committed locally but
+  not fast-forwarded into `main`):
+  - Leave the branch in place for human inspection by default. The work,
+    packets, and audit log are the diagnostic record.
+  - A human may reset, drop, rename, or salvage the branch as appropriate
+    (see §14.8 for salvage label hygiene and §14.12 for positive-salvage of
+    work blocked by an over-broad task gate).
+  - The autonomous loop MUST NOT silently overwrite, force-reset, or discard
+    a halted branch.
+- **Already-published `main` updates** (a passing dispatch that fast-forwarded
+  into `origin/main` before a downstream problem was discovered):
+  - Stop further autonomous batches immediately — revoke the delegated-human
+    authorization until the regression is understood.
+  - Use **normal git / GitHub revert and audit practice**:
+    `git revert <commit>` or a PR-based revert on top of `main`, with a
+    descriptive commit message and an issue/PR link explaining the rollback.
+    Do not rewrite history on `main`, do not force-push `main`, do not
+    silently mutate published commits.
+  - Cross-reference the rollback in the original dispatch's issue, the
+    autonomous task brief if relevant, and any retrospective.
+- In both cases, the rollback path is the same path a human would take by
+  hand; the automation has no special privilege to bypass it.
+
+### 18.6 Audit requirements
+
+A delegated-human authorization MUST produce a complete, durable audit trail
+for the batch — separate from any chat or terminal scrollback. Each
+autonomous tick that processed an issue MUST leave:
+
+- A committed `ai_dispatch_logs/log_*.md` queue audit log on the
+  dispatch's branch, including the file change list, generated artifacts,
+  Claude marker summary, Codex control JSON, and loop output.
+- The dispatch's handoff packets in `ai_handoffs/`: at minimum the TASK
+  packet and at least one EXEC packet, plus any CORRECTION packets the
+  orchestrator wrote for the run (and the matching `.meta.json` sidecars
+  where the packet permits them).
+- The Codex control verdict JSON (`verdict`, `commit_readiness`,
+  `verification`, `required_fixes`, `changed_files`, `commands_run`) for
+  the run, either via the queue log's inlined block or in the run's scratch
+  directory under `.ai/dispatch-<DispatchId>/`.
+- The verification gate output for the run (the `.ai/dispatch.verify.ps1`
+  result that the orchestrator captured).
+- The full linkage chain: the GitHub issue number, the
+  `ai-dispatch/ISSUE-<n>` branch, the commit SHA(s) the dispatch landed,
+  and — if `-PublishMode main` published it — the fast-forward into
+  `origin/main`.
+
+In addition, the **human authorization itself MUST be recorded** for each
+bounded batch. At minimum:
+
+- Who authorized the batch.
+- The batch's named scope (which task IDs / issues, which surfaces).
+- The cap (`-MaxAutonomousTasks` value used for that batch).
+- The publish mode selected (`branch` or `main`).
+- A note that the scope and gates were reviewed beforehand.
+
+This authorization record can live in the issue comments, the dispatch
+brief, a commit message, a retrospective, or another committed artifact —
+but it MUST be retrievable from `git` / `gh` history after the fact.
+Verbal-only or chat-only authorizations are not sufficient for a
+delegated-human run.
+
+### 18.7 What this dispatch does and does not do
+
+This dispatch (`ISSUE-208`) is a documentation-only change to
+`AI_DISPATCH_AUTOMATION.md`. Explicitly:
+
+- It does **not** enable `-PublishMode main` anywhere.
+- It does **not** register, modify, run, or test a Windows Scheduled Task.
+- It does **not** edit `Invoke-AiDispatchAuto.ps1`,
+  `Invoke-AiDispatchQueue.ps1`, `Invoke-AiDispatchLoop.ps1`,
+  `Register-AiDispatchSchedule.ps1`, `Get-AiDispatchHealth.ps1`,
+  `Watch-AiDispatch.ps1`, `Wait-GitHubActions.ps1`,
+  `.ai/dispatch.verify.ps1`, `.ai/dispatch.tasks.md`, any
+  `.ai/*.schema.json`, any GitHub Actions workflow, any Cargo metadata,
+  any Rust crate or test, or any existing handoff/log artifact.
+- It does **not** change a default `-PublishMode` anywhere, and does
+  **not** imply a standing authorization for `-PublishMode main`.
+- It does **not** broaden the autonomous queue's behavior, the
+  scheduler's behavior, the orchestrator's behavior, or the
+  verification gate's behavior.
+
+The policy documented above takes effect only when a human, in a future
+session, both reviews the batch scope and gates and explicitly invokes
+`Invoke-AiDispatchAuto.ps1` with the corresponding `-PublishMode` /
+`-MaxAutonomousTasks` arguments for that batch.
 
 ---
 
