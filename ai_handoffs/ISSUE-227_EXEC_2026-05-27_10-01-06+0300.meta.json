@@ -1,0 +1,14 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-227_2026-05-27_09-48-27+0300",
+    "packet_type": "EXEC",
+    "author": "Executor / Claude",
+    "timestamp": "2026-05-27_10-01-06+0300",
+    "related_files": [
+                          "Invoke-AiDispatchQueue.ps1 — added `Get-DispatchTerminalLabelPlan`"
+                      ],
+    "status": "AWAITING_REVIEW",
+    "handoff_status": "COMPLETE",
+    "next_role": "REVIEWER_AI",
+    "exit_code": 0
+}

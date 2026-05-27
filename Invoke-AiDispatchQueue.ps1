@@ -1048,6 +1048,82 @@ function Get-FailureTaxonomyLabels {
     return @('ai-dispatch-failure-unknown')
 }
 
+function Get-DispatchTerminalLabelPlan {
+    # Build the deterministic terminal label add/remove plan for the queue's
+    # final `gh issue edit` mutation. Consumes already-computed queue state;
+    # makes no decisions about issue selection, retry eligibility, taxonomy
+    # classification, publish behavior, branch archival, or scheduler/auto
+    # behavior. Three terminal states are reconciled:
+    #
+    #   * Terminal success (RunFailed=$false, WillRetry=$false): adds the
+    #     done label and removes queue/running/retry/failed and every known
+    #     failure-taxonomy label, so a passing run cannot inherit stale
+    #     failure markers from an earlier attempt.
+    #   * Terminal failure (RunFailed=$true, WillRetry=$false): adds done,
+    #     failed, and the caller-selected taxonomy labels; removes
+    #     queue/running/retry and every non-selected failure-taxonomy label,
+    #     so an issue cannot carry contradictory failure classifications.
+    #   * Retry (WillRetry=$true): keeps or adds the queue and retry labels,
+    #     removes running/done/failed and every failure-taxonomy label,
+    #     since taxonomy labels describe a terminal failure outcome, not
+    #     queued retry state.
+    #
+    # Returns [pscustomobject]@{ Add = @(...); Remove = @(...) } with each
+    # list de-duplicated and ordered by first occurrence. Pure and
+    # side-effect-free: covered by Pester under tools/dispatch-tests/**.
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][bool]$WillRetry,
+        [Parameter(Mandatory = $true)][bool]$RunFailed,
+        [Parameter(Mandatory = $true)][string]$QueueLabel,
+        [Parameter(Mandatory = $true)][string]$RunLabel,
+        [Parameter(Mandatory = $true)][string]$DoneLabel,
+        [Parameter(Mandatory = $true)][string]$FailLabel,
+        [Parameter(Mandatory = $true)][string]$RetryLabel,
+        [AllowNull()][AllowEmptyCollection()][string[]]$TaxonomyLabels,
+        [AllowNull()][AllowEmptyCollection()][string[]]$KnownFailureTaxonomyLabels
+    )
+
+    if ($null -eq $TaxonomyLabels)             { $TaxonomyLabels = @() }
+    if ($null -eq $KnownFailureTaxonomyLabels) { $KnownFailureTaxonomyLabels = @() }
+
+    $add    = New-Object System.Collections.Generic.List[string]
+    $remove = New-Object System.Collections.Generic.List[string]
+
+    if ($WillRetry) {
+        $add.Add($QueueLabel)
+        $add.Add($RetryLabel)
+        $remove.Add($RunLabel)
+        $remove.Add($DoneLabel)
+        $remove.Add($FailLabel)
+        foreach ($t in $KnownFailureTaxonomyLabels) { $remove.Add($t) }
+    } elseif ($RunFailed) {
+        $add.Add($DoneLabel)
+        $add.Add($FailLabel)
+        foreach ($t in $TaxonomyLabels) { $add.Add($t) }
+        $remove.Add($QueueLabel)
+        $remove.Add($RunLabel)
+        $remove.Add($RetryLabel)
+        $selected = @{}
+        foreach ($t in $TaxonomyLabels) { $selected[$t] = $true }
+        foreach ($t in $KnownFailureTaxonomyLabels) {
+            if (-not $selected.ContainsKey($t)) { $remove.Add($t) }
+        }
+    } else {
+        $add.Add($DoneLabel)
+        $remove.Add($QueueLabel)
+        $remove.Add($RunLabel)
+        $remove.Add($RetryLabel)
+        $remove.Add($FailLabel)
+        foreach ($t in $KnownFailureTaxonomyLabels) { $remove.Add($t) }
+    }
+
+    return [pscustomobject]@{
+        Add    = @($add    | Select-Object -Unique)
+        Remove = @($remove | Select-Object -Unique)
+    }
+}
+
 # --- Environment -----------------------------------------------------------
 
 # Testability seam: when RGE_AI_DISPATCH_QUEUE_SKIP_MAIN is set, return
@@ -1540,25 +1616,35 @@ $footerLine
         Write-Output "WARNING: could not post result comment (exit $($comment.Code)): $($comment.Text)"
     }
 
-    if ($willRetry) {
-        # Re-queue for one automatic retry: keep the queue label so the issue
-        # is re-selected, drop running, add the retry marker. No done/failed.
-        $relabel = @('issue', 'edit', "$($issue.number)", '--repo', $repoSlug,
-            '--remove-label', $runLabel, '--add-label', $retryLabel)
-    } else {
-        $relabel = @('issue', 'edit', "$($issue.number)", '--repo', $repoSlug,
-            '--remove-label', $runLabel, '--remove-label', $QueueLabel, '--add-label', $doneLabel)
-        if ($isRetry) { $relabel += @('--remove-label', $retryLabel) }
-        if ($runFailed) { $relabel += @('--add-label', $failLabel) }
-        foreach ($tl in $taxonomyLabels) {
-            $relabel += @('--add-label', $tl)
-        }
-    }
+    # Build the deterministic terminal label add/remove plan from already-
+    # computed queue state. The helper is pure and side-effect-free; the queue
+    # only consumes its output here, so retry eligibility, taxonomy
+    # classification, publish behavior, branch archival, and scheduler/auto
+    # behavior remain untouched.
+    $knownFailureTaxonomyLabels = @($labelSpec |
+        Where-Object { $_.Name -like 'ai-dispatch-failure-*' } |
+        ForEach-Object { $_.Name })
+    $labelPlan = Get-DispatchTerminalLabelPlan `
+        -WillRetry $willRetry `
+        -RunFailed $runFailed `
+        -QueueLabel $QueueLabel `
+        -RunLabel $runLabel `
+        -DoneLabel $doneLabel `
+        -FailLabel $failLabel `
+        -RetryLabel $retryLabel `
+        -TaxonomyLabels $taxonomyLabels `
+        -KnownFailureTaxonomyLabels $knownFailureTaxonomyLabels
+    $relabel = @('issue', 'edit', "$($issue.number)", '--repo', $repoSlug)
+    foreach ($l in $labelPlan.Add)    { $relabel += @('--add-label', $l) }
+    foreach ($l in $labelPlan.Remove) { $relabel += @('--remove-label', $l) }
     Write-TimingTrace "queue.github: relabel start"
     $rl = Invoke-Tool -Exe 'gh' -CmdArgs $relabel
     Write-TimingTrace "queue.github: relabel done (exit=$($rl.Code))"
-    # Verify the label mutation actually took. A partial gh edit (e.g. removed
-    # running but did not add retry) would otherwise loop forever or never halt.
+    # Verify the label mutation actually took, asserting both presence of every
+    # planned add label and absence of every planned remove label. A partial
+    # gh edit (e.g. running was removed but retry was never added, or a stale
+    # taxonomy label survived a terminal success) would otherwise let the
+    # autonomous driver loop forever or never halt.
     $labelOk = $false
     if ($rl.Code -eq 0) {
         $lv = Invoke-Tool -Exe 'gh' -CmdArgs @(
@@ -1566,20 +1652,13 @@ $footerLine
         if ($lv.Code -eq 0) {
             $nowLabels = @()
             try { $nowLabels = @(($lv.Text | ConvertFrom-Json).labels | ForEach-Object { $_.name }) } catch { }
-            if ($willRetry) {
-                $labelOk = ($nowLabels -contains $retryLabel) -and
-                           ($nowLabels -notcontains $runLabel) -and
-                           ($nowLabels -contains $QueueLabel)
-            } else {
-                $labelOk = ($nowLabels -contains $doneLabel) -and
-                           ($nowLabels -notcontains $runLabel) -and
-                           ($nowLabels -notcontains $QueueLabel) -and
-                           ($nowLabels -notcontains $retryLabel) -and
-                           ((-not $runFailed) -or ($nowLabels -contains $failLabel))
-                if ($labelOk -and $runFailed) {
-                    foreach ($tl in $taxonomyLabels) {
-                        if ($nowLabels -notcontains $tl) { $labelOk = $false; break }
-                    }
+            $labelOk = $true
+            foreach ($l in $labelPlan.Add) {
+                if ($nowLabels -notcontains $l) { $labelOk = $false; break }
+            }
+            if ($labelOk) {
+                foreach ($l in $labelPlan.Remove) {
+                    if ($nowLabels -contains $l) { $labelOk = $false; break }
                 }
             }
         }

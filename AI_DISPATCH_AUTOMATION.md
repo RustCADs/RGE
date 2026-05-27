@@ -955,6 +955,45 @@ document the reason in the issue. This is distinct from §14.10: a
 designed `EXEC_STATUS: blocked` halt is terminal; an accidentally bad
 task gate is task-author error and can be corrected by human review.
 
+### 14.13 Terminal label-state reconciliation is single-source
+
+**Symptom:** an issue ends a queue run carrying a label combination that
+no single state allows — e.g. `ai-dispatch-done` alongside a stale
+`ai-dispatch-failure-timeout` from a prior attempt, or `ai-dispatch-retry`
+alongside `ai-dispatch-failed` after a corrected re-queue — and the
+autonomous driver or human triage cannot tell which state actually won.
+
+**Cause:** the terminal `gh issue edit` was previously built up from
+per-branch `if` clauses that only added or removed the labels relevant
+to that branch. Stale labels left over from earlier attempts (or from
+the prior taxonomy classification of the same issue) were never
+explicitly removed.
+
+**Fix:** `Invoke-AiDispatchQueue.ps1` builds the terminal label add/remove
+plan through one pure helper, `Get-DispatchTerminalLabelPlan`, which
+reconciles all three states deterministically:
+
+- **Terminal success** (`runFailed = $false`, `willRetry = $false`):
+  adds `ai-dispatch-done`; removes `ai-dispatch`, `ai-dispatch-running`,
+  `ai-dispatch-retry`, `ai-dispatch-failed`, and every
+  `ai-dispatch-failure-*` taxonomy label.
+- **Terminal failure** (`runFailed = $true`, `willRetry = $false`):
+  adds `ai-dispatch-done`, `ai-dispatch-failed`, and the selected
+  taxonomy labels; removes `ai-dispatch`, `ai-dispatch-running`,
+  `ai-dispatch-retry`, and every non-selected `ai-dispatch-failure-*`
+  taxonomy label.
+- **Retry** (`willRetry = $true`): keeps or adds `ai-dispatch` and
+  `ai-dispatch-retry`; removes `ai-dispatch-running`, `ai-dispatch-done`,
+  `ai-dispatch-failed`, and every `ai-dispatch-failure-*` taxonomy label
+  (taxonomy labels describe a terminal failure, not queued retry state).
+
+Post-mutation verification asserts both presence of every planned add
+label and absence of every planned remove label; a partial `gh edit`
+result fails the run non-zero so the autonomous driver halts rather
+than loops on contradictory labels. The helper itself is pure and
+covered by Pester under `tools/dispatch-tests/**` so the convention is
+exercised without any live GitHub calls.
+
 ---
 
 ## 15. Porting to another project
