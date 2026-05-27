@@ -1,3 +1,6 @@
 *.rs   text eol=lf
 *.toml text eol=lf
 *.lock text eol=lf
+*.rge-project text eol=lf
+*.rge-scene text eol=lf
+*.rge-prefab text eol=lf

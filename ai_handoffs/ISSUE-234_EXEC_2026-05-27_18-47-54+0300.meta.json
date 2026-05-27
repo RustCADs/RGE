@@ -1,0 +1,25 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-234",
+    "packet_type": "EXEC",
+    "author": "Executor / Claude",
+    "timestamp": "2026-05-27_18-47-54+0300",
+    "related_files": [
+                          "`.gitattributes` — added LF-normalization rules for `*.rge-project`, `*.rge-scene`, `*.rge-prefab`",
+                          "`crates/rge-data/tests/fixtures/sample_prefab.rge-prefab` — checkout renormalized to LF (no content change)",
+                          "`crates/rge-data/tests/fixtures/sample_project.rge-project` — checkout renormalized to LF (no content change)",
+                          "`crates/rge-data/tests/fixtures/sample_scene.rge-scene` — checkout renormalized to LF (no content change)",
+                          "`crates/rge-data/tests/fixtures/v0.0_to_v0.1_migration_input.rge-scene` — checkout renormalized to LF (no content change)",
+                          "`golden-projects/cad-parametric/.rge-project` — checkout renormalized to LF (no content change)",
+                          "`golden-projects/material-zoo/.rge-project` — checkout renormalized to LF (no content change)",
+                          "`golden-projects/physics-puzzle/.rge-project` — checkout renormalized to LF (no content change)",
+                          "`golden-projects/simple-scene/.rge-project` — checkout renormalized to LF (no content change)",
+                          "`golden-projects/simple-scene/scenes/main.rge-scene` — checkout renormalized to LF (no content change)",
+                          "`golden-projects/skinned-character/.rge-project` — checkout renormalized to LF (no content change)",
+                          "`golden-projects/stress-world/.rge-project` — checkout renormalized to LF (no content change)"
+                      ],
+    "status": "AWAITING_REVIEW",
+    "handoff_status": "COMPLETE",
+    "next_role": "REVIEWER_AI",
+    "exit_code": 0
+}
