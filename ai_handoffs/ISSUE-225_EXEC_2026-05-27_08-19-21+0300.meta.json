@@ -1,0 +1,17 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-225",
+    "packet_type": "EXEC",
+    "author": "Executor / Claude",
+    "timestamp": "2026-05-27_08-19-21+0300",
+    "related_files": [
+                          "editor/rge-editor/Cargo.toml — added `rge-data`, `rge-scene-loader`, and `ron` direct dependency edges",
+                          "Cargo.lock — edge-only addition of `rge-data`, `rge-scene-loader`, `ron` to the `rge-editor` package dependency list",
+                          "editor/rge-editor/src/main.rs — added `--scene \u003cpath\u003e` CLI flag, mutual exclusion with `--glb`, scene-load helper, `main()` wiring to `EditorShell::with_world`, and inline tests",
+                          "ai_handoffs/ISSUE-225_TASK_2026-05-27_07-55-15+0300.md — TASK packet (reference only; not edited)"
+                      ],
+    "status": "AWAITING_REVIEW",
+    "handoff_status": "COMPLETE",
+    "next_role": "REVIEWER_AI",
+    "exit_code": 0
+}

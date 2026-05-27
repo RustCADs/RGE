@@ -96,15 +96,23 @@ const ENTITY_OWNER: BRepOwnerId = BRepOwnerId::from_bytes([0x42; 16]);
 
 /// Parsed command-line arguments.
 ///
-/// v0 has a single optional flag (`--glb <path>`); future flags slot
-/// into this struct additively without touching call sites.
+/// Two optional, mutually-exclusive load flags (`--glb <path>` and
+/// `--scene <path>`); future flags slot into this struct additively
+/// without touching call sites.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 struct Cli {
     /// Path supplied via `--glb <path>`, or `None` if the flag was
     /// absent. When `Some(path)`, the editor loads the glTF/GLB at
-    /// that path as a render-only mesh; when `None`, the editor runs
-    /// the default cuboid demo.
+    /// that path as a render-only mesh; when `None` (and `scene_path`
+    /// is also `None`), the editor runs the default cuboid demo.
     glb_path: Option<PathBuf>,
+    /// Path supplied via `--scene <path>`, or `None` if the flag was
+    /// absent. When `Some(path)`, the editor parses the file as either
+    /// an `rge_data::Project` (`.rge-project` — first scene loaded) or
+    /// an `rge_data::Scene` (`.rge-scene`) and constructs an
+    /// [`EditorShell::with_world`] from the resulting ECS world.
+    /// Mutually exclusive with `glb_path` (validated by `parse_args`).
+    scene_path: Option<PathBuf>,
 }
 
 /// Error returned by [`parse_args`] for malformed CLI inputs. The
@@ -114,6 +122,13 @@ struct Cli {
 enum CliError {
     /// `--glb` was supplied without a following path argument.
     MissingGlbPath,
+    /// `--scene` was supplied without a following path argument.
+    MissingScenePath,
+    /// `--glb` and `--scene` were both supplied. The two load paths
+    /// are mutually exclusive: `--glb` is render-only mesh ingestion
+    /// without an ECS world, `--scene` is ECS-world scene-load
+    /// without render-mesh ingestion.
+    GlbAndSceneConflict,
     /// An argument was not recognised (e.g. typo, unsupported flag).
     UnknownArg(String),
 }
@@ -122,6 +137,10 @@ impl std::fmt::Display for CliError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             CliError::MissingGlbPath => write!(f, "--glb requires a path argument"),
+            CliError::MissingScenePath => write!(f, "--scene requires a path argument"),
+            CliError::GlbAndSceneConflict => {
+                write!(f, "--glb and --scene are mutually exclusive")
+            }
             CliError::UnknownArg(a) => write!(f, "unknown argument: {a}"),
         }
     }
@@ -134,13 +153,18 @@ impl std::fmt::Display for CliError {
 ///
 /// Supported syntax:
 ///
-/// - No args → default cuboid demo (`Cli { glb_path: None }`).
+/// - No args → default cuboid demo (`Cli { glb_path: None, scene_path:
+///   None }`).
 /// - `--glb <path>` → render-only mesh from that path
-///   (`Cli { glb_path: Some(path) }`).
+///   (`Cli { glb_path: Some(path), scene_path: None }`).
+/// - `--scene <path>` → load `.rge-project` or `.rge-scene` into an
+///   ECS world (`Cli { glb_path: None, scene_path: Some(path) }`).
 ///
-/// Any other input is a [`CliError`]. We don't accept positional
-/// arguments at v0 to keep the future flag set (`--obj`, `--stl`,
-/// `--scene`) unambiguous.
+/// `--glb` and `--scene` are mutually exclusive and yield
+/// [`CliError::GlbAndSceneConflict`] when both appear (in either
+/// order). Any other input is a [`CliError`]. We don't accept
+/// positional arguments at v0 to keep the future flag set (`--obj`,
+/// `--stl`) unambiguous.
 fn parse_args(args: &[String]) -> Result<Cli, CliError> {
     let mut cli = Cli::default();
     let mut iter = args.iter();
@@ -148,12 +172,160 @@ fn parse_args(args: &[String]) -> Result<Cli, CliError> {
         match arg.as_str() {
             "--glb" => {
                 let path = iter.next().ok_or(CliError::MissingGlbPath)?;
+                if cli.scene_path.is_some() {
+                    return Err(CliError::GlbAndSceneConflict);
+                }
                 cli.glb_path = Some(PathBuf::from(path));
+            }
+            "--scene" => {
+                let path = iter.next().ok_or(CliError::MissingScenePath)?;
+                if cli.glb_path.is_some() {
+                    return Err(CliError::GlbAndSceneConflict);
+                }
+                cli.scene_path = Some(PathBuf::from(path));
             }
             other => return Err(CliError::UnknownArg(other.to_string())),
         }
     }
     Ok(cli)
+}
+
+// ---------------------------------------------------------------------------
+// ISSUE-225 — `--scene <path>` load-only helper
+// ---------------------------------------------------------------------------
+
+/// Errors that can occur while loading a `--scene <path>` argument.
+/// Surfaces as a one-line stderr message; the binary exits with
+/// [`ExitCode::FAILURE`] (1) on any of these — distinct from the
+/// `ExitCode::from(2)` used for CLI-parse errors.
+#[derive(Debug)]
+enum SceneLoadCliError {
+    /// File extension was neither `.rge-project` nor `.rge-scene`.
+    UnsupportedExtension(PathBuf),
+    /// Reading the file from disk failed.
+    Read {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    /// RON parse of `.rge-project` failed.
+    ParseProject {
+        path: PathBuf,
+        source: ron::de::SpannedError,
+    },
+    /// RON parse of `.rge-scene` failed.
+    ParseScene {
+        path: PathBuf,
+        source: ron::de::SpannedError,
+    },
+    /// `.rge-project` has an empty `scenes` list (no scene to load).
+    EmptyProjectScenes(PathBuf),
+    /// `.rge-project` parent directory is missing (path has no
+    /// directory component — e.g. a bare filename with no parent).
+    ProjectHasNoParentDir(PathBuf),
+    /// `rge_scene_loader::load_scene_into_world` returned an error.
+    Loader(rge_scene_loader::SceneLoadError),
+}
+
+impl std::fmt::Display for SceneLoadCliError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SceneLoadCliError::UnsupportedExtension(p) => write!(
+                f,
+                "--scene {} has unsupported extension (expected .rge-project or .rge-scene)",
+                p.display()
+            ),
+            SceneLoadCliError::Read { path, source } => {
+                write!(f, "read {}: {source}", path.display())
+            }
+            SceneLoadCliError::ParseProject { path, source } => {
+                write!(f, "parse .rge-project {}: {source}", path.display())
+            }
+            SceneLoadCliError::ParseScene { path, source } => {
+                write!(f, "parse .rge-scene {}: {source}", path.display())
+            }
+            SceneLoadCliError::EmptyProjectScenes(p) => write!(
+                f,
+                ".rge-project {} has no scenes (expected at least one entry in `scenes`)",
+                p.display()
+            ),
+            SceneLoadCliError::ProjectHasNoParentDir(p) => write!(
+                f,
+                ".rge-project {} has no parent directory to resolve relative scene paths against",
+                p.display()
+            ),
+            SceneLoadCliError::Loader(e) => write!(f, "load scene into world: {e}"),
+        }
+    }
+}
+
+/// Load a `.rge-project` (resolving its first scene relative to the
+/// project directory) or a `.rge-scene` (parsed directly) into a fresh
+/// `rge_kernel_ecs::World` via [`rge_scene_loader::load_scene_into_world`].
+///
+/// Dispatch shape mirrors `crates/rge-scene-loader/tests/simple_scene.rs`
+/// so the editor's `--scene <path>` behaviour stays aligned with the
+/// loader's reference contract. Pure I/O + RON + loader call — no GPU,
+/// no winit, no CAD projection — so the helper can be exercised
+/// directly from `#[cfg(test)]` without a render context.
+fn load_scene_world_from_path(
+    path: &std::path::Path,
+) -> Result<rge_kernel_ecs::World, SceneLoadCliError> {
+    // `Path::extension()` returns `None` for the canonical project
+    // file name `.rge-project` (Rust treats a leading-dot-only name as
+    // having no extension), so dispatch on `file_name()` instead. The
+    // project convention is a literal `.rge-project` at the project
+    // root; scene files use a `<name>.rge-scene` suffix.
+    let file_name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+    let kind = if file_name == ".rge-project" {
+        "rge-project"
+    } else if file_name.ends_with(".rge-scene") {
+        "rge-scene"
+    } else {
+        ""
+    };
+    let scene: rge_data::Scene = match kind {
+        "rge-project" => {
+            let raw = std::fs::read_to_string(path).map_err(|e| SceneLoadCliError::Read {
+                path: path.to_path_buf(),
+                source: e,
+            })?;
+            let project: rge_data::Project =
+                ron::from_str(&raw).map_err(|e| SceneLoadCliError::ParseProject {
+                    path: path.to_path_buf(),
+                    source: e,
+                })?;
+            let scene_rel = project
+                .scenes
+                .first()
+                .ok_or_else(|| SceneLoadCliError::EmptyProjectScenes(path.to_path_buf()))?;
+            let project_dir = path
+                .parent()
+                .ok_or_else(|| SceneLoadCliError::ProjectHasNoParentDir(path.to_path_buf()))?;
+            let scene_path = project_dir.join(scene_rel.as_str());
+            let scene_raw =
+                std::fs::read_to_string(&scene_path).map_err(|e| SceneLoadCliError::Read {
+                    path: scene_path.clone(),
+                    source: e,
+                })?;
+            ron::from_str(&scene_raw).map_err(|e| SceneLoadCliError::ParseScene {
+                path: scene_path,
+                source: e,
+            })?
+        }
+        "rge-scene" => {
+            let raw = std::fs::read_to_string(path).map_err(|e| SceneLoadCliError::Read {
+                path: path.to_path_buf(),
+                source: e,
+            })?;
+            ron::from_str(&raw).map_err(|e| SceneLoadCliError::ParseScene {
+                path: path.to_path_buf(),
+                source: e,
+            })?
+        }
+        _ => return Err(SceneLoadCliError::UnsupportedExtension(path.to_path_buf())),
+    };
+
+    rge_scene_loader::load_scene_into_world(&scene).map_err(SceneLoadCliError::Loader)
 }
 
 // ---------------------------------------------------------------------------
@@ -742,10 +914,48 @@ fn main() -> ExitCode {
         Ok(cli) => cli,
         Err(e) => {
             eprintln!("rge-editor: {e}");
-            eprintln!("usage: rge-editor [--glb <path>]");
+            eprintln!("usage: rge-editor [--glb <path> | --scene <path>]");
             return ExitCode::from(2);
         }
     };
+
+    // ---- ISSUE-225 — `--scene <path>` load-only branch ---------------
+    // Mutually exclusive with `--glb` (parse-time rejection); checked
+    // before the `--glb` match so the scene path can short-circuit the
+    // winit + render-mesh wiring entirely.
+    if let Some(scene_path) = cli.scene_path.as_ref() {
+        let world = match load_scene_world_from_path(scene_path) {
+            Ok(w) => w,
+            Err(e) => {
+                eprintln!(
+                    "rge-editor: failed to load --scene {}: {e}",
+                    scene_path.display()
+                );
+                return ExitCode::FAILURE;
+            }
+        };
+        // `EditorShell::with_world` takes the editor-shell wrapper
+        // `World` (`rge_editor_shell::world::World`), not the kernel
+        // world the loader returns. The wrapper exposes `kernel_mut()`
+        // as the only public ingress for an externally-built kernel
+        // world; replacing its default-empty inner kernel with the
+        // loader's populated one preserves the wrapper's TimeScale
+        // resource contract (`with_world` inserts a default if the
+        // caller has not pre-installed one — the loader never does).
+        let mut shell_world = rge_editor_shell::world::World::new();
+        *shell_world.kernel_mut() = world;
+        let shell = EditorShell::with_world(shell_world);
+        let mut app = EditorApp {
+            shell,
+            watcher: None,
+        };
+        let event_loop = EventLoop::new().expect("event loop");
+        if let Err(e) = event_loop.run_app(&mut app) {
+            eprintln!("rge-editor: run_app: {e}");
+            return ExitCode::FAILURE;
+        }
+        return ExitCode::SUCCESS;
+    }
 
     // ---- Branch on --glb flag ----------------------------------------
     let (shell, watcher) = match cli.glb_path.as_ref() {
@@ -900,6 +1110,95 @@ mod tests {
         match err {
             CliError::UnknownArg(s) => assert_eq!(s, "--unknown"),
             other => panic!("expected UnknownArg(\"--unknown\"), got {other:?}"),
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // ISSUE-225 — `--scene <path>` CLI + load-helper coverage
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn scene_flag_with_path_captures_path() {
+        let cli = parse_args(&args(&["--scene", "demo.rge-project"])).expect("parse");
+        assert_eq!(cli.scene_path, Some(PathBuf::from("demo.rge-project")));
+        assert!(cli.glb_path.is_none());
+    }
+
+    #[test]
+    fn scene_flag_with_rge_scene_path_captures_path() {
+        let cli = parse_args(&args(&["--scene", "scenes/main.rge-scene"])).expect("parse");
+        assert_eq!(cli.scene_path, Some(PathBuf::from("scenes/main.rge-scene")));
+    }
+
+    #[test]
+    fn scene_flag_without_path_returns_missing_scene_path() {
+        let err = parse_args(&args(&["--scene"])).expect_err("must error");
+        assert_eq!(err, CliError::MissingScenePath);
+    }
+
+    #[test]
+    fn scene_then_glb_returns_conflict() {
+        let err = parse_args(&args(&["--scene", "a.rge-project", "--glb", "b.glb"]))
+            .expect_err("must error");
+        assert_eq!(err, CliError::GlbAndSceneConflict);
+    }
+
+    #[test]
+    fn glb_then_scene_returns_conflict() {
+        let err = parse_args(&args(&["--glb", "b.glb", "--scene", "a.rge-project"]))
+            .expect_err("must error");
+        assert_eq!(err, CliError::GlbAndSceneConflict);
+    }
+
+    #[test]
+    fn scene_cli_error_display_lines_match_glb_style() {
+        // Pin the wording so future refactors stay aligned with the
+        // existing one-line stderr posture used by `--glb` errors.
+        assert_eq!(
+            format!("{}", CliError::MissingScenePath),
+            "--scene requires a path argument"
+        );
+        assert_eq!(
+            format!("{}", CliError::GlbAndSceneConflict),
+            "--glb and --scene are mutually exclusive"
+        );
+    }
+
+    #[test]
+    fn load_scene_world_from_golden_project_yields_two_entities() {
+        // Loads the tracked golden simple-scene .rge-project via the
+        // helper and asserts the resulting world has exactly two
+        // entities, matching the invariant in
+        // `crates/rge-scene-loader/tests/simple_scene.rs`.
+        let project_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("golden-projects")
+            .join("simple-scene")
+            .join(".rge-project");
+        assert!(
+            project_path.exists(),
+            "tracked golden project must exist at {}",
+            project_path.display()
+        );
+        let world = load_scene_world_from_path(&project_path).expect("load golden simple-scene");
+        assert_eq!(
+            world.entity_count(),
+            2,
+            "golden simple-scene must load exactly two entities (Camera + KeyLight)"
+        );
+    }
+
+    #[test]
+    fn load_scene_world_from_unsupported_extension_returns_error() {
+        // Bare-filename path with an unrelated extension exercises the
+        // UnsupportedExtension branch without touching the filesystem.
+        let result = load_scene_world_from_path(std::path::Path::new("not-a-scene.txt"));
+        match result {
+            Err(SceneLoadCliError::UnsupportedExtension(p)) => {
+                assert_eq!(p, std::path::PathBuf::from("not-a-scene.txt"));
+            }
+            other => panic!("expected UnsupportedExtension, got {other:?}"),
         }
     }
 

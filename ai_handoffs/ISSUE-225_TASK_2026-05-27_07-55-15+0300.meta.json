@@ -1,0 +1,21 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-225",
+    "packet_type": "TASK",
+    "author": "Codex",
+    "timestamp": "2026-05-27_07-55-15+0300",
+    "related_files": [
+                          "editor/rge-editor/Cargo.toml",
+                          "Cargo.lock",
+                          "editor/rge-editor/src/main.rs",
+                          "editor/rge-editor/tests/",
+                          "ai_handoffs/ISSUE-225_TASK_2026-05-27_07-55-15+0300.md",
+                          "ai_handoffs/ISSUE-225_EXEC_*.md",
+                          "ai_handoffs/ISSUE-225_*.meta.json",
+                          "ai_dispatch_logs/log_*ISSUE-225*.md"
+                      ],
+    "status": "OPEN",
+    "handoff_status": "COMPLETE",
+    "next_role": "EXECUTOR_AI",
+    "exit_code": 0
+}

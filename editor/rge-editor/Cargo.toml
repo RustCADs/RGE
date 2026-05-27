@@ -28,6 +28,14 @@ rge-kernel-ecs      = { path = "../../kernel/ecs" }
 # game-domain. `rge-editor` is not a renderer crate.
 rge-io-gltf         = { path = "../../crates/io-gltf" }
 rge-brep-render     = { path = "../../crates/brep-render" }
+# ISSUE-225 — `--scene <path>` load-only path. `rge-data` parses the
+# `.rge-project` / `.rge-scene` RON; `rge-scene-loader` lands the parsed
+# `Scene` into a fresh `rge_kernel_ecs::World`; `ron` deserializes the
+# manifest text. Path-dep + workspace-`ron` conventions match the
+# sibling `runtime-headless` binary that already uses these crates.
+rge-data            = { path = "../../crates/rge-data" }
+rge-scene-loader    = { path = "../../crates/rge-scene-loader" }
+ron                 = { workspace = true }
 # Dispatch J — CPU-bake accumulated glTF TRS before `RenderMesh::from_buffers`
 # so imported meshes render at their world-space pose, not at the origin.
 # Editor-tier binary; glam dep is unrelated to `forbidden-dep` rule 6.
