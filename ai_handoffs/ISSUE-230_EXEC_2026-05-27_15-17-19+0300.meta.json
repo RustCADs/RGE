@@ -1,0 +1,14 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-230",
+    "packet_type": "EXEC",
+    "author": "Executor / Claude",
+    "timestamp": "2026-05-27T15:17:19+03:00",
+    "related_files": [
+                          "testResults.xml — removed out-of-scope Pester artifact from repository root (no other source/test/doc/script edits in this round)"
+                      ],
+    "status": "AWAITING_REVIEW",
+    "handoff_status": "COMPLETE",
+    "next_role": "REVIEWER_AI",
+    "exit_code": 0
+}

@@ -28,7 +28,9 @@
 
 .PARAMETER PublishMode
     Autonomous only. 'branch' (default) leaves passed work on a branch for a
-    human to merge; 'main' auto-publishes to origin/main.
+    human to merge; 'main' auto-publishes to origin/main; 'pr' pushes the
+    dispatch branch and opens a pull request targeting main without merging
+    or pushing origin/main and without closing the source issue.
 
 .PARAMETER MaxAutonomousTasks
     Autonomous only. Halt for human review after this many tasks. Default 5.
@@ -83,7 +85,7 @@ param(
     [switch]$Autonomous,
 
     [Parameter(ParameterSetName = 'Register')]
-    [ValidateSet('branch', 'main')]
+    [ValidateSet('branch', 'main', 'pr')]
     [string]$PublishMode = 'branch',
 
     [Parameter(ParameterSetName = 'Register')]

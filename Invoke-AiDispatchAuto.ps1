@@ -27,12 +27,18 @@
       branch (default) - work stays on its ai-dispatch/ISSUE-* branch and the
                          issue stays open; a human reviews and merges it.
       main             - the queue fast-forwards origin/main automatically.
+      pr               - the queue pushes the dispatch branch and opens a
+                         GitHub pull request targeting main. Nothing is merged
+                         or pushed to origin/main, and the source issue is not
+                         auto-closed -- the human reviewer who merges the PR
+                         also owns issue closure.
 
     The loop is INERT until .ai/dispatch.tasks.md is populated with real
     tasks; an empty or instructions-only brief selects nothing.
 
 .PARAMETER PublishMode
-    'branch' (default, human-gated publish) or 'main' (auto-publish).
+    'branch' (default, human-gated publish), 'main' (auto-publish), or 'pr'
+    (push the dispatch branch and open a pull request targeting main).
 
 .PARAMETER MaxAutonomousTasks
     Halt for human review once this many 'ai-auto' issues exist. Default 5.
@@ -53,6 +59,7 @@
     .\Invoke-AiDispatchAuto.ps1 -DryRun
     .\Invoke-AiDispatchAuto.ps1                      # branch mode (default)
     .\Invoke-AiDispatchAuto.ps1 -PublishMode main    # auto-publish mode
+    .\Invoke-AiDispatchAuto.ps1 -PublishMode pr      # push + open a PR
 
 .NOTES
     Requires git, gh (authenticated), codex, powershell.exe, and
@@ -60,7 +67,7 @@
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('branch', 'main')]
+    [ValidateSet('branch', 'main', 'pr')]
     [string]$PublishMode = 'branch',
 
     [ValidateRange(1, 200)]
@@ -894,7 +901,14 @@ Write-TimingTrace "auto.tick: queue-invocation start"
 Write-Output '================================================================'
 $queueArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $queueScript,
     '-MaxPlanRevisions', $MaxPlanRevisions, '-MaxCorrectionRounds', $MaxCorrectionRounds)
-if ($PublishMode -eq 'branch') { $queueArgs += '-NoPublish' }
+# Map Auto's PublishMode to the queue's parameters. `branch` retains the
+# legacy `-NoPublish` switch so the existing queue-test surface stays intact;
+# `pr` routes to the queue's new `-PublishMode pr` PR-publish path; `main`
+# leaves the queue at its default auto-publish behavior (no extra flags).
+switch ($PublishMode) {
+    'branch' { $queueArgs += '-NoPublish' }
+    'pr'     { $queueArgs += @('-PublishMode', 'pr') }
+}
 if ($TraceTiming) { $queueArgs += '-TraceTiming' }
 if ($EnablePreflightAudit) { $queueArgs += '-EnablePreflightAudit' }
 
@@ -917,10 +931,10 @@ if ($queueExit -ne 0) {
     Write-Utf8 $haltSentinel "Autonomous loop halted: dispatch queue tick exited $queueExit at $((Get-Date).ToString('o')). Investigate, then delete this file to resume."
     Write-Output "Wrote halt sentinel $haltSentinel; the autonomous loop is paused until you delete it."
 }
-if ($PublishMode -eq 'branch') {
-    Write-Output 'Branch mode: a passed task stays on its ai-dispatch/ISSUE-* branch for you to review and merge.'
-} else {
-    Write-Output 'Main mode: a passed task was fast-forwarded onto origin/main.'
+switch ($PublishMode) {
+    'branch' { Write-Output 'Branch mode: a passed task stays on its ai-dispatch/ISSUE-* branch for you to review and merge.' }
+    'pr'     { Write-Output 'PR mode: a passed task pushes its branch to origin and opens a pull request targeting main; the source issue is not auto-closed.' }
+    default  { Write-Output 'Main mode: a passed task was fast-forwarded onto origin/main.' }
 }
 Write-TimingTrace "auto.tick: end (exit=$queueExit)"
 exit $queueExit

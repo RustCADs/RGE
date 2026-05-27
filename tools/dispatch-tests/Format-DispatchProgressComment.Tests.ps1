@@ -236,8 +236,29 @@ Describe 'Format-DispatchProgressComment (mid-run progress-comment formatter)' {
             $body | Should -Not -Match $script:UnexpandedTokenPattern
         }
 
-        It 'produces a different body for each of the four publish modes' {
-            $modes = @('auto-publish', 'branch', 'not-eligible', 'no-commit')
+        It 'distinguishes pr mode' {
+            $body = Format-DispatchProgressComment `
+                -Stage 'publish-decision' `
+                -IssueNumber $script:IssueNumber `
+                -DispatchId  $script:DispatchId `
+                -Branch      $script:Branch `
+                -PublishMode 'pr'
+            $body | Should -Match 'pr mode'
+            $body | Should -Match 'pull request'
+            # PR mode must not advertise auto-merge or origin/main push, must
+            # not auto-close the issue, and must not fall back to the older
+            # auto-publish / branch / not-eligible / no-commit wording for the
+            # mode line.
+            $body | Should -Not -Match 'auto-publish'
+            $body | Should -Not -Match 'fast-forward'
+            $body | Should -Not -Match 'NoPublish branch mode'
+            $body | Should -Not -Match 'not eligible'
+            $body | Should -Not -Match 'no committable changes'
+            $body | Should -Not -Match $script:UnexpandedTokenPattern
+        }
+
+        It 'produces a different body for each of the five publish modes' {
+            $modes = @('auto-publish', 'branch', 'pr', 'not-eligible', 'no-commit')
             $bodies = foreach ($m in $modes) {
                 Format-DispatchProgressComment `
                     -Stage 'publish-decision' `
@@ -246,7 +267,7 @@ Describe 'Format-DispatchProgressComment (mid-run progress-comment formatter)' {
                     -Branch      $script:Branch `
                     -PublishMode $m
             }
-            ($bodies | Select-Object -Unique).Count | Should -Be 4
+            ($bodies | Select-Object -Unique).Count | Should -Be 5
         }
     }
 

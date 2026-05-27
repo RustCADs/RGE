@@ -37,8 +37,14 @@
 .NOTES
     Requires local `git`, `gh` (authenticated), `codex`, `claude`,
     `powershell.exe`, and Invoke-AiDispatchLoop.ps1 in the repo root.
-    Pushes only successful, Codex-control-passed dispatch commits. Use
-    -NoPublish to keep the old local-branch-only behavior for a one-off run.
+    Pushes only successful, Codex-control-passed dispatch commits. Three
+    publish modes are supported:
+      main   (default) fast-forward origin/main and push;
+      branch           keep the dispatch branch local for human review;
+      pr               push the dispatch branch and open a GitHub pull
+                       request targeting main without merging or pushing
+                       origin/main and without closing the source issue.
+    Legacy -NoPublish is preserved and is equivalent to -PublishMode branch.
 #>
 [CmdletBinding()]
 param(
@@ -51,6 +57,9 @@ param(
     [switch]$DryRun,
 
     [switch]$NoPublish,
+
+    [ValidateSet('', 'main', 'branch', 'pr')]
+    [string]$PublishMode = '',
 
     [ValidateRange(0, 5)]
     [int]$MaxPlanRevisions = 1,
@@ -1124,6 +1133,204 @@ function Get-DispatchTerminalLabelPlan {
     }
 }
 
+# --- Publish-mode normalization and PR text helpers ------------------------
+# ISSUE-230: the queue supports three publish modes -- `main` (default
+# auto-publish), `branch` (commit to the dispatch branch only), and `pr` (push
+# the dispatch branch and open a GitHub pull request targeting main without
+# merging or pushing origin/main). Legacy `-NoPublish` is preserved as a
+# branch-only alias.
+#
+# Resolve-DispatchPublishMode collapses the `-PublishMode` plus `-NoPublish`
+# inputs into one internal mode string before the queue's progress comments,
+# publish decisions, result comments, and terminal labels are computed. It is
+# pure: it does not read or write files, call gh / git / codex / claude / the
+# queue / the network, or look at any environment outside its arguments.
+# Format-DispatchPrTitle and Format-DispatchPrBody are deterministic string
+# formatters for the PR title and body that PR mode hands to `gh pr create`;
+# they are equally pure. The helpers are covered by Pester under
+# tools/dispatch-tests/**.
+
+function Resolve-DispatchPublishMode {
+    # Combine `-PublishMode <main|branch|pr>` and `-NoPublish` into one
+    # internal mode string. The rules:
+    #   * No -PublishMode and no -NoPublish        -> 'main' (default).
+    #   * -NoPublish alone                          -> 'branch'.
+    #   * -PublishMode main|branch|pr               -> that mode.
+    #   * -NoPublish + -PublishMode branch          -> 'branch' (compatible).
+    #   * -NoPublish + -PublishMode main|pr         -> throws (conflict).
+    # An invalid -PublishMode value also throws. The helper is pure: no I/O,
+    # no external commands, no environment lookups -- callers are responsible
+    # for passing the exact parameter values they observed.
+    [CmdletBinding()]
+    param(
+        [AllowEmptyString()]
+        [string]$PublishMode = '',
+
+        [bool]$NoPublish = $false
+    )
+
+    $valid = @('', 'main', 'branch', 'pr')
+    if ($valid -notcontains $PublishMode) {
+        throw "Resolve-DispatchPublishMode: invalid -PublishMode value '$PublishMode'. Allowed: main, branch, pr."
+    }
+
+    if ($NoPublish) {
+        if ($PublishMode -eq '' -or $PublishMode -eq 'branch') {
+            return 'branch'
+        }
+        throw ("Resolve-DispatchPublishMode: -NoPublish is incompatible with " +
+            "-PublishMode '$PublishMode'. -NoPublish means branch-only mode; " +
+            "either drop -NoPublish or pass -PublishMode branch explicitly.")
+    }
+
+    if ($PublishMode -eq '') { return 'main' }
+    return $PublishMode
+}
+
+function Format-DispatchPrTitle {
+    # Build the deterministic PR title for PR mode. Short and informative,
+    # leading with the dispatch id so a glance at the PR list shows what
+    # produced it. Pure: same inputs always return the same string.
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidatePattern('^[A-Za-z0-9._-]+$')]
+        [string]$DispatchId,
+
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$IssueTitle
+    )
+    $title = if ($IssueTitle -and $IssueTitle.Trim()) { $IssueTitle.Trim() } else { '(no title)' }
+    return "ai-dispatch ${DispatchId}: $title"
+}
+
+function Format-DispatchPrBody {
+    # Build the deterministic PR body for PR mode. The body links to the
+    # source issue with `Refs #<n>` (never `Closes #<n>` -- PR mode leaves
+    # the issue open for a human to close), and includes the dispatch id,
+    # branch, commit SHA, detailed log path, and Codex control verdict so a
+    # reviewer can audit the run without leaving the PR page. Pure: same
+    # inputs always return the same string.
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$IssueNumber,
+
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$IssueTitle,
+
+        [Parameter(Mandatory = $true)]
+        [ValidatePattern('^[A-Za-z0-9._-]+$')]
+        [string]$DispatchId,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Branch,
+
+        [Parameter(Mandatory = $true)]
+        [string]$CommitSha,
+
+        [Parameter(Mandatory = $true)]
+        [string]$DispatchLogPath,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Verdict
+    )
+
+    $titleDisplay = if ($IssueTitle -and $IssueTitle.Trim()) { $IssueTitle.Trim() } else { '(no title)' }
+
+    return @"
+**AI dispatch pull request** - ``$DispatchId``
+
+- Source issue: #$IssueNumber - $titleDisplay
+- Dispatch id: ``$DispatchId``
+- Branch: ``$Branch``
+- Commit SHA: ``$CommitSha``
+- Detailed log: ``$DispatchLogPath``
+- Codex control verdict: ``$Verdict``
+
+Refs #$IssueNumber
+
+_Posted by Invoke-AiDispatchQueue.ps1 in PR publish mode. PR mode pushes the dispatch branch and opens this pull request, but does not merge, push ``origin/main``, or close the source issue. A human reviews and merges this PR._
+"@
+}
+
+function Resolve-DispatchPrViewMetadata {
+    # Pure parser for `gh pr view --json number,url` output. PR-mode success
+    # requires BOTH a PR number and a PR URL; missing, unparseable, or partial
+    # metadata is publish-pipeline failure so the queue cannot claim PR
+    # success without the metadata the final issue comment needs.
+    #
+    # Returns a pscustomobject with:
+    #   Success       (bool)   - true only when ExitCode=0, JSON parses, and
+    #                            both number and url are populated.
+    #   PrNumber      (int)    - parsed PR number, 0 on failure.
+    #   PrUrl         (string) - parsed PR URL, '' on failure.
+    #   FailureReason (string) - human-readable explanation when Success=false;
+    #                            empty string when Success=true.
+    #
+    # Pure: no file I/O, no gh/git/network calls, deterministic for the same
+    # inputs.
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$ExitCode,
+
+        [AllowNull()]
+        [AllowEmptyString()]
+        [string]$Text
+    )
+
+    $result = [pscustomobject]@{
+        Success       = $false
+        PrNumber      = 0
+        PrUrl         = ''
+        FailureReason = ''
+    }
+
+    if ($ExitCode -ne 0) {
+        $snippet = if ($Text) { $Text.Trim() } else { '' }
+        $result.FailureReason = "gh pr view --json number,url failed (exit $ExitCode): $snippet"
+        return $result
+    }
+
+    if ([string]::IsNullOrWhiteSpace($Text)) {
+        $result.FailureReason = "gh pr view --json number,url returned empty output"
+        return $result
+    }
+
+    $info = $null
+    try {
+        $info = $Text | ConvertFrom-Json
+    } catch {
+        $result.FailureReason = "gh pr view --json number,url returned unparseable JSON: $($_.Exception.Message)"
+        return $result
+    }
+
+    if ($null -eq $info) {
+        $result.FailureReason = "gh pr view --json number,url returned a null payload"
+        return $result
+    }
+
+    $parsedNumber = 0
+    if ($null -ne $info.number) {
+        try { $parsedNumber = [int]$info.number } catch { $parsedNumber = 0 }
+    }
+    $parsedUrl = if ($null -ne $info.url) { [string]$info.url } else { '' }
+
+    if ($parsedNumber -le 0 -or [string]::IsNullOrWhiteSpace($parsedUrl)) {
+        $result.FailureReason = "gh pr view --json number,url returned incomplete PR metadata (number='$parsedNumber', url='$parsedUrl')"
+        return $result
+    }
+
+    $result.PrNumber = $parsedNumber
+    $result.PrUrl    = $parsedUrl
+    $result.Success  = $true
+    return $result
+}
+
 # --- Mid-run progress-comment helpers --------------------------------------
 # ISSUE-229: post a small, deterministic progress comment to the GitHub issue
 # at the four major queue/orchestrator stage boundaries (issue claimed, inner
@@ -1179,7 +1386,7 @@ function Format-DispatchProgressComment {
         [AllowEmptyString()]
         [string]$Verdict = '',
 
-        [ValidateSet('', 'auto-publish', 'branch', 'not-eligible', 'no-commit')]
+        [ValidateSet('', 'auto-publish', 'branch', 'pr', 'not-eligible', 'no-commit')]
         [string]$PublishMode = ''
     )
 
@@ -1237,6 +1444,7 @@ $footer
             $modeLine = switch ($PublishMode) {
                 'auto-publish' { 'auto-publish - attempting fast-forward into origin/main.' }
                 'branch'       { '-NoPublish branch mode - committing to the dispatch branch for human review; no auto-merge, push, or PR publish.' }
+                'pr'           { 'pr mode - pushing the dispatch branch and opening a GitHub pull request targeting ``main``; no auto-merge, no push to ``origin/main``, no automatic issue close.' }
                 'not-eligible' { 'skipped - not eligible to publish (loop exit code was non-zero or Codex control verdict was not ``pass``).' }
                 'no-commit'    { 'skipped - loop produced no committable changes; nothing to publish.' }
                 default        { 'unknown.' }
@@ -1331,6 +1539,17 @@ $runLabel = "${QueueLabel}-running"
 $doneLabel = "${QueueLabel}-done"
 $failLabel = "${QueueLabel}-failed"
 $retryLabel = "${QueueLabel}-retry"
+
+# --- Resolve publish mode --------------------------------------------------
+# Collapse -PublishMode and -NoPublish into one internal mode string ('main',
+# 'branch', or 'pr'). Fails fast on a conflicting combination so progress
+# comments, publish gates, retry classification, and the final result comment
+# all key off a single, validated mode.
+try {
+    $script:ResolvedPublishMode = Resolve-DispatchPublishMode -PublishMode $PublishMode -NoPublish $NoPublish.IsPresent
+} catch {
+    Fail $_.Exception.Message
+}
 
 # --- Single-run lock -------------------------------------------------------
 
@@ -1649,15 +1868,19 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
     $publishHardFailed = $false
     $publishDetail = ''
     $publishedSha = ''
+    $prNumber = 0
+    $prUrl = ''
     $eligibleForPublish = ($committed -and $loopExit -eq 0 -and $verdict -eq 'pass')
 
     # Progress comment: publish decision. Best-effort; failures warn only.
-    # The four-way mode mirrors the publish if/elseif chain below so the
+    # The five-way mode mirrors the publish if/elseif chain below so the
     # comment authoritatively names which branch is about to run.
-    $progressMode = if ($eligibleForPublish -and -not $NoPublish) {
+    $progressMode = if ($eligibleForPublish -and $script:ResolvedPublishMode -eq 'main') {
         'auto-publish'
-    } elseif ($eligibleForPublish -and $NoPublish) {
+    } elseif ($eligibleForPublish -and $script:ResolvedPublishMode -eq 'branch') {
         'branch'
+    } elseif ($eligibleForPublish -and $script:ResolvedPublishMode -eq 'pr') {
+        'pr'
     } elseif ($committed) {
         'not-eligible'
     } else {
@@ -1675,9 +1898,9 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
         -Stage 'publish-decision' `
         -Body $progressBody
 
-    if ($eligibleForPublish -and -not $NoPublish) {
+    if ($eligibleForPublish -and $script:ResolvedPublishMode -eq 'main') {
         Write-Output "Codex control passed; publishing $branch to origin/main."
-        Write-TimingTrace "queue.publish: block-entry; eligibleForPublish=true"
+        Write-TimingTrace "queue.publish: block-entry; eligibleForPublish=true mode=main"
 
         Write-TimingTrace "queue.publish: git-fetch start"
         $fetch = Invoke-Tool -Exe 'git' -CmdArgs @('fetch', '--quiet', 'origin', '+main:refs/remotes/origin/main')
@@ -1733,9 +1956,80 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
             }
         }
         Write-TimingTrace "queue.publish: block-exit (published=$published, publishFailed=$publishFailed, publishHardFailed=$publishHardFailed)"
-    } elseif ($eligibleForPublish -and $NoPublish) {
-        $publishDetail = "NoPublish set; kept $branch local."
-        Write-TimingTrace "queue.publish: skipped (NoPublish=true, eligibleForPublish=true)"
+    } elseif ($eligibleForPublish -and $script:ResolvedPublishMode -eq 'pr') {
+        # PR publish path: push the dispatch branch to origin and open a pull
+        # request targeting main. Never fast-forward, never merge, never push
+        # origin/main, never close the source issue. Any failure in branch push
+        # or PR creation is publish-pipeline failure (publishHardFailed=true);
+        # the local branch is preserved for human recovery and the run is not
+        # auto-retried. The local branch is also kept post-success so the human
+        # reviewer can rebase or amend if needed before merging the PR.
+        Write-Output "Codex control passed; PR mode publishing $branch and opening a pull request."
+        Write-TimingTrace "queue.publish: block-entry; eligibleForPublish=true mode=pr"
+
+        Write-TimingTrace "queue.publish: branch-push start (branch=$branch)"
+        $branchPush = Invoke-Tool -Exe 'git' -CmdArgs @('push', '--set-upstream', 'origin', $branch)
+        Write-TimingTrace "queue.publish: branch-push done (exit=$($branchPush.Code))"
+        if ($branchPush.Code -ne 0) {
+            $publishFailed = $true
+            $publishHardFailed = $true
+            $publishDetail = "git push origin $branch failed (exit $($branchPush.Code)): $($branchPush.Text)`n$branch kept for human recovery."
+        } else {
+            $prTitle = Format-DispatchPrTitle -DispatchId $id -IssueTitle $title
+            $prBody  = Format-DispatchPrBody `
+                -IssueNumber ([int]$issue.number) `
+                -IssueTitle $title `
+                -DispatchId $id `
+                -Branch $branch `
+                -CommitSha $commitSha `
+                -DispatchLogPath (Get-RepoRelativePathForQueue $dispatchLogPath) `
+                -Verdict $verdict
+            $prBodyFile = Join-Path $env:TEMP "rge-ai-dispatch-pr-body-$id.md"
+            Write-Utf8 $prBodyFile $prBody
+            Write-TimingTrace "queue.publish: gh-pr-create start"
+            $prCreate = Invoke-Tool -Exe 'gh' -CmdArgs @(
+                'pr', 'create', '--repo', $repoSlug,
+                '--base', 'main', '--head', $branch,
+                '--title', $prTitle, '--body-file', $prBodyFile)
+            Write-TimingTrace "queue.publish: gh-pr-create done (exit=$($prCreate.Code))"
+            Remove-Item -LiteralPath $prBodyFile -Force -ErrorAction SilentlyContinue
+            if ($prCreate.Code -ne 0) {
+                $publishFailed = $true
+                $publishHardFailed = $true
+                $publishDetail = "gh pr create for $branch failed (exit $($prCreate.Code)): $($prCreate.Text)`nBranch was pushed to origin; $branch kept locally for human recovery."
+            } else {
+                # PR-mode success requires BOTH a PR number and a PR URL so the
+                # final issue comment can carry the authoritative reference.
+                # Always canonicalize through `gh pr view --json number,url` --
+                # the stdout of `gh pr create` is not load-bearing for the
+                # success gate. Any failure here (non-zero exit, unparseable
+                # JSON, or missing fields) is publish-pipeline failure:
+                # publishHardFailed=true, $published stays false, the branch is
+                # preserved for human recovery, and the run is not auto-retried.
+                Write-TimingTrace "queue.publish: gh-pr-view start"
+                $prView = Invoke-Tool -Exe 'gh' -CmdArgs @(
+                    'pr', 'view', $branch, '--repo', $repoSlug, '--json', 'number,url')
+                Write-TimingTrace "queue.publish: gh-pr-view done (exit=$($prView.Code))"
+                $prMeta = Resolve-DispatchPrViewMetadata -ExitCode $prView.Code -Text $prView.Text
+                if ($prMeta.Success) {
+                    $prNumber     = $prMeta.PrNumber
+                    $prUrl        = $prMeta.PrUrl
+                    $published    = $true
+                    $publishedSha = $commitSha
+                    $publishDetail = "Pushed $branch to origin and opened PR #$prNumber ($prUrl)."
+                    Write-TimingTrace "queue.publish: pr-opened (prNumber=$prNumber)"
+                } else {
+                    $publishFailed     = $true
+                    $publishHardFailed = $true
+                    $publishDetail     = "$($prMeta.FailureReason)`nBranch was pushed to origin and gh pr create reported success, but PR metadata is incomplete; $branch kept locally for human recovery."
+                    Write-TimingTrace "queue.publish: pr-metadata-incomplete ($($prMeta.FailureReason))"
+                }
+            }
+        }
+        Write-TimingTrace "queue.publish: block-exit (published=$published, publishFailed=$publishFailed, publishHardFailed=$publishHardFailed, mode=pr)"
+    } elseif ($eligibleForPublish -and $script:ResolvedPublishMode -eq 'branch') {
+        $publishDetail = "branch mode set; kept $branch local."
+        Write-TimingTrace "queue.publish: skipped (mode=branch, eligibleForPublish=true)"
     } elseif ($committed) {
         $publishFailed = $true
         $publishDetail = "Not published because loop exit code was $loopExit and Codex control verdict was '$verdict'."
@@ -1749,9 +2043,21 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 
     $branchLine = if ($committed) {
         if ($published) {
-            "Published ``$publishedSha`` to ``origin/main`` from branch ``$branch``."
-        } elseif ($NoPublish) {
-            "Committed locally as ``$commitSha`` on branch ``$branch`` (NoPublish set; not pushed)."
+            switch ($script:ResolvedPublishMode) {
+                'pr' {
+                    # PR-mode $published=true is gated on both $prNumber and
+                    # $prUrl by the publish block above, so this branch can
+                    # always emit the full reference. The structural guarantee
+                    # is what the ISSUE-230 correction requires: PR-mode
+                    # success is reported only with PR number AND URL.
+                    "Pushed branch ``$branch`` (commit ``$commitSha``) to ``origin`` and opened pull request **#$prNumber**: $prUrl"
+                }
+                default {
+                    "Published ``$publishedSha`` to ``origin/main`` from branch ``$branch``."
+                }
+            }
+        } elseif ($script:ResolvedPublishMode -eq 'branch') {
+            "Committed locally as ``$commitSha`` on branch ``$branch`` (branch mode; not pushed)."
         } else {
             "Committed locally as ``$commitSha`` on branch ``$branch`` but publish did not complete: $publishDetail"
         }
@@ -1812,10 +2118,16 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
     } else {
         ''
     }
-    $footerLine = if ($NoPublish) {
-        '_Posted by Invoke-AiDispatchQueue.ps1 (branch mode): a passed run is committed to its branch for human review; nothing is auto-pushed._'
-    } else {
-        '_Posted by Invoke-AiDispatchQueue.ps1. Successful control-passed runs are auto-published to origin/main; failed or blocked runs remain local._'
+    $footerLine = switch ($script:ResolvedPublishMode) {
+        'branch' {
+            '_Posted by Invoke-AiDispatchQueue.ps1 (branch mode): a passed run is committed to its branch for human review; nothing is auto-pushed._'
+        }
+        'pr' {
+            '_Posted by Invoke-AiDispatchQueue.ps1 (PR mode): a passed run pushes its branch and opens a pull request targeting main; nothing is merged, origin/main is never pushed, and the source issue is not auto-closed._'
+        }
+        default {
+            '_Posted by Invoke-AiDispatchQueue.ps1. Successful control-passed runs are auto-published to origin/main; failed or blocked runs remain local._'
+        }
     }
     $commentBody = @"
 **AI dispatch run $statusIcon** - dispatch ``$id``
@@ -1896,7 +2208,12 @@ $footerLine
         Write-Output "WARNING: issue #$($issue.number) labels did not finalize to the expected set (gh exit $($rl.Code)): $($rl.Text)"
     }
 
-    if (-not $runFailed -and -not $NoPublish) {
+    # Auto-close the source issue only after a successful `main`-mode publish.
+    # `branch` mode and `pr` mode both leave issue closure to a human: branch
+    # mode because the work is still awaiting human review/merge, and PR mode
+    # because the human reviewer who merges the pull request also owns the
+    # decision to close (or keep open) the source issue.
+    if (-not $runFailed -and $script:ResolvedPublishMode -eq 'main') {
         $closeComment = if ($published) {
             "Auto-published to origin/main as $publishedSha. Detailed log: $(Get-RepoRelativePathForQueue $dispatchLogPath)"
         } else {
@@ -1923,7 +2240,7 @@ $footerLine
     } else {
         Write-Output "Issue #$($issue.number) relabelled; result comment posted."
     }
-    if (-not $runFailed -and -not $NoPublish) {
+    if (-not $runFailed -and $script:ResolvedPublishMode -eq 'main') {
         Write-Output "Issue #$($issue.number) closed after publish."
     }
     Write-Output "Loop log: $loopLog"

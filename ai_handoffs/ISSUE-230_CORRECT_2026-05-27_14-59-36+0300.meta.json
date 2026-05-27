@@ -1,0 +1,14 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-230",
+    "packet_type": "CORRECT",
+    "author": "Planner / OpenAI Codex",
+    "timestamp": "2026-05-27_14-59-36+0300",
+    "related_files": [
+                          "Invoke-AiDispatchQueue.ps1"
+                      ],
+    "status": "CORRECTION_OPEN",
+    "handoff_status": "COMPLETE",
+    "next_role": "EXECUTOR_AI",
+    "exit_code": 0
+}

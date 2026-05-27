@@ -1,0 +1,15 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-230",
+    "packet_type": "EXEC",
+    "author": "Executor / Claude",
+    "timestamp": "2026-05-27T15:07:24+03:00",
+    "related_files": [
+                          "Invoke-AiDispatchQueue.ps1 — added Resolve-DispatchPrViewMetadata pure helper; rewrote PR-mode publish-success gate so PR mode only sets $published=true when both PR number and PR URL are available from `gh pr view --json number,url`; missing or partial metadata is publish-pipeline failure ($publishHardFailed=$true); simplified the PR-mode result-comment branch to emit only the full PR number + URL line, since the gate makes the partial branches unreachable",
+                          "tools/dispatch-tests/Resolve-DispatchPrViewMetadata.Tests.ps1 — new Pester coverage for the helper\u0027s success / non-zero-exit / empty-output / unparseable-JSON / incomplete-metadata behaviour"
+                      ],
+    "status": "AWAITING_REVIEW",
+    "handoff_status": "COMPLETE",
+    "next_role": "REVIEWER_AI",
+    "exit_code": 0
+}

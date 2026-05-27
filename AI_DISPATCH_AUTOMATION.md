@@ -275,7 +275,7 @@ see where an active dispatch is without reading local run-dir logs:
 | `issue-claimed` | Right after the queue adds `ai-dispatch-running` to the issue. | Dispatch id, branch name. |
 | `loop-starting` | Just before `Invoke-AiDispatchLoop.ps1` is invoked. | Dispatch id, branch name, local loop-log path. |
 | `loop-finished` | Right after the inner dispatch loop returns. | Loop exit code and Codex control verdict (`unknown` when no verdict exists). |
-| `publish-decision` | After the loop and before the publish flow runs. | Which of `auto-publish`, `-NoPublish` branch mode, not-eligible (loop exit / verdict was not `pass`), or no-commit applies. |
+| `publish-decision` | After the loop and before the publish flow runs. | Which of `auto-publish` (main mode), `-NoPublish` branch mode, `pr` mode (push branch and open a PR), not-eligible (loop exit / verdict was not `pass`), or no-commit applies. |
 
 Progress comments are concise: they identify the issue, dispatch id, branch,
 and stable local log/audit identifiers where available, and they never
@@ -295,11 +295,40 @@ runner. When no `ai-dispatch` issue is pending, Codex reads the task brief
 (`.ai/dispatch.tasks.md`), picks the next task, files an issue for it, and
 hands off to `Invoke-AiDispatchQueue.ps1`. Its `-PublishMode` decides what
 happens to a passed task: `branch` (default) leaves the work on its branch for
-a human to merge, while `main` auto-publishes to `origin/main`. It also halts
-for human review once a capped number of autonomous issues exist. The bounded
-conditions under which `-PublishMode main` may be used are spelled out in
-**§18 Delegated-human auto-publish policy**; `-PublishMode branch` is the
-default and remains the safest mode.
+a human to merge, `main` auto-publishes to `origin/main`, and `pr` pushes the
+dispatch branch and opens a GitHub pull request targeting `main` without
+merging, without pushing `origin/main`, and without closing the source issue.
+It also halts for human review once a capped number of autonomous issues exist.
+The bounded conditions under which `-PublishMode main` may be used are spelled
+out in **§18 Delegated-human auto-publish policy**; `-PublishMode branch` is
+the default and remains the safest mode. `-PublishMode pr` is the
+human-mediated middle ground — automation handles the branch push and PR
+creation, but a human still reviews and merges the PR and decides whether to
+close the source issue.
+
+#### Queue-runner publish modes
+
+`Invoke-AiDispatchQueue.ps1` exposes the same three publish modes as a single
+`-PublishMode` switch, and preserves the legacy `-NoPublish` switch as an
+alias for branch-only mode:
+
+| Mode | Queue invocation | Behavior on a control-passed run |
+|---|---|---|
+| `main` (default) | `.\Invoke-AiDispatchQueue.ps1` or `-PublishMode main` | Fast-forward local `main` to the dispatch commit and push `origin main`; close the source issue. |
+| `branch` | `-NoPublish` or `-PublishMode branch` | Commit on the `ai-dispatch/ISSUE-<n>` branch and stop; nothing is pushed, no PR is opened, the issue stays open for human review. |
+| `pr` | `-PublishMode pr` | Push `ai-dispatch/ISSUE-<n>` to `origin` and open a pull request targeting `main` via `gh pr create`. Never runs `git merge --ff-only`, never pushes `origin/main`, never closes the source issue. The PR body links to the issue with `Refs #<n>` (not `Closes #<n>`). A human reviewer merges the PR and decides whether to close the source issue. |
+
+Default behavior is unchanged: a queue call with no flags still runs in `main`
+mode and auto-publishes. `-NoPublish` continues to mean branch-only mode and
+remains valid; combining `-NoPublish` with `-PublishMode main` or
+`-PublishMode pr` is a parameter error and the queue fails fast.
+
+PR mode runs only after a branch commit exists, the dispatch loop exits 0,
+and Codex control returns `pass`. A branch push or `gh pr create` failure in
+PR mode is treated as a publish-pipeline failure: the run is labelled
+`ai-dispatch-failure-publish`, the local dispatch branch is preserved for
+human recovery, and the run is **not** automatically retried. PR mode never
+falls back to pushing `origin/main`.
 
 `Register-AiDispatchSchedule.ps1` is the **recurring-trigger layer**. It
 registers a Windows Scheduled Task that fires one of the two runners on a fixed

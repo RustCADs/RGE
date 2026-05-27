@@ -1,0 +1,21 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-230",
+    "packet_type": "EXEC",
+    "author": "Executor / Claude",
+    "timestamp": "2026-05-27T14:38:51+03:00",
+    "related_files": [
+                          "Invoke-AiDispatchQueue.ps1 — added -PublishMode parameter, Resolve-DispatchPublishMode / Format-DispatchPrTitle / Format-DispatchPrBody pure helpers, pr-mode publish flow, mode-aware progress comment, result comment, and issue-close gating",
+                          "Invoke-AiDispatchAuto.ps1 — added \u0027pr\u0027 to -PublishMode ValidateSet and routed it to the queue\u0027s -PublishMode pr path",
+                          "Register-AiDispatchSchedule.ps1 — added \u0027pr\u0027 to -PublishMode ValidateSet so the scheduled action records -PublishMode pr",
+                          "AI_DISPATCH_AUTOMATION.md — documented branch / main / pr publish modes, the PR-mode constraints, and the queue-runner publish-mode table",
+                          "tools/dispatch-tests/Resolve-DispatchPublishMode.Tests.ps1 — new Pester coverage for the publish-mode normalization helper",
+                          "tools/dispatch-tests/Format-DispatchPrBody.Tests.ps1 — new Pester coverage for Format-DispatchPrTitle and Format-DispatchPrBody",
+                          "tools/dispatch-tests/Format-DispatchProgressComment.Tests.ps1 — extended publish-decision coverage to the new pr mode",
+                          "tools/dispatch-tests/Issue230-PublishMode-pr.Tests.ps1 — parser-level coverage that all three scripts accept -PublishMode pr without invoking gh / git / a live dispatch"
+                      ],
+    "status": "AWAITING_REVIEW",
+    "handoff_status": "COMPLETE",
+    "next_role": "REVIEWER_AI",
+    "exit_code": 0
+}
