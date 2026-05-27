@@ -384,8 +384,33 @@ Rules:
 - Replace every placeholder.
 - Make scope precise: MAY edit, MUST NOT edit, deliverables, gates, halt conditions.
 - If the task is audit-only, make that explicit and set MAY edit to none.
+- The TASK packet must preserve every top-level header field and the full
+  machine-readable completion footer even if you cannot read
+  ai_handoffs/templates/TASK_PACKET.md during planning. The rules below are
+  authoritative for that header/footer contract.
+- The TASK header at the top of the packet body must contain all of these
+  fields, in this order, each on its own line with a non-empty value:
+  DISPATCH_ID, AUTHOR, TIMESTAMP, RELATED_FILES, STATUS. RELATED_FILES is
+  a bulleted list of repo-relative paths or globs that follows the field
+  label on the next lines. The finalizer
+  ``new-handoff.ps1 -Finalize -DryRun`` rejects any TASK packet that omits
+  one of these header fields and names the missing field in its failure
+  text.
+- The machine-readable completion footer at the bottom of the packet must
+  contain all of these fields, each on its own line with a non-empty value:
+  HANDOFF_STATUS, DISPATCH_ID, AUTHOR, NEXT_ROLE, EXIT_CODE. The footer
+  must be preserved in full even if the template file is unavailable.
+- Every path or glob token listed under ``### MAY edit`` and
+  ``### MAY add new files`` must be wrapped in Markdown backticks so the queue
+  scope guard can parse it as an explicit code token. Example of a valid
+  bullet: ``- ``Invoke-AiDispatchLoop.ps1`` ``.
+- Bare-bulleted paths or globs in ``### MAY edit`` and ``### MAY add new files``
+  (for example ``- Invoke-AiDispatchLoop.ps1`` with no backticks) are invalid
+  for the queue scope guard and must not appear in the generated TASK packet.
 - Footer must be:
   HANDOFF_STATUS: COMPLETE
+  DISPATCH_ID: <same as header>
+  AUTHOR: <same as header, e.g. Planner / OpenAI Codex>
   NEXT_ROLE: EXECUTOR_AI
   EXIT_CODE: 0
 - The packet must pass new-handoff.ps1 -Finalize -DryRun.
