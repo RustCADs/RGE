@@ -1,0 +1,16 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-229",
+    "packet_type": "EXEC",
+    "author": "Executor / Claude",
+    "timestamp": "2026-05-27_14-02-47+0300",
+    "related_files": [
+                          "Invoke-AiDispatchQueue.ps1 — added pure `Format-DispatchProgressComment` formatter and best-effort `Send-DispatchProgressComment` sender; wired four progress-comment posts (issue-claimed, loop-starting, loop-finished, publish-decision) into the queue main flow.",
+                          "AI_DISPATCH_AUTOMATION.md — documented the four mid-run progress-comment stages and the non-terminal-warning failure contract.",
+                          "tools/dispatch-tests/Format-DispatchProgressComment.Tests.ps1 — focused Pester coverage for the pure formatter across all four stages and all four publish modes; no gh/git/codex/claude/queue/scheduler/network calls."
+                      ],
+    "status": "AWAITING_REVIEW",
+    "handoff_status": "COMPLETE",
+    "next_role": "REVIEWER_AI",
+    "exit_code": 0
+}

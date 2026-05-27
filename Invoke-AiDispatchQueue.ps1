@@ -1124,6 +1124,171 @@ function Get-DispatchTerminalLabelPlan {
     }
 }
 
+# --- Mid-run progress-comment helpers --------------------------------------
+# ISSUE-229: post a small, deterministic progress comment to the GitHub issue
+# at the four major queue/orchestrator stage boundaries (issue claimed, inner
+# loop starting, inner loop finished, publish decision) so a human watching
+# the issue thread can see where an active dispatch is without reading
+# local run-dir logs. Progress comments are quality-of-life observability
+# only:
+#
+#   * The existing final result comment, terminal label reconciliation,
+#     publish semantics, retry semantics, and failure taxonomy remain
+#     authoritative and unchanged.
+#   * Progress-comment failures are best-effort: a gh failure emits a
+#     `WARNING:` line and continues the dispatch -- it never fails, retries,
+#     relabels, publishes, or otherwise alters the run outcome.
+#   * Comments stay short. They identify the issue, dispatch id, branch, and
+#     stable local log/audit identifiers where available, and they never
+#     include full logs, loop-output tails, model transcripts, diffs, or
+#     control JSON. The final result comment remains the only comment that
+#     carries the loop-output tail.
+#
+# Format-DispatchProgressComment is pure and side-effect-free. It never reads
+# or writes files, calls gh / git / codex / claude / the queue / the
+# scheduler, or touches the network -- covered by Pester under
+# tools/dispatch-tests/**. Send-DispatchProgressComment is the best-effort
+# wrapper that actually posts via `gh issue comment`.
+
+function Format-DispatchProgressComment {
+    # Build deterministic progress-comment markdown for a single stage. Pure:
+    # given the same inputs the function returns the same output, with no
+    # timestamps, process ids, or external lookups.
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet('issue-claimed', 'loop-starting', 'loop-finished', 'publish-decision')]
+        [string]$Stage,
+
+        [Parameter(Mandatory = $true)]
+        [int]$IssueNumber,
+
+        [Parameter(Mandatory = $true)]
+        [ValidatePattern('^[A-Za-z0-9._-]+$')]
+        [string]$DispatchId,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Branch,
+
+        [AllowEmptyString()]
+        [string]$LoopLogPath = '',
+
+        [AllowEmptyString()]
+        [string]$LoopExit = '',
+
+        [AllowEmptyString()]
+        [string]$Verdict = '',
+
+        [ValidateSet('', 'auto-publish', 'branch', 'not-eligible', 'no-commit')]
+        [string]$PublishMode = ''
+    )
+
+    $issueRef = "#$IssueNumber"
+    $footer = '_Posted by Invoke-AiDispatchQueue.ps1 as a non-terminal progress marker. Progress-comment failures warn but do not alter dispatch outcome; the final result comment and terminal labels remain authoritative._'
+
+    switch ($Stage) {
+        'issue-claimed' {
+            return @"
+**AI dispatch progress** - ``$DispatchId`` - issue claimed
+
+- Issue: $issueRef
+- Dispatch id: ``$DispatchId``
+- Branch: ``$Branch``
+- Stage: queue runner claimed the issue and is preparing the dispatch.
+
+$footer
+"@
+        }
+        'loop-starting' {
+            $logLine = if ($LoopLogPath) {
+                "- Loop log: ``$LoopLogPath``"
+            } else {
+                '- Loop log: (path not yet available)'
+            }
+            return @"
+**AI dispatch progress** - ``$DispatchId`` - inner loop starting
+
+- Issue: $issueRef
+- Dispatch id: ``$DispatchId``
+- Branch: ``$Branch``
+$logLine
+- Stage: invoking Invoke-AiDispatchLoop.ps1 (Codex plan, Claude gate, Claude execute, Codex control).
+
+$footer
+"@
+        }
+        'loop-finished' {
+            $exitDisplay = if ($LoopExit -ne '') { $LoopExit } else { 'unknown' }
+            $verdictDisplay = if ($Verdict)      { $Verdict }  else { 'unknown' }
+            return @"
+**AI dispatch progress** - ``$DispatchId`` - inner loop finished
+
+- Issue: $issueRef
+- Dispatch id: ``$DispatchId``
+- Branch: ``$Branch``
+- Loop exit code: ``$exitDisplay``
+- Codex control verdict: ``$verdictDisplay``
+- Stage: dispatch loop returned; queue is reconciling commit and publish decision.
+
+$footer
+"@
+        }
+        'publish-decision' {
+            $modeLine = switch ($PublishMode) {
+                'auto-publish' { 'auto-publish - attempting fast-forward into origin/main.' }
+                'branch'       { '-NoPublish branch mode - committing to the dispatch branch for human review; no auto-merge, push, or PR publish.' }
+                'not-eligible' { 'skipped - not eligible to publish (loop exit code was non-zero or Codex control verdict was not ``pass``).' }
+                'no-commit'    { 'skipped - loop produced no committable changes; nothing to publish.' }
+                default        { 'unknown.' }
+            }
+            return @"
+**AI dispatch progress** - ``$DispatchId`` - publish decision
+
+- Issue: $issueRef
+- Dispatch id: ``$DispatchId``
+- Branch: ``$Branch``
+- Publish mode: $modeLine
+
+$footer
+"@
+        }
+    }
+}
+
+function Send-DispatchProgressComment {
+    # Best-effort GitHub issue comment poster for non-terminal progress
+    # markers. A gh failure emits a clear WARNING line and continues; nothing
+    # else (publish gates, retry eligibility, terminal labels, failure
+    # taxonomy, dispatch outcome) is affected. Never throws.
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][int]$IssueNumber,
+        [Parameter(Mandatory = $true)][string]$RepoSlug,
+        [Parameter(Mandatory = $true)][string]$Stage,
+        [Parameter(Mandatory = $true)][string]$Body
+    )
+
+    Write-TimingTrace "queue.github: progress-comment start (stage=$Stage)"
+    $commentFile = Join-Path $env:TEMP "rge-ai-dispatch-progress-$IssueNumber-$Stage.txt"
+    try {
+        Write-Utf8 $commentFile $Body
+        $r = Invoke-Tool -Exe 'gh' -CmdArgs @(
+            'issue', 'comment', "$IssueNumber", '--repo', $RepoSlug,
+            '--body-file', $commentFile)
+        Write-TimingTrace "queue.github: progress-comment done (stage=$Stage, exit=$($r.Code))"
+        if ($r.Code -ne 0) {
+            Write-Output ("WARNING: progress comment for stage '$Stage' on issue #$IssueNumber " +
+                "failed to post (gh exit $($r.Code)); continuing dispatch. Final result comment " +
+                "and terminal labels remain authoritative.`n$($r.Text)")
+        }
+    } catch {
+        Write-Output ("WARNING: progress comment for stage '$Stage' on issue #$IssueNumber " +
+            "raised an exception; continuing dispatch. $($_.Exception.Message)")
+    } finally {
+        Remove-Item -LiteralPath $commentFile -Force -ErrorAction SilentlyContinue
+    }
+}
+
 # --- Environment -----------------------------------------------------------
 
 # Testability seam: when RGE_AI_DISPATCH_QUEUE_SKIP_MAIN is set, return
@@ -1292,6 +1457,18 @@ try {
         Fail "Could not label issue #$($issue.number) '$runLabel' (exit $($edit.Code)):`n$($edit.Text)"
     }
 
+    # Progress comment: issue claimed. Best-effort; failures warn only.
+    $progressBody = Format-DispatchProgressComment `
+        -Stage 'issue-claimed' `
+        -IssueNumber ([int]$issue.number) `
+        -DispatchId $id `
+        -Branch $branch
+    Send-DispatchProgressComment `
+        -IssueNumber ([int]$issue.number) `
+        -RepoSlug $repoSlug `
+        -Stage 'issue-claimed' `
+        -Body $progressBody
+
     $goalBody = if ($issue.body -and $issue.body.Trim()) { [string]$issue.body } else { $title }
     $goalText = "GitHub issue #$($issue.number): $title`r`n`r`n$goalBody"
     if ($isRetry) {
@@ -1335,6 +1512,20 @@ try {
     Git-Step @('checkout', '-b', $branch) | Out-Null
 
     $loopLog = Join-Path $env:TEMP "rge-ai-dispatch-$id.log"
+
+    # Progress comment: inner loop starting. Best-effort; failures warn only.
+    $progressBody = Format-DispatchProgressComment `
+        -Stage 'loop-starting' `
+        -IssueNumber ([int]$issue.number) `
+        -DispatchId $id `
+        -Branch $branch `
+        -LoopLogPath $loopLog
+    Send-DispatchProgressComment `
+        -IssueNumber ([int]$issue.number) `
+        -RepoSlug $repoSlug `
+        -Stage 'loop-starting' `
+        -Body $progressBody
+
     Write-Output ""
     Write-Output "Starting dispatch loop for $id. Live loop output follows:"
     Write-Output "----------------------------------------------------------------"
@@ -1364,6 +1555,20 @@ try {
     $verdict = Get-ControlVerdict -RunDir $runDir
     $execStatus = Get-ExecutionStatus -RunDir $runDir -DispatchId $id
     Write-TimingTrace "queue.control: verdict-read (verdict=$verdict, execStatus=$execStatus)"
+
+    # Progress comment: inner loop finished. Best-effort; failures warn only.
+    $progressBody = Format-DispatchProgressComment `
+        -Stage 'loop-finished' `
+        -IssueNumber ([int]$issue.number) `
+        -DispatchId $id `
+        -Branch $branch `
+        -LoopExit "$loopExit" `
+        -Verdict $verdict
+    Send-DispatchProgressComment `
+        -IssueNumber ([int]$issue.number) `
+        -RepoSlug $repoSlug `
+        -Stage 'loop-finished' `
+        -Body $progressBody
 
     # --- Write detailed audit log, then commit the branch ------------------
 
@@ -1445,6 +1650,30 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
     $publishDetail = ''
     $publishedSha = ''
     $eligibleForPublish = ($committed -and $loopExit -eq 0 -and $verdict -eq 'pass')
+
+    # Progress comment: publish decision. Best-effort; failures warn only.
+    # The four-way mode mirrors the publish if/elseif chain below so the
+    # comment authoritatively names which branch is about to run.
+    $progressMode = if ($eligibleForPublish -and -not $NoPublish) {
+        'auto-publish'
+    } elseif ($eligibleForPublish -and $NoPublish) {
+        'branch'
+    } elseif ($committed) {
+        'not-eligible'
+    } else {
+        'no-commit'
+    }
+    $progressBody = Format-DispatchProgressComment `
+        -Stage 'publish-decision' `
+        -IssueNumber ([int]$issue.number) `
+        -DispatchId $id `
+        -Branch $branch `
+        -PublishMode $progressMode
+    Send-DispatchProgressComment `
+        -IssueNumber ([int]$issue.number) `
+        -RepoSlug $repoSlug `
+        -Stage 'publish-decision' `
+        -Body $progressBody
 
     if ($eligibleForPublish -and -not $NoPublish) {
         Write-Output "Codex control passed; publishing $branch to origin/main."

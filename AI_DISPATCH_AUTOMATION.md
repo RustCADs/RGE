@@ -263,6 +263,33 @@ exits 0 with a `pass` control verdict is fast-forwarded into `main` and pushed,
 while failed or blocked runs stay local for inspection. A temp-dir lock file
 stops a new invocation from colliding with one still in flight.
 
+#### Mid-run progress comments
+
+In addition to the durable final result comment, the queue posts short,
+deterministic **progress comments** to the GitHub issue at the four major
+queue/orchestrator stage boundaries so a human watching the issue thread can
+see where an active dispatch is without reading local run-dir logs:
+
+| Stage | When | Includes |
+|---|---|---|
+| `issue-claimed` | Right after the queue adds `ai-dispatch-running` to the issue. | Dispatch id, branch name. |
+| `loop-starting` | Just before `Invoke-AiDispatchLoop.ps1` is invoked. | Dispatch id, branch name, local loop-log path. |
+| `loop-finished` | Right after the inner dispatch loop returns. | Loop exit code and Codex control verdict (`unknown` when no verdict exists). |
+| `publish-decision` | After the loop and before the publish flow runs. | Which of `auto-publish`, `-NoPublish` branch mode, not-eligible (loop exit / verdict was not `pass`), or no-commit applies. |
+
+Progress comments are concise: they identify the issue, dispatch id, branch,
+and stable local log/audit identifiers where available, and they never
+include full logs, loop-output tails, model transcripts, diffs, or control
+JSON. The final result comment remains the only comment that carries the
+loop-output tail.
+
+**Progress-comment failures are non-terminal warnings.** A failure to post a
+progress comment emits a clear `WARNING:` line and continues the dispatch; it
+never fails the run, triggers a retry, changes labels, alters the publish
+decision, or otherwise affects dispatch outcome. The final result comment
+and the #227 terminal label reconciliation remain the authoritative durable
+outcome signals.
+
 `Invoke-AiDispatchAuto.ps1` is the **task-selection layer** above the queue
 runner. When no `ai-dispatch` issue is pending, Codex reads the task brief
 (`.ai/dispatch.tasks.md`), picks the next task, files an issue for it, and
