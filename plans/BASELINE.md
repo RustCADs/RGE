@@ -751,3 +751,50 @@ Until **at least one** of those fires, **defer all inspector live-wiring dispatc
   rg "egui" crates/editor-shell/Cargo.toml editor/rge-editor/Cargo.toml
   ```
 - This preflight is read-only and complementary to the Editor-usability preflight + the CommandBus integration design preflight already in this doc. Those entries own the substrate-readiness inventory; this entry owns the **host-readiness** baseline for the inspector ecosystem specifically and the named-blocker recommendation. They should be re-read together when the egui host integration preflight is dispatched.
+
+## `rge-editor` → `rge-scene-loader --scene <path>` integration preflight (Phase 9)
+
+This preflight scopes a future `rge-editor` → `rge-scene-loader` integration that would let the editor binary accept `--scene <path>` and load a `.rge-project` / `.rge-scene` pair into an ECS `World` via `rge_scene_loader::load_scene_into_world`. The work is **docs-only**; this entry must not be read as authorisation to implement parser, loader, UI, save, workspace, or runtime behaviour. Implementation is a separately authorised follow-up.
+
+**Triggering verdict.** ISSUE-219's executor verdict was `substrate_prerequisite_triggered`: the substrate has shipped (`rge-scene-loader` exposes `load_scene_into_world`; `runtime/runtime-headless/src/main.rs` already wires it against `golden-projects/simple-scene/.rge-project`), but no editor surface consumes it yet. The Editor-usability preflight at line 541 names "no scene/project persistence" as one of the top-3 editor gaps; this entry is the bounded scoping note for the **load** half of that gap. Save, workspace selection, and project-file write-back are out of scope here and remain deferred.
+
+**Current state.** As of HEAD `bf39adc`:
+
+- `editor/rge-editor/src/main.rs` defines `struct Cli { glb_path: Option<PathBuf> }` (see `Cli::glb_path` at `editor/rge-editor/src/main.rs:107`) with no `scene_path` field, no `--scene` parser arm in `parse_args`, and no call to `rge_scene_loader::load_scene_into_world`. The string `--scene` appears in `editor/rge-editor/src/main.rs:143` only as a placeholder in the future-flags comment (`--obj`, `--stl`, `--scene`) explaining why the parser rejects positional arguments.
+- `editor/rge-editor/Cargo.toml` does not depend on `rge-scene-loader` or `rge-data`. The only existing scene-related dep is `rge-io-gltf` for the GLB demo path.
+- The current default-demo path constructs an ECS `World` with a cuboid `BRepHandle`, registers a `CadProjection`, and hands the result to `EditorShell::with_world_projection_graph` (`editor/rge-editor/src/main.rs:662`). The simple-scene golden project has no `BRepHandle`, so wiring `load_scene_into_world` would produce an empty CAD projection — `render_init` no-ops and `render_frame` returns false when no CAD scene or prebuilt mesh exists, so any first wiring would be constructor-level / headless validation only, not a visible render path.
+- The validated end-to-end consumer is `runtime/runtime-headless/src/main.rs`, which imports `rge_data::{Project, Scene}` and `rge_scene_loader::load_scene_into_world`, loads `golden-projects/simple-scene/.rge-project`, and exercises the loader against the fixture. This is the reference call shape; a future editor integration should mirror it before adding any UI surface.
+
+**Future-implementation scope (do not implement here).** A future bounded dispatch should:
+
+1. Add `rge-scene-loader` and `rge-data` to `editor/rge-editor/Cargo.toml`.
+2. Extend `Cli` with `scene_path: Option<PathBuf>` and add a `--scene <path>` parser arm in `parse_args`, mutually exclusive with `--glb`.
+3. In `main`, when `Cli.scene_path = Some(_)`, read the `.rge-project`, resolve the first scene path, deserialise into `Scene`, and call `load_scene_into_world` to produce a `World`. Plumb the resulting `World` through the same `EditorShell::with_world_projection_graph` constructor used by the cuboid demo.
+4. Treat the first integration as **headless / constructor-level validation only**: assert the `World` was constructed and the editor reaches the event loop without panicking. Do not promise a visible render until a B-Rep-producing fixture exists or a prebuilt-mesh path is wired.
+5. Add one integration test that mirrors `runtime-headless`'s call shape but invokes the editor's `parse_args` + scene-load path, plus a unit test for the new parser arm.
+
+**Explicit non-goals and deferrals.** None of the following are in scope for the future integration dispatch defined above and must each be deferred to their own bounded preflight + dispatch:
+
+- `CadCheckpoint` integration with the loaded scene (deferred — checkpoint substrate is independent and may move on its own track).
+- `MenuRegistry` wiring to expose **File → Open Scene…** in the UI (deferred — needs the egui-host preflight at line 643 to land first).
+- Hierarchy / scene-tree panel surfacing entities from the loaded `World` (deferred — same egui-host prerequisite).
+- **Save** flow writing `.rge-scene` or `.rge-project` from editor state (deferred — load-only is intentional; save needs a separate round-trip preflight).
+- **Workspace** selection (multi-project, recent-files, project switching) (deferred — needs a workspace-model design preflight that does not exist yet).
+- Runtime PIE-mode coupling, asset hot-reload, and project-relative path resolution beyond the single hard-coded `--scene <path>` argument.
+
+**Verification (read-only; no harness in-tree).**
+
+```
+# parser-side gaps (expect zero matches):
+rg "scene_path" editor/rge-editor/src/main.rs
+rg "\"--scene\"\s*=>" editor/rge-editor/src/main.rs
+# call-site gaps (expect zero matches):
+rg "load_scene_into_world" editor/rge-editor/
+rg "rge_scene_loader|rge-scene-loader" editor/rge-editor/Cargo.toml
+# reference call shape (expect matches; this is the pattern to mirror):
+rg "load_scene_into_world|rge_scene_loader" runtime/runtime-headless/src/main.rs
+# triggering verdict provenance (expect matches in ISSUE-219 packets):
+rg "substrate_prerequisite_triggered" ai_handoffs/
+```
+
+This preflight is **docs-only** and complementary to the Editor-usability preflight (line 541), the Live-inspector wiring preflight (line 643), and the egui-host integration preflight that closes immediately above. Those entries own the broader editor substrate-readiness inventory; this entry owns the narrow `--scene <path>` load-only integration scoping and explicitly disclaims save, workspace, UI, and runtime concerns.
