@@ -1,0 +1,15 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-226",
+    "packet_type": "EXEC",
+    "author": "Executor / Claude",
+    "timestamp": "2026-05-27_09-37-26+0300",
+    "related_files": [
+                          "Invoke-AiDispatchLoop.ps1 — hardened the `Invoke-PlanFill` planner-prompt Rules list with the explicit TASK header/footer contract",
+                          "tools/dispatch-tests/Invoke-PlanFill-Prompt.Tests.ps1 — new Pester regression coverage (static prompt inspection + finalizer DryRun regression)"
+                      ],
+    "status": "AWAITING_REVIEW",
+    "handoff_status": "COMPLETE",
+    "next_role": "REVIEWER_AI",
+    "exit_code": 0
+}
