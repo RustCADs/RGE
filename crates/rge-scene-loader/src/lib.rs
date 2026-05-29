@@ -32,7 +32,7 @@
 use rge_components_render::{Camera, Light};
 use rge_components_spatial::Transform;
 use rge_components_visibility::Visibility;
-use rge_data::{ComponentValue, Scene};
+use rge_data::{ComponentValue, Project, Scene};
 use rge_kernel_ecs::{EntityId, World};
 
 /// Errors that can occur while loading a [`Scene`] into a [`World`].
@@ -99,6 +99,142 @@ pub fn load_scene_into_world(scene: &Scene) -> Result<World, SceneLoadError> {
     }
 
     Ok(world)
+}
+
+/// Errors from resolving a `.rge-project` / `.rge-scene` **path** into a
+/// [`World`].
+///
+/// This is the path-level wrapper around [`load_scene_into_world`]: it adds the
+/// file-read, RON-parse, and `.rge-project` scene-resolution failures that the
+/// in-memory [`SceneLoadError`] boundary deliberately does not cover. The
+/// underlying `Scene -> World` failure is preserved verbatim via
+/// [`SceneWorldLoadError::Loader`] — this enum never broadens [`SceneLoadError`].
+/// Messages are CLI-neutral; a binary caller (e.g. the editor's `--scene`
+/// branch) supplies any flag framing.
+#[derive(Debug, thiserror::Error)]
+pub enum SceneWorldLoadError {
+    /// File name was neither `.rge-project` nor `*.rge-scene`.
+    #[error("{} has unsupported extension (expected .rge-project or .rge-scene)", .0.display())]
+    UnsupportedExtension(std::path::PathBuf),
+    /// Reading a `.rge-project` / `.rge-scene` file from disk failed.
+    #[error("read {}: {source}", .path.display())]
+    Read {
+        /// The path that failed to read.
+        path: std::path::PathBuf,
+        /// Underlying I/O error.
+        #[source]
+        source: std::io::Error,
+    },
+    /// RON parse of the `.rge-project` manifest failed.
+    #[error("parse .rge-project {}: {source}", .path.display())]
+    ParseProject {
+        /// The `.rge-project` path that failed to parse.
+        path: std::path::PathBuf,
+        /// Underlying RON parse error.
+        #[source]
+        source: ron::de::SpannedError,
+    },
+    /// RON parse of a `.rge-scene` file failed.
+    #[error("parse .rge-scene {}: {source}", .path.display())]
+    ParseScene {
+        /// The `.rge-scene` path that failed to parse.
+        path: std::path::PathBuf,
+        /// Underlying RON parse error.
+        #[source]
+        source: ron::de::SpannedError,
+    },
+    /// The `.rge-project` `scenes` list was empty (no scene to load).
+    #[error(".rge-project {} has no scenes (expected at least one entry in `scenes`)", .0.display())]
+    EmptyProjectScenes(std::path::PathBuf),
+    /// The `.rge-project` path has no parent directory to resolve relative
+    /// scene paths against (e.g. a bare filename).
+    #[error(
+        ".rge-project {} has no parent directory to resolve relative scene paths against",
+        .0.display()
+    )]
+    ProjectHasNoParentDir(std::path::PathBuf),
+    /// [`load_scene_into_world`] returned an error.
+    #[error("load scene into world: {0}")]
+    Loader(#[source] SceneLoadError),
+}
+
+/// Load a `.rge-project` (resolving its first scene relative to the project
+/// directory) or a `.rge-scene` (parsed directly) into a fresh [`World`] via
+/// [`load_scene_into_world`].
+///
+/// Dispatch is on [`std::path::Path::file_name`], NOT
+/// [`std::path::Path::extension`]: the canonical project file name
+/// `.rge-project` is a leading-dot-only name that Rust treats as having no
+/// extension. A literal `.rge-project` is parsed as an [`Project`] and its
+/// first `scenes` entry is resolved relative to the manifest's parent
+/// directory; a `*.rge-scene` name is parsed directly as a [`Scene`]; any
+/// other name is rejected as [`SceneWorldLoadError::UnsupportedExtension`].
+///
+/// Pure I/O + RON + loader call — no GPU, no winit — so it can be exercised
+/// headlessly (see `tests/scene_path_loader.rs`).
+///
+/// # Errors
+///
+/// Returns a [`SceneWorldLoadError`] on unsupported extension, file-read
+/// failure, RON parse failure, an empty project `scenes` list, a missing
+/// project parent directory, or a wrapped [`SceneLoadError`] from the
+/// `Scene -> World` load itself.
+pub fn load_scene_world_from_path(path: &std::path::Path) -> Result<World, SceneWorldLoadError> {
+    let file_name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+    let kind = if file_name == ".rge-project" {
+        "rge-project"
+    } else if file_name.ends_with(".rge-scene") {
+        "rge-scene"
+    } else {
+        ""
+    };
+    let scene: Scene = match kind {
+        "rge-project" => {
+            let raw = std::fs::read_to_string(path).map_err(|e| SceneWorldLoadError::Read {
+                path: path.to_path_buf(),
+                source: e,
+            })?;
+            let project: Project =
+                ron::from_str(&raw).map_err(|e| SceneWorldLoadError::ParseProject {
+                    path: path.to_path_buf(),
+                    source: e,
+                })?;
+            let scene_rel = project
+                .scenes
+                .first()
+                .ok_or_else(|| SceneWorldLoadError::EmptyProjectScenes(path.to_path_buf()))?;
+            let project_dir = path
+                .parent()
+                .ok_or_else(|| SceneWorldLoadError::ProjectHasNoParentDir(path.to_path_buf()))?;
+            let scene_path = project_dir.join(scene_rel.as_str());
+            let scene_raw =
+                std::fs::read_to_string(&scene_path).map_err(|e| SceneWorldLoadError::Read {
+                    path: scene_path.clone(),
+                    source: e,
+                })?;
+            ron::from_str(&scene_raw).map_err(|e| SceneWorldLoadError::ParseScene {
+                path: scene_path,
+                source: e,
+            })?
+        }
+        "rge-scene" => {
+            let raw = std::fs::read_to_string(path).map_err(|e| SceneWorldLoadError::Read {
+                path: path.to_path_buf(),
+                source: e,
+            })?;
+            ron::from_str(&raw).map_err(|e| SceneWorldLoadError::ParseScene {
+                path: path.to_path_buf(),
+                source: e,
+            })?
+        }
+        _ => {
+            return Err(SceneWorldLoadError::UnsupportedExtension(
+                path.to_path_buf(),
+            ))
+        }
+    };
+
+    load_scene_into_world(&scene).map_err(SceneWorldLoadError::Loader)
 }
 
 /// Decode one `ComponentValue` and insert the resulting typed component into
