@@ -1,39 +1,69 @@
-//! `rge-scene-loader` — bridge from an `rge_data::Scene` into an
-//! `rge_kernel_ecs::World`.
+//! `rge-scene-loader` — bidirectional bridge between an `rge_data::Scene` and
+//! an `rge_kernel_ecs::World`.
 //!
 //! Failure class: recoverable
 //!
-//! Narrow Scene-to-World bridge per GitHub issue #171. The caller parses an
-//! `.rge-scene` file into an [`rge_data::Scene`]; this crate walks the scene
-//! and lands every entity + component into a fresh
-//! [`rge_kernel_ecs::World`].
+//! Narrow Scene↔World bridge: load per GitHub issue #171, save as the inverse.
+//!
+//! # Load (`Scene` → `World`)
+//!
+//! The caller parses an `.rge-scene` file into an [`rge_data::Scene`];
+//! [`load_scene_into_world`] walks the scene and lands every entity + component
+//! into a fresh [`rge_kernel_ecs::World`]. [`load_scene_world_from_path`] adds
+//! the `.rge-project` / `.rge-scene` file-read + RON-parse front end.
+//!
+//! # Save (`World` → `Scene`)
+//!
+//! [`extract_scene_from_world`] is the inverse: it unions the supported-
+//! component queries over a live [`World`] and rebuilds an [`rge_data::Scene`];
+//! [`save_scene_world_to_path`] writes that scene to a `*.rge-scene` file as
+//! pretty RON. v0 save fidelity is intentionally narrow (entity IDs + the four
+//! supported components only) — see [`extract_scene_from_world`].
 //!
 //! # Identity preservation
 //!
 //! Every [`rge_data::EntityId`] (a ULID) is converted via
 //! [`rge_kernel_ecs::EntityId::from_ulid`] and spawned through
 //! [`rge_kernel_ecs::World::spawn_with_id`] before any component is inserted,
-//! so the scene's stable identity round-trips through the load.
+//! so the scene's stable identity round-trips through the load; save recovers
+//! the ULID via [`rge_kernel_ecs::EntityId::ulid`].
 //!
 //! # Supported components
 //!
 //! The bridge is intentionally limited to the four simple-scene component
-//! types named in issue #171:
+//! types named in issue #171, named once in the shared `TYPE_ID_*` constants
+//! so the load (decode) and save (encode) directions cannot drift:
 //!
 //! - `rge::components::Transform` → [`rge_components_spatial::Transform`]
 //! - `rge::components::Camera`    → [`rge_components_render::Camera`]
 //! - `rge::components::Light`     → [`rge_components_render::Light`]
 //! - `rge::components::Visibility` → [`rge_components_visibility::Visibility`]
 //!
-//! Any other `ComponentValue.type_id` is surfaced as
+//! On load, any other `ComponentValue.type_id` is surfaced as
 //! [`SceneLoadError::UnsupportedComponent`] — unknown components are never
-//! silently dropped.
+//! silently dropped. On save, only these four component types are emitted; an
+//! entity carrying none of them is not written (see
+//! [`extract_scene_from_world`]).
 
 use rge_components_render::{Camera, Light};
 use rge_components_spatial::Transform;
 use rge_components_visibility::Visibility;
 use rge_data::{ComponentValue, Project, Scene};
 use rge_kernel_ecs::{EntityId, World};
+
+/// `type_id` string for [`rge_components_spatial::Transform`].
+///
+/// The four `TYPE_ID_*` constants name the supported component type paths once,
+/// shared by [`load_scene_into_world`] (decode, via `insert_component`) and
+/// [`extract_scene_from_world`] (encode), so the two directions cannot drift to
+/// different spellings of the same canonical path.
+pub(crate) const TYPE_ID_TRANSFORM: &str = "rge::components::Transform";
+/// `type_id` string for [`rge_components_render::Camera`]. See [`TYPE_ID_TRANSFORM`].
+pub(crate) const TYPE_ID_CAMERA: &str = "rge::components::Camera";
+/// `type_id` string for [`rge_components_render::Light`]. See [`TYPE_ID_TRANSFORM`].
+pub(crate) const TYPE_ID_LIGHT: &str = "rge::components::Light";
+/// `type_id` string for [`rge_components_visibility::Visibility`]. See [`TYPE_ID_TRANSFORM`].
+pub(crate) const TYPE_ID_VISIBILITY: &str = "rge::components::Visibility";
 
 /// Errors that can occur while loading a [`Scene`] into a [`World`].
 #[derive(Debug, thiserror::Error)]
@@ -246,7 +276,7 @@ fn insert_component(
     component: &ComponentValue,
 ) -> Result<(), SceneLoadError> {
     match component.type_id.as_str() {
-        "rge::components::Transform" => {
+        TYPE_ID_TRANSFORM => {
             let value = ron::from_str::<Transform>(&component.data).map_err(|source| {
                 SceneLoadError::Deserialize {
                     type_id: component.type_id.clone(),
@@ -256,7 +286,7 @@ fn insert_component(
             })?;
             world.insert(ecs_id, value);
         }
-        "rge::components::Camera" => {
+        TYPE_ID_CAMERA => {
             let value = ron::from_str::<Camera>(&component.data).map_err(|source| {
                 SceneLoadError::Deserialize {
                     type_id: component.type_id.clone(),
@@ -266,7 +296,7 @@ fn insert_component(
             })?;
             world.insert(ecs_id, value);
         }
-        "rge::components::Light" => {
+        TYPE_ID_LIGHT => {
             let value = ron::from_str::<Light>(&component.data).map_err(|source| {
                 SceneLoadError::Deserialize {
                     type_id: component.type_id.clone(),
@@ -276,7 +306,7 @@ fn insert_component(
             })?;
             world.insert(ecs_id, value);
         }
-        "rge::components::Visibility" => {
+        TYPE_ID_VISIBILITY => {
             let value = ron::from_str::<Visibility>(&component.data).map_err(|source| {
                 SceneLoadError::Deserialize {
                     type_id: component.type_id.clone(),
@@ -294,6 +324,217 @@ fn insert_component(
         }
     }
     Ok(())
+}
+
+// ───────────────────────────── Save (World → Scene) ─────────────────────────
+// The encode inverse of the load path above. `save_scene_world_to_path` is the
+// path-level wrapper a binary calls; `extract_scene_from_world` is the in-memory
+// core. v0 fidelity is intentionally narrow — see `extract_scene_from_world`.
+
+/// Errors that can occur while extracting a [`Scene`] from a [`World`].
+///
+/// The encode inverse of [`SceneLoadError`]. There is no "unsupported
+/// component" variant: extraction queries by type and only ever emits the four
+/// allowlisted components, so RON serialization of a payload is the only
+/// failure mode.
+#[derive(Debug, thiserror::Error)]
+pub enum SceneSaveError {
+    /// Typed RON serialization of a component payload failed.
+    #[error("failed to serialize component `{type_id}` on entity `{entity}` as RON: {source}")]
+    Serialize {
+        /// The component type_id being encoded.
+        type_id: String,
+        /// Canonical (26-char) ULID of the entity that carried the component.
+        entity: String,
+        /// Underlying RON serialization error.
+        #[source]
+        source: ron::Error,
+    },
+}
+
+/// Extract a [`Scene`] (named `name`) from a live [`World`] — the inverse of
+/// [`load_scene_into_world`].
+///
+/// Unions the entity IDs returned by the four supported-component queries
+/// (Transform, Camera, Light, Visibility), orders entities by ULID ascending
+/// for deterministic, diffable output, and emits each entity's present
+/// components in that same fixed order.
+///
+/// # v0 fidelity (intentionally narrow)
+///
+/// Only entity IDs and the four supported components round-trip:
+///
+/// - Enumeration is the union of the four component queries — the live
+///   [`World`] exposes no all-entity iterator — so an entity with **none** of
+///   the four supported components (whether truly component-less or carrying
+///   only out-of-allowlist components) is **not** emitted.
+/// - The loaded [`World`] retains no entity names, relations, or roots, so every
+///   emitted entity has an empty `name`, an empty `relations` list, and the
+///   returned [`Scene`] has empty `root_entities`.
+/// - The scene `name` is the `name` argument; the scene `version` is stamped
+///   `SchemaVersion::V0_1_0`.
+///
+/// # Errors
+///
+/// [`SceneSaveError::Serialize`] if RON serialization of any component payload
+/// fails.
+pub fn extract_scene_from_world(
+    world: &World,
+    name: impl Into<String>,
+) -> Result<Scene, SceneSaveError> {
+    // Keyed by raw ULID u128 so iteration is sorted ascending (deterministic,
+    // diffable). Running the four queries in a fixed order also makes each
+    // entity's component list deterministic.
+    let mut by_entity: std::collections::BTreeMap<u128, Vec<ComponentValue>> =
+        std::collections::BTreeMap::new();
+
+    for (id, value) in world.query::<Transform>() {
+        let entity = rge_data::EntityId::from_u128(id.ulid().0);
+        let component = component_value(ron::to_string(value), TYPE_ID_TRANSFORM, entity)?;
+        by_entity
+            .entry(entity.to_u128())
+            .or_default()
+            .push(component);
+    }
+    for (id, value) in world.query::<Camera>() {
+        let entity = rge_data::EntityId::from_u128(id.ulid().0);
+        let component = component_value(ron::to_string(value), TYPE_ID_CAMERA, entity)?;
+        by_entity
+            .entry(entity.to_u128())
+            .or_default()
+            .push(component);
+    }
+    for (id, value) in world.query::<Light>() {
+        let entity = rge_data::EntityId::from_u128(id.ulid().0);
+        let component = component_value(ron::to_string(value), TYPE_ID_LIGHT, entity)?;
+        by_entity
+            .entry(entity.to_u128())
+            .or_default()
+            .push(component);
+    }
+    for (id, value) in world.query::<Visibility>() {
+        let entity = rge_data::EntityId::from_u128(id.ulid().0);
+        let component = component_value(ron::to_string(value), TYPE_ID_VISIBILITY, entity)?;
+        by_entity
+            .entry(entity.to_u128())
+            .or_default()
+            .push(component);
+    }
+
+    let entities = by_entity
+        .into_iter()
+        .map(|(raw, components)| rge_data::Entity {
+            id: rge_data::EntityId::from_u128(raw),
+            name: String::new(),
+            components,
+            relations: Vec::new(),
+        })
+        .collect();
+
+    Ok(Scene {
+        version: rge_data::SchemaVersion::V0_1_0,
+        name: name.into(),
+        entities,
+        root_entities: Vec::new(),
+    })
+}
+
+/// Wrap an already-serialized RON `data` result into a [`ComponentValue`]
+/// envelope, mapping a failure to [`SceneSaveError::Serialize`].
+///
+/// The encode counterpart of the per-type arms in `insert_component`. Kept
+/// non-generic on purpose: this crate has no `serde` dependency to name a
+/// `Serialize` bound, so each caller serializes its concrete component type
+/// (`ron::to_string`, no trait named) and hands the `Result` in.
+fn component_value(
+    data: Result<String, ron::Error>,
+    type_id: &str,
+    entity: rge_data::EntityId,
+) -> Result<ComponentValue, SceneSaveError> {
+    let data = data.map_err(|source| SceneSaveError::Serialize {
+        type_id: type_id.to_owned(),
+        entity: entity.to_canonical(),
+        source,
+    })?;
+    Ok(ComponentValue {
+        type_id: type_id.to_owned(),
+        data,
+    })
+}
+
+/// Errors from extracting a [`World`] and writing it to a `.rge-scene` **path**.
+///
+/// The path-level encode inverse of [`SceneWorldLoadError`].
+#[derive(Debug, thiserror::Error)]
+pub enum SceneWorldSaveError {
+    /// File name was not `*.rge-scene` (a `.rge-project` write is a follow-up).
+    #[error("{} has unsupported extension (expected .rge-scene)", .0.display())]
+    UnsupportedExtension(std::path::PathBuf),
+    /// [`extract_scene_from_world`] returned an error.
+    #[error("extract scene from world: {0}")]
+    Extract(#[source] SceneSaveError),
+    /// Pretty-RON serialization of the whole [`Scene`] failed.
+    #[error("serialize .rge-scene {}: {source}", .path.display())]
+    Serialize {
+        /// The target path being written.
+        path: std::path::PathBuf,
+        /// Underlying RON serialization error.
+        #[source]
+        source: ron::Error,
+    },
+    /// Writing the `.rge-scene` file to disk failed.
+    #[error("write {}: {source}", .path.display())]
+    Write {
+        /// The path that failed to write.
+        path: std::path::PathBuf,
+        /// Underlying I/O error.
+        #[source]
+        source: std::io::Error,
+    },
+}
+
+/// Extract `world` into a [`Scene`] named `name` and write it as pretty RON to
+/// `path`, which MUST be a `*.rge-scene` file. The save-side inverse of
+/// [`load_scene_world_from_path`].
+///
+/// A `.rge-project` path (or any non-`*.rge-scene` name) is rejected as
+/// [`SceneWorldSaveError::UnsupportedExtension`]: writing a project means
+/// emitting a scene file *and* updating the manifest, deferred to a follow-up.
+/// Dispatch is on [`std::path::Path::file_name`], matching
+/// [`load_scene_world_from_path`].
+///
+/// Pure extract + RON + I/O — no GPU, no winit — so it is exercised headlessly
+/// (see `tests/scene_save_round_trip.rs`). v0 save fidelity is the narrow
+/// contract documented on [`extract_scene_from_world`].
+///
+/// # Errors
+///
+/// Returns a [`SceneWorldSaveError`] on unsupported extension, a wrapped
+/// [`SceneSaveError`] from extraction, RON serialization failure, or a
+/// file-write failure.
+pub fn save_scene_world_to_path(
+    world: &World,
+    path: &std::path::Path,
+    name: &str,
+) -> Result<(), SceneWorldSaveError> {
+    let file_name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+    if !file_name.ends_with(".rge-scene") {
+        return Err(SceneWorldSaveError::UnsupportedExtension(
+            path.to_path_buf(),
+        ));
+    }
+
+    let scene = extract_scene_from_world(world, name).map_err(SceneWorldSaveError::Extract)?;
+    let text = ron::ser::to_string_pretty(&scene, ron::ser::PrettyConfig::default()).map_err(
+        |source| SceneWorldSaveError::Serialize {
+            path: path.to_path_buf(),
+            source,
+        },
+    )?;
+    std::fs::write(path, text).map_err(|source| SceneWorldSaveError::Write {
+        path: path.to_path_buf(),
+        source,
+    })
 }
 
 #[cfg(test)]
