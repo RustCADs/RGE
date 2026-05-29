@@ -1101,7 +1101,8 @@ fn handle_asset_reload_surfaces_hook_error_as_warn_and_retains_state() {
 }
 
 // ---------------------------------------------------------------------------
-// In-app "Open GLB" (Ctrl+O) — commit-after-success ordering (gate tests).
+// In-app GLB Open (Ctrl+O, the `.glb` branch) — commit-after-success
+// ordering (gate tests).
 //
 // These cover the NON-success paths (cancel, failing candidate, missing
 // dialog) headlessly — no `gfx_ctx` is reached because the handler returns
@@ -1391,5 +1392,251 @@ fn replace_world_clears_glb_source_but_keeps_hooks() {
     assert!(
         s.reload_hook.is_some(),
         "loader hook must be preserved across the swap"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// SCENE-OPEN-WIRING — Ctrl+O scene Open (`.rge-scene` / `.rge-project`)
+// ---------------------------------------------------------------------------
+
+/// Mock [`crate::SceneOpenHook`] returning a pre-configured result so the
+/// scene-open branch of [`EditorShell::handle_open_request`] can be
+/// driven without a real `.rge-scene` file on disk. `entity_count` sets
+/// how many entities the returned world has (so a test can observe the
+/// swap); `fail` makes the hook return `Err`, exercising the no-op
+/// failure path.
+struct MockSceneOpenHook {
+    entity_count: usize,
+    fail: bool,
+}
+
+impl crate::SceneOpenHook for MockSceneOpenHook {
+    fn load_scene_world(&self, _path: &std::path::Path) -> Result<rge_kernel_ecs::World, String> {
+        if self.fail {
+            return Err("simulated scene load failure".into());
+        }
+        let mut world = rge_kernel_ecs::World::new();
+        for _ in 0..self.entity_count {
+            world.spawn();
+        }
+        Ok(world)
+    }
+}
+
+#[test]
+fn scene_open_swaps_world_and_clears_glb_source() {
+    // Dialog returns a `.rge-scene`; the scene hook yields a 2-entity
+    // world. handle_open_request must load-then-swap: the live world
+    // reflects the 2 entities and `glb_source_path` is cleared by
+    // `replace_world` (proving the swap ran, not just the load).
+    let mut s = EditorShell::new()
+        .with_glb_open_dialog(Box::new(MockOpenDialog {
+            result: Some(std::path::PathBuf::from("/tmp/level.rge-scene")),
+        }))
+        .with_scene_open_hook(Box::new(MockSceneOpenHook {
+            entity_count: 2,
+            fail: false,
+        }));
+    // Seed a prior GLB source so the test can prove the scene Open clears it.
+    s.attach_glb_reload_source(std::path::PathBuf::from("/tmp/prior.glb"), AlwaysFailHook);
+    assert!(
+        s.glb_source_path().is_some(),
+        "precondition: a GLB source is attached"
+    );
+
+    s.handle_open_request();
+
+    assert_eq!(
+        s.world().kernel().entity_count(),
+        2,
+        "scene Open must swap in the hook's world"
+    );
+    assert!(
+        s.glb_source_path().is_none(),
+        "scene Open must clear glb_source_path via replace_world"
+    );
+    assert!(s.cad_world.is_none(), "scene Open stays in non-CAD mode");
+}
+
+#[test]
+fn scene_open_failure_leaves_world_and_source_unchanged() {
+    // The scene hook returns Err (malformed scene). handle_open_request
+    // must warn + no-op: the live world is untouched and the prior GLB
+    // source survives (replace_world is never reached). This is the scene
+    // analogue of the GLB commit-after-success property.
+    let mut s = EditorShell::new()
+        .with_glb_open_dialog(Box::new(MockOpenDialog {
+            result: Some(std::path::PathBuf::from("/tmp/broken.rge-scene")),
+        }))
+        .with_scene_open_hook(Box::new(MockSceneOpenHook {
+            entity_count: 3,
+            fail: true,
+        }));
+    build_scene(&mut s, 5);
+    let prior = std::path::PathBuf::from("/tmp/prior_good.glb");
+    s.attach_glb_reload_source(prior.clone(), AlwaysFailHook);
+    let before = s.world().kernel().entity_count();
+
+    s.handle_open_request();
+
+    assert_eq!(
+        s.world().kernel().entity_count(),
+        before,
+        "a failing scene load must not swap the live world"
+    );
+    assert_eq!(
+        s.glb_source_path(),
+        Some(prior.as_path()),
+        "a failing scene load must leave glb_source_path unchanged"
+    );
+}
+
+#[test]
+fn open_unsupported_extension_is_noop() {
+    // A picked path that is neither `.glb` nor a scene → warn + no-op:
+    // no world swap (the scene hook would have produced 9 entities), no
+    // source commit, no mesh upload.
+    let mut s = EditorShell::new()
+        .with_glb_open_dialog(Box::new(MockOpenDialog {
+            result: Some(std::path::PathBuf::from("/tmp/notes.txt")),
+        }))
+        .with_scene_open_hook(Box::new(MockSceneOpenHook {
+            entity_count: 9,
+            fail: false,
+        }));
+    s.attach_glb_loader_hook(AlwaysFailHook);
+    let before = s.world().kernel().entity_count();
+
+    s.handle_open_request();
+
+    assert_eq!(
+        s.world().kernel().entity_count(),
+        before,
+        "unsupported extension must not swap the world"
+    );
+    assert!(
+        s.glb_source_path().is_none(),
+        "unsupported extension commits no source"
+    );
+    assert!(
+        s.meshes.is_empty(),
+        "unsupported extension uploads no meshes"
+    );
+}
+
+#[test]
+fn scene_open_without_hook_is_noop() {
+    // `.rge-scene` picked but no scene_open_hook attached (e.g. headless
+    // construction): warn + no-op, the live world untouched.
+    let mut s = EditorShell::new().with_glb_open_dialog(Box::new(MockOpenDialog {
+        result: Some(std::path::PathBuf::from("/tmp/level.rge-scene")),
+    }));
+    build_scene(&mut s, 3);
+    let before = s.world().kernel().entity_count();
+    assert!(s.scene_open_hook.is_none(), "precondition: no scene hook");
+
+    s.handle_open_request();
+
+    assert_eq!(
+        s.world().kernel().entity_count(),
+        before,
+        "scene Open with no hook must not swap the world"
+    );
+}
+
+#[test]
+fn scene_open_outside_editing_is_noop() {
+    // PIE gate — a scene Open during Play must no-op (mirrors the GLB
+    // gate). handle_open_request returns at the PIE check before the
+    // dialog or hook is consulted.
+    let mut s = EditorShell::new()
+        .with_glb_open_dialog(Box::new(MockOpenDialog {
+            result: Some(std::path::PathBuf::from("/tmp/level.rge-scene")),
+        }))
+        .with_scene_open_hook(Box::new(MockSceneOpenHook {
+            entity_count: 7,
+            fail: false,
+        }));
+    build_scene(&mut s, 2);
+    s.handle_button(ToolbarButtonId::Play)
+        .expect("Play transition from Editing");
+    assert_eq!(s.play_state(), PlayState::Playing);
+    let before = s.world().kernel().entity_count();
+
+    s.handle_open_request();
+
+    assert_eq!(
+        s.play_state(),
+        PlayState::Playing,
+        "state unchanged on the gated path"
+    );
+    assert_eq!(
+        s.world().kernel().entity_count(),
+        before,
+        "scene Open during PIE must not swap the world"
+    );
+}
+
+#[test]
+fn scene_open_preserves_scene_hook_for_a_second_open() {
+    // The scene hook must survive a successful scene Open (replace_world
+    // preserves it), so a second scene Open still works. Assert the hook
+    // is still present after the first swap AND drive a second Open.
+    let mut s = EditorShell::new()
+        .with_glb_open_dialog(Box::new(MockOpenDialog {
+            result: Some(std::path::PathBuf::from("/tmp/level.rge-scene")),
+        }))
+        .with_scene_open_hook(Box::new(MockSceneOpenHook {
+            entity_count: 2,
+            fail: false,
+        }));
+
+    s.handle_open_request();
+    assert_eq!(
+        s.world().kernel().entity_count(),
+        2,
+        "first scene Open swaps"
+    );
+    assert!(
+        s.scene_open_hook.is_some(),
+        "replace_world must preserve the scene hook"
+    );
+
+    // A second scene Open must still route through the preserved hook.
+    s.handle_open_request();
+    assert_eq!(
+        s.world().kernel().entity_count(),
+        2,
+        "second scene Open still swaps (the hook survived the first swap)"
+    );
+}
+
+#[test]
+fn scene_open_accepts_literal_rge_project() {
+    // The literal extensionless `.rge-project` path (no `Path::extension()`)
+    // must route to the scene branch — this is the file-name case the
+    // dialog's All-Files filter exists to make pickable (OQ2). Dialog
+    // returns a `.rge-project`; the scene hook yields a 2-entity world;
+    // the swap runs and clears the seeded `glb_source_path`.
+    let mut s = EditorShell::new()
+        .with_glb_open_dialog(Box::new(MockOpenDialog {
+            result: Some(std::path::PathBuf::from("/tmp/.rge-project")),
+        }))
+        .with_scene_open_hook(Box::new(MockSceneOpenHook {
+            entity_count: 2,
+            fail: false,
+        }));
+    s.attach_glb_reload_source(std::path::PathBuf::from("/tmp/prior.glb"), AlwaysFailHook);
+
+    s.handle_open_request();
+
+    assert_eq!(
+        s.world().kernel().entity_count(),
+        2,
+        "literal .rge-project must route to the scene branch and swap the world"
+    );
+    assert!(
+        s.glb_source_path().is_none(),
+        "literal .rge-project scene Open must clear glb_source_path"
     );
 }

@@ -218,7 +218,7 @@ pub mod playback;
 
 pub use asset_reload::AssetReloadHook;
 pub use commands::{EditorKeyCommand, SetTimeScale};
-pub use open_request::GlbOpenDialog;
+pub use open_request::{GlbOpenDialog, SceneOpenHook};
 pub use playback::EditorPlaybackCommand;
 
 /// The editor host. Owns:
@@ -388,15 +388,28 @@ pub struct EditorShell {
     /// cuboid-demo path. See [`AssetReloadHook`] for the trait.
     pub(crate) reload_hook: Option<Box<dyn AssetReloadHook>>,
 
-    /// In-app "Open GLB" (Ctrl+O) — caller-supplied dialog callback
-    /// that prompts the user for a `.glb` path. Boxed-dyn so the editor
-    /// binary's impl (which owns the `rfd` dep) can be handed to
-    /// editor-shell without threading `rfd` through — editor-shell
-    /// never gains an `rfd` dependency. `None` when no dialog was
-    /// attached (e.g. headless tests, or any path the binary did not
-    /// wire); `Ctrl+O` warn-logs and no-ops there. Set via
-    /// [`Self::with_glb_open_dialog`]. See [`GlbOpenDialog`].
+    /// In-app "Open" (Ctrl+O) — caller-supplied dialog callback that
+    /// prompts the user for an Open candidate (a `.glb`, `.rge-scene`, or
+    /// `.rge-project`; [`Self::handle_open_request`] dispatches on the
+    /// returned path's kind). Boxed-dyn so the editor binary's impl
+    /// (which owns the `rfd` dep) can be handed to editor-shell without
+    /// threading `rfd` through — editor-shell never gains an `rfd`
+    /// dependency. `None` when no dialog was attached (e.g. headless
+    /// tests, or any path the binary did not wire); `Ctrl+O` warn-logs
+    /// and no-ops there. Set via [`Self::with_glb_open_dialog`]. See
+    /// [`GlbOpenDialog`].
     pub(crate) open_dialog: Option<Box<dyn GlbOpenDialog>>,
+
+    /// In-app "Open scene" (Ctrl+O on a `.rge-scene` / `.rge-project`) —
+    /// caller-supplied loader callback that reads a scene path into a
+    /// fresh kernel `World`. Boxed-dyn so the editor binary's impl (which
+    /// owns the `rge-scene-loader` edge) can be handed to editor-shell
+    /// without threading `rge-scene-loader` / `rge-data` through —
+    /// editor-shell never gains either dependency. `None` when no scene
+    /// hook was attached (headless tests, or a launch mode the binary did
+    /// not wire); a scene `Ctrl+O` warn-logs and no-ops there. Set via
+    /// [`Self::with_scene_open_hook`]. See [`SceneOpenHook`].
+    pub(crate) scene_open_hook: Option<Box<dyn SceneOpenHook>>,
 
     /// winit window the surface is bound to (kept alive for the surface's
     /// `'static` lifetime). `None` until `resumed`.
@@ -628,14 +641,16 @@ impl EditorShell {
             glb_source_path: None,
             reload_hook: None,
             open_dialog: None,
+            scene_open_hook: None,
         }
     }
 
     /// Replace the live editor [`World`] at runtime with a caller-provided
     /// kernel world, resetting the shell to the same load-only baseline
     /// [`Self::with_world`] produces. **Editing-only** (mirrors the PIE gate
-    /// on [`Self::reload_render_assets`]). Substrate for in-app scene Open
-    /// (EDITOR-WORLD-SWAP; the `Ctrl+O` wiring is a follow-up dispatch).
+    /// on [`Self::reload_render_assets`]). The runtime substrate for in-app
+    /// scene Open (EDITOR-WORLD-SWAP); the `Ctrl+O` scene-open wiring that
+    /// drives it lives in [`Self::handle_open_request`] (SCENE-OPEN-WIRING).
     ///
     /// Resets to the `with_world` data baseline:
     /// - clears the CAD-mode fields (`cad_world` / `projection` / `cad_graph`
@@ -651,10 +666,11 @@ impl EditorShell {
     ///   source).
     ///
     /// Preserves the GPU device/context, the editor camera, the attached
-    /// loader/dialog hooks (`reload_hook` / `open_dialog` — `Ctrl+O` and the
-    /// R-key reload stay wired), `PlayState`, the audit ledger, and the tick
-    /// counter. `notify`-watcher teardown is the binary's concern (it reacts
-    /// to the now-`None` [`Self::glb_source_path`]); this method does no
+    /// loader/dialog/scene hooks (`reload_hook` / `open_dialog` /
+    /// `scene_open_hook` — `Ctrl+O` and the R-key reload stay wired),
+    /// `PlayState`, the audit ledger, and the tick counter. `notify`-watcher
+    /// teardown is the binary's concern (it reacts to the now-`None`
+    /// [`Self::glb_source_path`] and drops the watcher); this method does no
     /// watcher work.
     ///
     /// # Errors
@@ -780,6 +796,7 @@ impl EditorShell {
             glb_source_path: None,
             reload_hook: None,
             open_dialog: None,
+            scene_open_hook: None,
         }
     }
 
@@ -1029,6 +1046,7 @@ impl EditorShell {
             glb_source_path: None,
             reload_hook: None,
             open_dialog: None,
+            scene_open_hook: None,
         }
     }
 
@@ -1058,17 +1076,19 @@ impl EditorShell {
         self.reload_hook = Some(Box::new(hook));
     }
 
-    /// Attach a glb loader hook WITHOUT a source path.
+    /// Attach a GLB loader hook WITHOUT a source path.
     ///
     /// Companion to [`Self::attach_glb_reload_source`] for launch modes
     /// that have no `--glb` file yet (the default cuboid demo and the
-    /// `--scene` path): the in-app "Open GLB" handler
+    /// `--scene` path): the `.glb` branch of the in-app Open handler
     /// ([`Self::handle_open_request`]) needs a loader hook to import a
-    /// user-picked file, but there is no initial source path to reload
+    /// user-picked GLB, but there is no initial source path to reload
     /// with R until the user actually opens one. This sets only
     /// [`Self::reload_hook`]; [`Self::glb_source_path`] stays `None`, so
-    /// R-key reload correctly no-ops until a successful Open commits a
-    /// path. After that first Open, R-key follows the opened file.
+    /// R-key reload correctly no-ops until a successful GLB Open commits a
+    /// path. After that first GLB Open, R-key follows the opened file.
+    /// (Scene Opens route through [`Self::with_scene_open_hook`] instead
+    /// and set no GLB source.)
     ///
     /// Safe to call in any mode because the v0 [`AssetReloadHook`] impl
     /// (`rge-editor::GlbLoaderHook`) is stateless — it re-imports from
@@ -1078,23 +1098,46 @@ impl EditorShell {
         self.reload_hook = Some(Box::new(hook));
     }
 
-    /// Attach a native "Open GLB" dialog for the `Ctrl+O` handler.
+    /// Attach a native "Open" file dialog for the `Ctrl+O` handler.
     ///
     /// Called by the editor binary (`rge-editor::main`) in every launch
     /// mode (default cuboid demo, `--glb`, `--scene`) so `Ctrl+O` works
     /// from any starting state. The `dialog` is the binary-owned `rfd`
-    /// impl of [`GlbOpenDialog`]; editor-shell holds only the boxed
-    /// trait object and never gains an `rfd` dependency.
+    /// impl of [`GlbOpenDialog`] (kept GLB-prefixed in name though it now
+    /// offers `.glb` / `.rge-scene` / `.rge-project`); editor-shell holds
+    /// only the boxed trait object and never gains an `rfd` dependency.
     ///
     /// Consuming builder (`mut self -> Self`) so it composes in the
     /// binary's construction chain alongside the other `with_*`
-    /// constructors. The `Ctrl+O` handler ([`Self::handle_open_request`])
-    /// ALSO requires a loader hook attached via
-    /// [`Self::attach_glb_reload_source`]; with a dialog but no loader,
-    /// `Ctrl+O` warn-logs and no-ops (the binary attaches both).
+    /// constructors. The `.glb` branch of [`Self::handle_open_request`]
+    /// also requires a loader hook via [`Self::attach_glb_reload_source`]
+    /// / [`Self::attach_glb_loader_hook`], and the scene branch requires
+    /// [`Self::with_scene_open_hook`]; with a dialog but the relevant hook
+    /// missing, `Ctrl+O` warn-logs and no-ops (the binary attaches all
+    /// three).
     #[must_use]
     pub fn with_glb_open_dialog(mut self, dialog: Box<dyn GlbOpenDialog>) -> Self {
         self.open_dialog = Some(dialog);
+        self
+    }
+
+    /// Attach a scene-open loader hook for the `Ctrl+O` scene path.
+    ///
+    /// Called by the editor binary (`rge-editor::main`) in every launch
+    /// mode so opening a `.rge-scene` / `.rge-project` works from any
+    /// starting state. The `hook` is the binary-owned `rge-scene-loader`
+    /// impl of [`SceneOpenHook`]; editor-shell holds only the boxed trait
+    /// object and never gains an `rge-scene-loader` / `rge-data`
+    /// dependency.
+    ///
+    /// Consuming builder (`mut self -> Self`) so it composes in the
+    /// binary's construction chain alongside [`Self::with_glb_open_dialog`]
+    /// and the other `with_*` constructors. The scene branch of
+    /// [`Self::handle_open_request`] requires this hook — with a dialog
+    /// but no scene hook, a picked scene path warn-logs and no-ops.
+    #[must_use]
+    pub fn with_scene_open_hook(mut self, hook: Box<dyn SceneOpenHook>) -> Self {
+        self.scene_open_hook = Some(hook);
         self
     }
 
@@ -1846,7 +1889,7 @@ impl ApplicationHandler<()> for EditorShell {
                         {
                             self.handle_playback_command(cmd);
                         } else if key == KeyCode::KeyO && ctrl {
-                            // Ctrl+O — in-app "Open GLB". The fourth
+                            // Ctrl+O — in-app "Open". The fourth
                             // keyboard axis after `EditorKeyCommand`
                             // (other Ctrl-bound, CommandBus),
                             // `EditorPlaybackCommand` (plain
@@ -1854,11 +1897,14 @@ impl ApplicationHandler<()> for EditorShell {
                             // reload). `KeyO` is unclaimed by the
                             // Ctrl-bound `EditorKeyCommand` table, so it
                             // falls through to here. Open prompts the
-                            // attached [`GlbOpenDialog`], imports the
-                            // picked file, and swaps render assets;
-                            // every guard (Editing-only, dialog/loader
-                            // present, cancel, load/swap failure)
-                            // logs and no-ops inside the handler.
+                            // attached [`GlbOpenDialog`], then dispatches
+                            // on the picked path: a `.glb` is imported and
+                            // swapped into render assets, a `.rge-scene` /
+                            // `.rge-project` is loaded and swapped in as a
+                            // new world; every guard (Editing-only,
+                            // dialog/loader/scene-hook present, cancel,
+                            // load/swap failure) logs and no-ops inside
+                            // the handler.
                             self.handle_open_request();
                         } else if key == KeyCode::KeyR && self.modifiers.is_empty() {
                             // Plain `R` (no modifiers) — asset hot-reload.

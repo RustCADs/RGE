@@ -1,33 +1,45 @@
-//! In-app "Open GLB" — Ctrl+O handler + open-dialog trait.
+//! In-app "Open" — Ctrl+O handler + open-dialog / scene-load traits.
 //!
 //! Companion to `asset_reload.rs` (the R-key reload axis). This file
-//! holds the **fourth keyboard axis**: `Ctrl+O` → prompt the user for a
-//! `.glb` via a native file dialog, import it, and swap the GPU-side
-//! mesh / material vecs via
-//! [`crate::render_path::EditorShell::reload_render_assets`] — the same
-//! atomic-swap machinery the R-key path uses.
+//! holds the **fourth keyboard axis**: `Ctrl+O` → prompt the user via a
+//! native file dialog, then dispatch on the picked path's kind:
+//! - a `.glb` is imported and swapped into the GPU-side mesh / material
+//!   vecs via [`crate::render_path::EditorShell::reload_render_assets`]
+//!   — the same atomic-swap machinery the R-key path uses;
+//! - a `.rge-scene` / `.rge-project` is loaded into a fresh kernel
+//!   `World` (through the binary-owned [`SceneOpenHook`]) and swapped in
+//!   live via [`EditorShell::replace_world`];
+//! - anything else warn-logs and no-ops.
 //!
 //! # Design
 //!
-//! - **Two-trait split.** The "pick a path" step
-//!   ([`GlbOpenDialog::pick_glb_path`]) and the "load that path into
-//!   render vecs" step ([`super::AssetReloadHook::reload_glb`]) are
-//!   distinct traits with distinct binary-owned impls. The dialog impl
-//!   owns the `rfd` dependency; the loader impl owns the `rge-io-gltf`
-//!   dependency. editor-shell gains NEITHER — it holds only the boxed
-//!   `dyn` trait objects and calls through them. This mirrors how the
-//!   R-key path keeps the glTF loader edge inside `rge-editor`
+//! - **Hook split — editor-shell owns no file-system / loader edge.**
+//!   The "pick a path" step ([`GlbOpenDialog::pick_glb_path`]), the
+//!   "load a `.glb` into render vecs" step
+//!   ([`super::AssetReloadHook::reload_glb`]), and the "load a scene
+//!   into a kernel `World`" step ([`SceneOpenHook::load_scene_world`])
+//!   are distinct traits with distinct binary-owned impls. The dialog
+//!   impl owns the `rfd` dependency; the GLB loader impl owns
+//!   `rge-io-gltf`; the scene loader impl owns `rge-scene-loader`.
+//!   editor-shell gains NONE of them — it holds only the boxed `dyn`
+//!   trait objects and calls through them. This mirrors how the R-key
+//!   path keeps the glTF loader edge inside `rge-editor`
 //!   (`AssetReloadHook`), and is the standing rule from
 //!   `.ai/dispatch.tasks.md` ("Loader stays in `rge-editor`; no
-//!   `editor-shell → io-gltf` edge"). The dialog gets the same
-//!   treatment so editor-shell never depends on `rfd` either.
+//!   `editor-shell → io-gltf` edge"). The dialog + scene hooks get the
+//!   same treatment so editor-shell never depends on `rfd`,
+//!   `rge-scene-loader`, or `rge-data` either.
 //!
-//! - **GLB-only.** Opening a `.scene` / `.ron` project would require a
-//!   runtime `World`-swap surface on [`EditorShell`] that does not
-//!   exist yet (the shell builds a `World` only at construction, via
-//!   `with_world`). Inventing that surface is out of scope; scene-open
-//!   is a deferred follow-up dispatch gated on a preflight that names
-//!   the runtime-swap semantics.
+//! - **Scene Open (`.rge-scene` / `.rge-project`).** A scene path loads
+//!   into a fresh kernel `World` via the binary-owned [`SceneOpenHook`]
+//!   (which calls `rge_scene_loader::load_scene_world_from_path`), then
+//!   swaps that world in live via [`EditorShell::replace_world`] — the
+//!   runtime `World`-swap surface this path used to lack. The load runs
+//!   in the hook BEFORE `replace_world`, so a malformed scene fails with
+//!   the live world untouched (the scene analogue of the GLB
+//!   commit-after-success property below). v0 renders the swapped-in
+//!   scene blank (matching the `--scene` / `replace_world` semantics);
+//!   rendering scene entities is future work.
 //!
 //! - **PIE-state gate.** Open only fires when the shell is in
 //!   [`crate::PlayState::Editing`] — consistent with the R-key reload
@@ -54,23 +66,31 @@
 //!   the new materials and new lit-meshes have been built; partial
 //!   uploads cannot corrupt the live render.
 //!
-//! - **Watcher limitation.** The `--glb` hot-reload watcher is
+//! - **Watcher coupling (binary-side).** The hot-reload watcher is
 //!   binary-owned (`rge-editor::EditorApp.watcher`, a `notify`-backed
-//!   `GlbWatcher` rooted at the original `--glb` path); editor-shell
-//!   has no watcher and no `notify` dependency. Committing
-//!   `glb_source_path` here therefore re-points **only the manual
-//!   R-key reload** at the newly opened file — the auto-watcher keeps
-//!   observing the original `--glb` directory. Making the watcher
-//!   follow an in-app-opened file is a deferred follow-up (it needs
-//!   binary-side watcher re-rooting); this handler does NOT touch the
-//!   watcher. See the comment at the commit site.
+//!   `GlbWatcher`); editor-shell has no watcher and no `notify`
+//!   dependency. The binary reconciles the watcher against
+//!   [`EditorShell::glb_source_path`] every window event
+//!   (`sync_glb_watcher`): committing a new GLB source here re-roots the
+//!   watcher onto the opened file, and a scene Open (which clears
+//!   `glb_source_path` via `replace_world`) tears the watcher down. This
+//!   handler never touches the watcher directly — it only moves
+//!   `glb_source_path`, and the binary follows. See the comment at the
+//!   GLB commit site.
 
 use std::path::PathBuf;
 
 use crate::lifecycle::EditorShell;
 use crate::play_state::PlayState;
 
-/// Loader-callback trait for the in-app "Open GLB" dialog.
+/// Loader-callback trait for the in-app "Open" file dialog.
+///
+/// Despite the historical `Glb`-prefixed name (kept to bound the
+/// scene-open wiring dispatch — a rename is a cosmetic follow-up), this
+/// dialog picks ANY supported Open candidate: a `.glb`, a `.rge-scene`,
+/// or a `.rge-project`. The `Ctrl+O` handler
+/// ([`EditorShell::handle_open_request`]) dispatches on the *returned
+/// path's* kind, so the dialog only has to offer the right filters.
 ///
 /// The editor binary (`rge-editor::main`) impls this with `rfd`
 /// (`rfd::FileDialog::new().add_filter(..).pick_file()`) and hands an
@@ -86,26 +106,84 @@ use crate::play_state::PlayState;
 /// (last-directory memory, recent-files) can promote this to
 /// `&mut self` without churning the single call site.
 pub trait GlbOpenDialog {
-    /// Prompt the user for a `.glb` file. Returns `Some(path)` when the
-    /// user picked a file, `None` when the dialog was cancelled.
+    /// Prompt the user for an Open candidate (a `.glb`, `.rge-scene`, or
+    /// `.rge-project`). Returns `Some(path)` when the user picked a file,
+    /// `None` when the dialog was cancelled.
     ///
-    /// The returned path is a *candidate* — the shell still imports it
-    /// and swaps render assets before committing it as the new
-    /// [`EditorShell::glb_source_path`]. A cancelled dialog (`None`)
-    /// mutates no editor state.
+    /// The returned path is a *candidate* —
+    /// [`EditorShell::handle_open_request`] dispatches on its kind (GLB
+    /// import vs. scene world-swap) and mutates editor state only on
+    /// success. A cancelled dialog (`None`) mutates no editor state.
     fn pick_glb_path(&self) -> Option<PathBuf>;
+}
+
+/// Loader-callback trait for the in-app "Open scene" path (`.rge-scene`
+/// / `.rge-project`) — the scene-axis companion to [`GlbOpenDialog`].
+///
+/// The editor binary (`rge-editor::main`) impls this over
+/// `rge_scene_loader::load_scene_world_from_path` and hands an instance
+/// to [`EditorShell`] at construction via
+/// [`EditorShell::with_scene_open_hook`]. Keeping the impl in the binary
+/// leaves editor-shell free of any `rge-scene-loader` / `rge-data`
+/// dependency — the shell holds only a `Box<dyn SceneOpenHook>` and
+/// calls [`Self::load_scene_world`] when the user opens a scene path.
+/// Mirrors the [`super::AssetReloadHook`] / [`GlbOpenDialog`] split
+/// exactly.
+///
+/// `&self` (not `&mut self`) because the loader is stateless — every
+/// open re-reads from disk. A future stateful loader (project cache) can
+/// promote this to `&mut self` without churning the single call site.
+pub trait SceneOpenHook {
+    /// Load a `.rge-project` / `.rge-scene` at `path` into a fresh
+    /// [`rge_kernel_ecs::World`].
+    ///
+    /// On any I/O / parse / load failure, return `Err(message)`: the
+    /// `Ctrl+O` handler warn-logs it and leaves the live world untouched
+    /// ([`EditorShell::replace_world`] is never reached). On `Ok`, the
+    /// returned world is swapped in live via `replace_world`, which
+    /// blanks the viewport (v0 scene render is blank, matching the
+    /// `--scene` semantics).
+    fn load_scene_world(&self, path: &std::path::Path) -> Result<rge_kernel_ecs::World, String>;
+}
+
+/// Classify an Open candidate as a scene path (`.rge-scene` /
+/// `.rge-project`). Matches the file name the way the loader
+/// (`rge_scene_loader::load_scene_world_from_path`) does: a literal
+/// `.rge-project` (a leading-dot-only name with no `Path::extension()`)
+/// or any `*.rge-scene` suffix.
+fn candidate_is_scene(path: &std::path::Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name == ".rge-project" || name.ends_with(".rge-scene"))
+}
+
+/// Classify an Open candidate as a GLB (`*.glb`, case-insensitive on the
+/// extension so a Windows-picked `CUBE.GLB` still routes to the GLB
+/// import path).
+fn candidate_is_glb(path: &std::path::Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("glb"))
 }
 
 impl EditorShell {
     /// `Ctrl+O` handler — fires from the `WindowEvent::KeyboardInput`
     /// branch in [`Self::window_event`]. Prompts via the
-    /// [`GlbOpenDialog`] stashed by [`Self::with_glb_open_dialog`],
-    /// imports the picked file via the [`super::AssetReloadHook`]
-    /// stashed by [`Self::attach_glb_reload_source`], and hands the
-    /// result to
-    /// [`crate::render_path::EditorShell::reload_render_assets`].
+    /// [`GlbOpenDialog`] stashed by [`Self::with_glb_open_dialog`], then
+    /// dispatches on the picked path's kind:
     ///
-    /// # Commit-after-success ordering
+    /// - `.rge-scene` / `.rge-project` → load via the [`SceneOpenHook`]
+    ///   stashed by [`Self::with_scene_open_hook`] and swap the live
+    ///   `World` via [`EditorShell::replace_world`] (the scene load runs
+    ///   in the hook BEFORE the swap, so a malformed scene leaves the
+    ///   live world untouched);
+    /// - `.glb` → import via the [`super::AssetReloadHook`] stashed by
+    ///   [`Self::attach_glb_reload_source`] and hand the result to
+    ///   [`crate::render_path::EditorShell::reload_render_assets`] (the
+    ///   commit-after-success path below);
+    /// - anything else → warn-log and no-op.
+    ///
+    /// # Commit-after-success ordering (the `.glb` branch)
     ///
     /// [`Self::glb_source_path`] is assigned **only** after the load
     /// and the swap have both returned `Ok`. This deliberately does NOT
@@ -164,7 +242,65 @@ impl EditorShell {
             return;
         };
 
-        // (d) Loader presence + import. Borrow `reload_hook` and run
+        // (d) Scene dispatch. A `.rge-scene` / `.rge-project` takes the
+        //     runtime World-swap route and returns; a `.glb` falls
+        //     through to the render-asset import below; anything else
+        //     warns. The scene load runs inside the binary-owned
+        //     `SceneOpenHook` BEFORE `replace_world`, so a malformed
+        //     scene fails with the live world untouched — the scene
+        //     analogue of the GLB commit-after-success property.
+        if candidate_is_scene(&candidate) {
+            let load_result = {
+                let Some(hook) = self.scene_open_hook.as_ref() else {
+                    tracing::warn!(
+                        target: "rge::editor-shell::open_request",
+                        path = %candidate.display(),
+                        "Ctrl+O scene open ignored: no scene_open_hook attached (missing with_scene_open_hook)"
+                    );
+                    return;
+                };
+                hook.load_scene_world(&candidate)
+            };
+            let world = match load_result {
+                Ok(world) => world,
+                Err(e) => {
+                    tracing::warn!(
+                        target: "rge::editor-shell::open_request",
+                        path = %candidate.display(),
+                        error = %e,
+                        "scene load failed; retaining the live world, no swap"
+                    );
+                    return;
+                }
+            };
+            // `replace_world` is Editing-gated (already checked above) and
+            // clears `glb_source_path`, so the binary tears down the GLB
+            // watcher on its next `sync_glb_watcher`.
+            match self.replace_world(world) {
+                Ok(()) => tracing::info!(
+                    target: "rge::editor-shell::open_request",
+                    path = %candidate.display(),
+                    "scene open OK; world swapped, viewport blanked, glb_source_path cleared"
+                ),
+                Err(e) => tracing::warn!(
+                    target: "rge::editor-shell::open_request",
+                    path = %candidate.display(),
+                    error = %e,
+                    "replace_world rejected the scene swap; live world unchanged"
+                ),
+            }
+            return;
+        }
+        if !candidate_is_glb(&candidate) {
+            tracing::warn!(
+                target: "rge::editor-shell::open_request",
+                path = %candidate.display(),
+                "Ctrl+O ignored: unsupported Open candidate (expected .glb, .rge-scene, or .rge-project)"
+            );
+            return;
+        }
+
+        // (e) GLB loader presence + import. Borrow `reload_hook` and run
         //     the import inside a scoped block so the immutable borrow
         //     ends before the `&mut self` calls below — mirroring how
         //     `handle_asset_reload` scopes its borrows. `candidate` is
@@ -195,7 +331,7 @@ impl EditorShell {
             }
         };
 
-        // (e) Swap render assets, then commit ONLY on success. The
+        // (f) Swap render assets, then commit ONLY on success. The
         //     immutable `reload_hook` borrow above has ended, so the
         //     `&mut self` swap call is unambiguous.
         let mesh_count = meshes.len();
@@ -204,12 +340,12 @@ impl EditorShell {
                 // Commit the new source path — and ONLY now. R-key
                 // reloads henceforth target the newly opened file.
                 //
-                // NOTE: the binary-owned `--glb` `notify` watcher still
-                // targets the ORIGINAL `--glb` path; editor-shell has
-                // no watcher to re-point. Making the auto-watcher
-                // follow an in-app-opened file is a deferred follow-up
-                // (it needs binary-side watcher re-rooting); only the
-                // manual R-key reload follows `glb_source_path` here.
+                // The binary-owned `notify` watcher re-roots onto this
+                // committed `glb_source_path` on its next
+                // `sync_glb_watcher`, so automatic hot-reload follows the
+                // newly opened file too (not just the manual R-key).
+                // editor-shell itself holds no watcher — it only moves
+                // `glb_source_path`; the binary reconciles.
                 self.glb_source_path = Some(candidate.clone());
                 tracing::info!(
                     target: "rge::editor-shell::open_request",
