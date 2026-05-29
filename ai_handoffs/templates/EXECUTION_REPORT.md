@@ -37,6 +37,17 @@ to execution. Instead:
    critique flows through the `EXECUTION_REPORT` itself per Rule 7 of
    the protocol.>
 
+## Current-State Claims: Falsification Re-run
+
+Re-run every falsifying search listed in the Task Packet before relying on the
+corresponding negative / "unchanged" claim. Record the live command and result.
+If a result contradicts the Task Packet claim, stop and report the
+contradiction in `Deviations from Task Packet` or `Open Questions for
+Reviewer` rather than proceeding on a stale premise.
+
+- Claim: <negative assertion from Task Packet>
+  Re-run: `<rg command + scope>` -> <live result>
+
 ## What I Changed
 
 ### Source

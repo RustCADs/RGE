@@ -44,6 +44,15 @@ that motivate this packet.>
 - <Specific lint must pass / must NOT shift exemption count>
 - <...>
 
+## Current-State Claims: Falsification Required
+
+Every negative / "unchanged" assertion this packet makes about current source
+MUST list its inverse-search command and result. A negative claim without a
+falsifying search is not a valid premise (Protocol Rule 8).
+
+- Claim: <negative assertion>
+  Falsifying search: `<rg command + scope>` -> <result confirming the claim>
+
 ## Constraints / Non-Goals
 
 - <Things this dispatch explicitly does NOT solve — list them so the

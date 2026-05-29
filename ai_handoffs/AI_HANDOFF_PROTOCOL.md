@@ -393,6 +393,33 @@ ROLEFLOW + MAIN-RENDER dispatch series demonstrated that duplicate
 pre-execution `REVIEW_REPORT` packets from the Executor added no signal
 beyond the first reviewer's `APPROVE`.
 
+### 8. Negative current-state claims require falsification
+
+Any `TASK_PACKET` or `EXECUTION_REPORT` claim asserting absence,
+unchanged-ness, or zero reachability in current repository state MUST carry the
+inverse search/read that would falsify it, plus the observed result. Examples
+include "no call sites", "zero matches", "feature absent", "X is unchanged",
+"not wired", and "trigger has not fired".
+
+A negative claim without an attached falsifying search is an invalid premise:
+the Planner must not author it, the Executor must re-run and record the search
+before relying on it, and the Reviewer/Controller should treat an ungrounded
+negative claim as a protocol defect.
+
+Positive citations are not enough to support a negative claim. The search
+scope must be explicit enough for another agent to re-run it, usually with
+`rg` / `git grep` and the relevant path set. If a claim cannot be falsified
+cheaply, state it as an open question instead of a current-state assertion.
+
+This rule encodes the ISSUE-253 lesson: a "Gap 2 UNCHANGED" premise was
+authored from stale planning text, and one inverse source search would have
+falsified it before the packet was filed.
+
+Future enforcement work should mirror this rule into the live
+`Invoke-ClaudePlanGate` prompt in `Invoke-AiDispatchLoop.ps1` and the
+corresponding `AI_DISPATCH_AUTOMATION.md` section 10.2. That plan-gate
+enforcement is intentionally out of scope for this governance-doc update.
+
 ## Repository Layout
 
 ```
