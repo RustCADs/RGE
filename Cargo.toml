@@ -179,6 +179,9 @@ tokio       = { version = "1", features = ["rt", "rt-multi-thread", "macros", "s
 # Filesystem / hot-reload
 notify      = "8"                                         # bumped 6 → 8.2.0 (API: ConfigBuilder shape changed)
 
+# Native file dialogs (in-app Open) — `rge-editor` only
+rfd         = "0.17"                                      # latest 0.17.2; native Open-file dialog for in-app GLB open
+
 # Compression
 zstd        = "0.13"                                      # latest 0.13.3
 

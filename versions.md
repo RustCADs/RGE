@@ -48,6 +48,7 @@
 | Crate | Pinned | Latest stable | MSRV | Notes |
 |---|---|---|---|---|
 | `notify` | `8` | **8.2.0** (Aug 2025) | — | bumped 6 → 8 (2 majors; `Config::with_*` builder shape changed) |
+| `rfd` | `0.17` (→ 0.17.2) | **0.17.2** (2026) | — | native Open-file dialog for in-app GLB open; `rge-editor` only (editor-shell stays free of rfd via the `GlbOpenDialog` trait). UI affordance, no ADR. All transitive deps already in lock (egui/winit/wgpu cone). |
 
 ### Compression
 
