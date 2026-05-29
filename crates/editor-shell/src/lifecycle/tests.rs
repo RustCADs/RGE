@@ -1099,3 +1099,144 @@ fn handle_asset_reload_surfaces_hook_error_as_warn_and_retains_state() {
     assert_eq!(s.prebuilt_render_meshes.len(), before);
     assert!(s.meshes.is_empty(), "no GPU upload happened");
 }
+
+// ---------------------------------------------------------------------------
+// In-app "Open GLB" (Ctrl+O) — commit-after-success ordering (gate tests).
+//
+// These cover the NON-success paths (cancel, failing candidate, missing
+// dialog) headlessly — no `gfx_ctx` is reached because the handler returns
+// before `reload_render_assets`. The GPU swap-SUCCESS path (open commits
+// the path only after the swap succeeds) lives in
+// `rge-editor/src/main.rs`'s GPU-guarded end-to-end suite, alongside the
+// analogous R-key success test, because it needs a real `gfx_ctx` + the
+// real glTF loader + a fixture.
+// ---------------------------------------------------------------------------
+
+/// Mock [`GlbOpenDialog`] returning a fixed, pre-configured result so
+/// the open handler can be driven without a native dialog.
+struct MockOpenDialog {
+    result: Option<std::path::PathBuf>,
+}
+
+impl crate::GlbOpenDialog for MockOpenDialog {
+    fn pick_glb_path(&self) -> Option<std::path::PathBuf> {
+        self.result.clone()
+    }
+}
+
+/// Mock [`AssetReloadHook`] that always fails — used to drive the
+/// failing-candidate path of [`EditorShell::handle_open_request`]
+/// without a malformed file on disk.
+struct AlwaysFailHook;
+
+impl crate::AssetReloadHook for AlwaysFailHook {
+    fn reload_glb(
+        &self,
+        _path: &std::path::Path,
+    ) -> Result<
+        (
+            Vec<rge_brep_render::RenderMesh>,
+            Vec<[f32; 4]>,
+            Vec<Option<(u32, u32, Vec<u8>)>>,
+        ),
+        String,
+    > {
+        Err("simulated open: parse failure".into())
+    }
+}
+
+#[test]
+fn open_request_cancel_mutates_nothing() {
+    // Test C — dialog returns `None` (user cancelled). The handler
+    // info-logs and returns BEFORE touching the loader hook or any
+    // render state: glb_source_path stays as it was, no GPU upload.
+    let mut s = EditorShell::new().with_glb_open_dialog(Box::new(MockOpenDialog { result: None }));
+    // A loader hook is present so we prove it is the cancel — not a
+    // missing hook — that no-ops (cancel is checked before the hook).
+    s.attach_glb_loader_hook(AlwaysFailHook);
+    // attach_glb_loader_hook leaves glb_source_path untouched.
+    assert!(s.glb_source_path().is_none());
+
+    s.handle_open_request();
+
+    assert!(
+        s.glb_source_path().is_none(),
+        "cancelled Open must not commit any path"
+    );
+    assert!(s.meshes.is_empty(), "cancelled Open must not upload meshes");
+    assert_eq!(s.play_state(), PlayState::Editing);
+}
+
+#[test]
+fn open_request_failing_candidate_leaves_source_path_unchanged() {
+    // Test A — dialog returns a candidate, but the loader rejects it
+    // (malformed). glb_source_path must remain its PRIOR value (the
+    // last good file), NOT the rejected candidate — the previous frame
+    // is retained. This is the commit-after-success safety property.
+    let prior = std::path::PathBuf::from("/tmp/prior_good.glb");
+    let mut s = EditorShell::new().with_glb_open_dialog(Box::new(MockOpenDialog {
+        result: Some(std::path::PathBuf::from("/tmp/freshly_picked_but_bad.glb")),
+    }));
+    // Seed a prior good source path + a failing hook. (The hook fails
+    // for BOTH R-key and Open here; we only exercise Open.)
+    s.attach_glb_reload_source(prior.clone(), AlwaysFailHook);
+    assert_eq!(s.glb_source_path(), Some(prior.as_path()));
+    let meshes_before = s.prebuilt_render_meshes.len();
+
+    s.handle_open_request();
+
+    // The rejected candidate must NOT have been committed.
+    assert_eq!(
+        s.glb_source_path(),
+        Some(prior.as_path()),
+        "a failing Open must leave glb_source_path at the prior good path, not the rejected candidate"
+    );
+    assert_eq!(
+        s.prebuilt_render_meshes.len(),
+        meshes_before,
+        "failing Open must not mutate prebuilt meshes"
+    );
+    assert!(s.meshes.is_empty(), "failing Open must not upload meshes");
+}
+
+#[test]
+fn open_request_with_no_dialog_is_noop() {
+    // Defensive — no dialog attached (the binary always attaches one,
+    // but headless construction does not). Ctrl+O warn-logs and
+    // no-ops; no path committed even though a loader hook is present.
+    let mut s = EditorShell::new();
+    s.attach_glb_loader_hook(AlwaysFailHook);
+    assert!(s.open_dialog.is_none());
+    assert!(s.glb_source_path().is_none());
+
+    s.handle_open_request();
+
+    assert!(s.glb_source_path().is_none());
+    assert!(s.meshes.is_empty());
+}
+
+#[test]
+fn open_request_outside_editing_is_noop() {
+    // PIE gate — Open only fires in Editing (mirrors the R-key gate).
+    // Drive the shell into Playing, then assert Ctrl+O no-ops without
+    // committing the candidate.
+    let mut s = EditorShell::new().with_glb_open_dialog(Box::new(MockOpenDialog {
+        result: Some(std::path::PathBuf::from("/tmp/should_not_commit.glb")),
+    }));
+    s.attach_glb_loader_hook(AlwaysFailHook);
+    // Need an entity for Play to capture a snapshot.
+    let e = s.world_mut().spawn();
+    s.world_mut()
+        .insert_component(e, ComponentTypeId(2), vec![0u8; 12]);
+    s.handle_button(ToolbarButtonId::Play)
+        .expect("Play transition from Editing");
+    assert_eq!(s.play_state(), PlayState::Playing);
+
+    s.handle_open_request();
+
+    assert!(
+        s.glb_source_path().is_none(),
+        "Open during PIE must not commit a path"
+    );
+    assert!(s.meshes.is_empty());
+}

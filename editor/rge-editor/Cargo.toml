@@ -48,6 +48,11 @@ tracing-subscriber  = { workspace = true }
 # version pinned at `crates/editor-ui` and `crates/ui-theme` so no
 # new workspace dep version is introduced.
 notify              = { workspace = true }
+# ISSUE-258 — native "Open GLB" file dialog (Ctrl+O). `rge-editor`-only
+# dep; editor-shell stays free of `rfd` (it exposes only the
+# `GlbOpenDialog` trait, which this binary impls with rfd). UI
+# affordance, not architecture-bearing — `versions.md` row, no ADR.
+rfd                 = { workspace = true }
 
 [dev-dependencies]
 # Dispatch N2 — enable editor-shell's `test-harness` feature for

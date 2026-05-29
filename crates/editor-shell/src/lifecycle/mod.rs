@@ -213,10 +213,12 @@ const PROGRESS_FRAME_INTERVAL: u64 = 60;
 
 pub mod asset_reload;
 pub mod commands;
+pub mod open_request;
 pub mod playback;
 
 pub use asset_reload::AssetReloadHook;
 pub use commands::{EditorKeyCommand, SetTimeScale};
+pub use open_request::GlbOpenDialog;
 pub use playback::EditorPlaybackCommand;
 
 /// The editor host. Owns:
@@ -385,6 +387,16 @@ pub struct EditorShell {
     /// threading the io-gltf type through. `None` for the default
     /// cuboid-demo path. See [`AssetReloadHook`] for the trait.
     pub(crate) reload_hook: Option<Box<dyn AssetReloadHook>>,
+
+    /// In-app "Open GLB" (Ctrl+O) — caller-supplied dialog callback
+    /// that prompts the user for a `.glb` path. Boxed-dyn so the editor
+    /// binary's impl (which owns the `rfd` dep) can be handed to
+    /// editor-shell without threading `rfd` through — editor-shell
+    /// never gains an `rfd` dependency. `None` when no dialog was
+    /// attached (e.g. headless tests, or any path the binary did not
+    /// wire); `Ctrl+O` warn-logs and no-ops there. Set via
+    /// [`Self::with_glb_open_dialog`]. See [`GlbOpenDialog`].
+    pub(crate) open_dialog: Option<Box<dyn GlbOpenDialog>>,
 
     /// winit window the surface is bound to (kept alive for the surface's
     /// `'static` lifetime). `None` until `resumed`.
@@ -615,6 +627,7 @@ impl EditorShell {
             prebuilt_render_base_textures: Vec::new(),
             glb_source_path: None,
             reload_hook: None,
+            open_dialog: None,
         }
     }
 
@@ -699,6 +712,7 @@ impl EditorShell {
             prebuilt_render_base_textures: Vec::new(),
             glb_source_path: None,
             reload_hook: None,
+            open_dialog: None,
         }
     }
 
@@ -947,6 +961,7 @@ impl EditorShell {
             prebuilt_render_base_textures: textures,
             glb_source_path: None,
             reload_hook: None,
+            open_dialog: None,
         }
     }
 
@@ -976,7 +991,63 @@ impl EditorShell {
         self.reload_hook = Some(Box::new(hook));
     }
 
+    /// Attach a glb loader hook WITHOUT a source path.
+    ///
+    /// Companion to [`Self::attach_glb_reload_source`] for launch modes
+    /// that have no `--glb` file yet (the default cuboid demo and the
+    /// `--scene` path): the in-app "Open GLB" handler
+    /// ([`Self::handle_open_request`]) needs a loader hook to import a
+    /// user-picked file, but there is no initial source path to reload
+    /// with R until the user actually opens one. This sets only
+    /// [`Self::reload_hook`]; [`Self::glb_source_path`] stays `None`, so
+    /// R-key reload correctly no-ops until a successful Open commits a
+    /// path. After that first Open, R-key follows the opened file.
+    ///
+    /// Safe to call in any mode because the v0 [`AssetReloadHook`] impl
+    /// (`rge-editor::GlbLoaderHook`) is stateless — it re-imports from
+    /// whatever path it is handed on each call. Idempotent: calling
+    /// twice replaces the previous hook.
+    pub fn attach_glb_loader_hook<H: AssetReloadHook + 'static>(&mut self, hook: H) {
+        self.reload_hook = Some(Box::new(hook));
+    }
+
+    /// Attach a native "Open GLB" dialog for the `Ctrl+O` handler.
+    ///
+    /// Called by the editor binary (`rge-editor::main`) in every launch
+    /// mode (default cuboid demo, `--glb`, `--scene`) so `Ctrl+O` works
+    /// from any starting state. The `dialog` is the binary-owned `rfd`
+    /// impl of [`GlbOpenDialog`]; editor-shell holds only the boxed
+    /// trait object and never gains an `rfd` dependency.
+    ///
+    /// Consuming builder (`mut self -> Self`) so it composes in the
+    /// binary's construction chain alongside the other `with_*`
+    /// constructors. The `Ctrl+O` handler ([`Self::handle_open_request`])
+    /// ALSO requires a loader hook attached via
+    /// [`Self::attach_glb_reload_source`]; with a dialog but no loader,
+    /// `Ctrl+O` warn-logs and no-ops (the binary attaches both).
+    #[must_use]
+    pub fn with_glb_open_dialog(mut self, dialog: Box<dyn GlbOpenDialog>) -> Self {
+        self.open_dialog = Some(dialog);
+        self
+    }
+
     // ---- accessors (read-only) ---------------------------------------------
+
+    /// The current glb hot-reload source path, if any.
+    ///
+    /// `Some(path)` after a `--glb <path>` launch (via
+    /// [`Self::attach_glb_reload_source`]) OR after a successful in-app
+    /// Open (via [`Self::handle_open_request`], which commits the
+    /// picked path only once the load + swap succeed). `None` for the
+    /// default cuboid demo / `--scene` path until the user opens a GLB.
+    ///
+    /// Exposed so tests can assert the commit-after-success ordering of
+    /// [`Self::handle_open_request`] directly (a failed Open must leave
+    /// this unchanged; a successful Open must commit the new path).
+    #[must_use]
+    pub fn glb_source_path(&self) -> Option<&std::path::Path> {
+        self.glb_source_path.as_deref()
+    }
 
     /// Borrow the live world (mutable access exposed for tests / scene-load).
     #[must_use]
@@ -1707,6 +1778,21 @@ impl ApplicationHandler<()> for EditorShell {
                             EditorPlaybackCommand::from_key_press(key, self.modifiers)
                         {
                             self.handle_playback_command(cmd);
+                        } else if key == KeyCode::KeyO && ctrl {
+                            // Ctrl+O — in-app "Open GLB". The fourth
+                            // keyboard axis after `EditorKeyCommand`
+                            // (other Ctrl-bound, CommandBus),
+                            // `EditorPlaybackCommand` (plain
+                            // Space/Escape, PIE), and plain `R` (asset
+                            // reload). `KeyO` is unclaimed by the
+                            // Ctrl-bound `EditorKeyCommand` table, so it
+                            // falls through to here. Open prompts the
+                            // attached [`GlbOpenDialog`], imports the
+                            // picked file, and swaps render assets;
+                            // every guard (Editing-only, dialog/loader
+                            // present, cancel, load/swap failure)
+                            // logs and no-ops inside the handler.
+                            self.handle_open_request();
                         } else if key == KeyCode::KeyR && self.modifiers.is_empty() {
                             // Plain `R` (no modifiers) — asset hot-reload.
                             // The handler is the third keyboard axis after

@@ -84,7 +84,7 @@ use glam::{Mat4, Quat, Vec3};
 use rge_brep_render::RenderMesh;
 use rge_cad_core::{BRepOwnerId, CadGraph, CuboidOp, OperatorNode, Tolerance};
 use rge_cad_projection::{BRepHandle, CadProjection};
-use rge_editor_shell::{AssetReloadHook, EditorShell};
+use rge_editor_shell::{AssetReloadHook, EditorShell, GlbOpenDialog};
 use rge_io_gltf::{import_glb, Cache, Entity, MemoryCache, Scene, Transform};
 use rge_kernel_ecs::World;
 use winit::application::ApplicationHandler;
@@ -784,6 +784,31 @@ impl AssetReloadHook for GlbLoaderHook {
 }
 
 // ---------------------------------------------------------------------------
+// ISSUE-258 — in-app "Open GLB" dialog hook
+// ---------------------------------------------------------------------------
+
+/// Binary-owned [`GlbOpenDialog`] impl backed by `rfd`'s native file
+/// dialog. Handed to [`EditorShell`] via
+/// [`EditorShell::with_glb_open_dialog`] in every launch mode so
+/// `Ctrl+O` works from the default cuboid demo as well as `--glb` /
+/// `--scene`.
+///
+/// Doctrinal note: this struct owns the `rfd` edge so editor-shell
+/// stays free of an `rfd` dependency — mirroring how [`GlbLoaderHook`]
+/// owns the `rge-io-gltf` edge. Unit struct because the dialog is
+/// stateless (no last-directory / recent-files memory in v0).
+struct GlbOpenFileDialog;
+
+impl GlbOpenDialog for GlbOpenFileDialog {
+    fn pick_glb_path(&self) -> Option<PathBuf> {
+        rfd::FileDialog::new()
+            .add_filter("glTF Binary", &["glb"])
+            .set_title("Open GLB")
+            .pick_file()
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Cuboid demo (existing — unchanged behaviour)
 // ---------------------------------------------------------------------------
 
@@ -954,7 +979,15 @@ fn main() -> ExitCode {
         // caller has not pre-installed one — the loader never does).
         let mut shell_world = rge_editor_shell::world::World::new();
         *shell_world.kernel_mut() = world;
-        let shell = EditorShell::with_world(shell_world);
+        // ISSUE-258 — attach the in-app Open machinery so Ctrl+O works
+        // from the `--scene` path too. The loader hook (no source path:
+        // `--scene` has no `--glb` file) enables Ctrl+O to import a
+        // user-picked GLB; the dialog hook provides the native picker.
+        // R-key reload stays a no-op until a successful Open commits a
+        // path. `--scene` keeps `watcher: None` (no auto-reload here).
+        let mut shell =
+            EditorShell::with_world(shell_world).with_glb_open_dialog(Box::new(GlbOpenFileDialog));
+        shell.attach_glb_loader_hook(GlbLoaderHook);
         let mut app = EditorApp {
             shell,
             watcher: None,
@@ -992,13 +1025,18 @@ fn main() -> ExitCode {
                 render_meshes,
                 base_colors,
                 textures_for_shell,
-            );
+            )
+            // ISSUE-258 — native Open-GLB dialog (Ctrl+O). Attached in
+            // every launch mode; here it composes onto the `--glb`
+            // constructor before the reload-source attach below.
+            .with_glb_open_dialog(Box::new(GlbOpenFileDialog));
             // Asset hot-reload — both the manual R-key path AND the
             // ISSUE-85 automatic notify watcher route through the
             // same `EditorShell::handle_asset_reload` (and the
             // shared [`GlbLoaderHook`] above). The default cuboid
             // demo never reaches this branch → both reload sources
-            // silently no-op there.
+            // silently no-op there. This also sets the `reload_hook`
+            // that Ctrl+O's import step uses.
             shell.attach_glb_reload_source(path.clone(), GlbLoaderHook);
             // ISSUE-85 — start a notify watcher rooted at the
             // active source's parent directory. Construction
@@ -1020,8 +1058,17 @@ fn main() -> ExitCode {
             (shell, watcher)
         }
         None => {
-            // Default — cuboid demo (byte-identical to pre-dispatch-G).
-            (build_cuboid_demo_shell(), None)
+            // Default — cuboid demo. Render path is byte-identical to
+            // pre-dispatch-G; ISSUE-258 additionally attaches the
+            // in-app Open machinery so Ctrl+O works from the demo. The
+            // loader hook carries no source path (the demo has no
+            // `--glb` file), so R-key reload no-ops until a successful
+            // Open commits a path; the dialog hook provides the native
+            // picker. No watcher in the demo path.
+            let mut shell =
+                build_cuboid_demo_shell().with_glb_open_dialog(Box::new(GlbOpenFileDialog));
+            shell.attach_glb_loader_hook(GlbLoaderHook);
+            (shell, None)
         }
     };
 
@@ -1815,6 +1862,21 @@ mod tests {
         GPU_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner())
     }
 
+    /// ISSUE-258 — mock [`GlbOpenDialog`] returning a fixed,
+    /// pre-configured result so the open-request end-to-end tests can
+    /// drive `EditorShell::handle_open_request` without a native file
+    /// dialog. `Some(path)` simulates the user picking a file;
+    /// `None` simulates cancel.
+    struct MockOpenDialog {
+        result: Option<PathBuf>,
+    }
+
+    impl GlbOpenDialog for MockOpenDialog {
+        fn pick_glb_path(&self) -> Option<PathBuf> {
+            self.result.clone()
+        }
+    }
+
     /// Returns `true` if the supplied error string indicates that no
     /// compatible GPU adapter is available (i.e. the test should skip
     /// rather than panic). Centralised so both `render_fixture_end_to_end`
@@ -2186,6 +2248,149 @@ mod tests {
             post.max_r,
             post.min_b,
             post.max_b
+        );
+    }
+
+    /// **ISSUE-258 Open-GLB success end-to-end (Test B).** Mirrors the
+    /// R-key success test, but drives [`EditorShell::handle_open_request`]
+    /// through a mock [`GlbOpenDialog`] returning the
+    /// `textured_uv_cube.glb` fixture path. Loads cube.glb (blue),
+    /// renders frame 1 (asserts blue dominance), simulates Ctrl+O,
+    /// renders frame 2 and asserts the checkerboard red/blue spread —
+    /// AND asserts that `glb_source_path` was committed to the picked
+    /// path ONLY after the swap succeeded (commit-after-success).
+    ///
+    /// Exercises the full Open path: dialog hook → candidate →
+    /// `AssetReloadHook::reload_glb` (real `load_all_glb_meshes`) →
+    /// `reload_render_assets` (atomic swap) → glb_source_path commit.
+    #[test]
+    fn open_request_success_swaps_assets_and_commits_path_end_to_end() {
+        let _gpu_lock = gpu_test_lock();
+        let Some(mut shell) = build_shell_from_fixture("cube.glb") else {
+            return;
+        };
+        // Frame 1 — blue cube.glb.
+        let Some(buf_pre) = render_shell_one_frame(&mut shell) else {
+            return;
+        };
+        let pre = scan_central_row(&buf_pre);
+        assert!(
+            pre.cube_pixel_count > 8,
+            "pre-open: expected central row hits; got {}",
+            pre.cube_pixel_count
+        );
+        assert!(
+            pre.avg_b() > pre.avg_g() && pre.avg_g() > pre.avg_r(),
+            "pre-open should be blue-dominant (cube.glb); got rgb=({}, {}, {})",
+            pre.avg_r(),
+            pre.avg_g(),
+            pre.avg_b()
+        );
+
+        // The shell started with no Open machinery (build_shell_from_fixture
+        // does not wire it); attach the real loader hook + a mock dialog
+        // that "picks" textured_uv_cube.glb. glb_source_path is None
+        // before the Open (the picked path is committed only on success).
+        let target_path = fixtures_path().join("textured_uv_cube.glb");
+        if skip_if_fixture_missing(&target_path) {
+            return;
+        }
+        assert!(
+            shell.glb_source_path().is_none(),
+            "pre-open: build_shell_from_fixture leaves glb_source_path unset"
+        );
+        shell.attach_glb_loader_hook(GlbLoaderHook);
+        shell = shell.with_glb_open_dialog(Box::new(MockOpenDialog {
+            result: Some(target_path.clone()),
+        }));
+
+        // Ctrl+O — drive the production open handler path.
+        shell.handle_open_request();
+
+        // Commit-after-success: the picked path is now the source path.
+        assert_eq!(
+            shell.glb_source_path(),
+            Some(target_path.as_path()),
+            "successful Open must commit the picked path to glb_source_path"
+        );
+
+        // Frame 2 — textured_uv_cube.glb checkerboard variance proves
+        // the swap landed (same assertion as the R-key success test).
+        let Some(buf_post) = render_shell_one_frame(&mut shell) else {
+            return;
+        };
+        let post = scan_central_row(&buf_post);
+        assert!(
+            post.cube_pixel_count > 8,
+            "post-open: expected central row hits; got {}",
+            post.cube_pixel_count
+        );
+        let red_spread = i32::from(post.max_r) - i32::from(post.min_r);
+        let blue_spread = i32::from(post.max_b) - i32::from(post.min_b);
+        assert!(
+            red_spread > 50 || blue_spread > 50,
+            "post-open should show checkerboard color variance \
+             (textured_uv_cube.glb); cube_pixels={} red_spread={red_spread} \
+             blue_spread={blue_spread} red=[{}, {}] blue=[{}, {}]",
+            post.cube_pixel_count,
+            post.min_r,
+            post.max_r,
+            post.min_b,
+            post.max_b
+        );
+    }
+
+    /// ISSUE-258 — a cancelled Open (mock dialog returns `None`)
+    /// retains the prior rendered frame and commits no path. Runs
+    /// through the real GPU path so the "previous frame retained"
+    /// guarantee is observed at the pixel level, not just the field.
+    #[test]
+    fn open_request_cancel_retains_prior_frame_end_to_end() {
+        let _gpu_lock = gpu_test_lock();
+        let Some(mut shell) = build_shell_from_fixture("cube.glb") else {
+            return;
+        };
+        let Some(buf_pre) = render_shell_one_frame(&mut shell) else {
+            return;
+        };
+        let pre = scan_central_row(&buf_pre);
+        assert!(pre.cube_pixel_count > 8);
+        let pre_avg_b = pre.avg_b();
+        assert!(
+            pre_avg_b > pre.avg_g() && pre.avg_g() > pre.avg_r(),
+            "pre-open should be blue-dominant (cube.glb)"
+        );
+
+        // Attach the real loader + a cancelling dialog. Open no-ops.
+        shell.attach_glb_loader_hook(GlbLoaderHook);
+        shell = shell.with_glb_open_dialog(Box::new(MockOpenDialog { result: None }));
+        shell.handle_open_request();
+
+        assert!(
+            shell.glb_source_path().is_none(),
+            "cancelled Open must not commit a path"
+        );
+
+        // Frame 2 — still cube.glb (blue), no swap occurred.
+        let Some(buf_post) = render_shell_one_frame(&mut shell) else {
+            return;
+        };
+        let post = scan_central_row(&buf_post);
+        assert!(post.cube_pixel_count > 8);
+        assert!(
+            post.avg_b() > post.avg_g() && post.avg_g() > post.avg_r(),
+            "post-cancel should still be blue-dominant; got rgb=({}, {}, {})",
+            post.avg_r(),
+            post.avg_g(),
+            post.avg_b()
+        );
+        let db = (i32::try_from(post.avg_b()).unwrap_or(0) - i32::try_from(pre_avg_b).unwrap_or(0))
+            .abs();
+        assert!(
+            db <= 5,
+            "pre/post avg_b should match within 5 bytes (cancel = unchanged); \
+             pre={pre_avg_b} post={} delta={db}",
+            post.avg_b()
         );
     }
 
