@@ -1101,7 +1101,8 @@ fn handle_asset_reload_surfaces_hook_error_as_warn_and_retains_state() {
 }
 
 // ---------------------------------------------------------------------------
-// In-app "Open GLB" (Ctrl+O) — commit-after-success ordering (gate tests).
+// In-app GLB Open (Ctrl+O, the `.glb` branch) — commit-after-success
+// ordering (gate tests).
 //
 // These cover the NON-success paths (cancel, failing candidate, missing
 // dialog) headlessly — no `gfx_ctx` is reached because the handler returns
@@ -1607,5 +1608,35 @@ fn scene_open_preserves_scene_hook_for_a_second_open() {
         s.world().kernel().entity_count(),
         2,
         "second scene Open still swaps (the hook survived the first swap)"
+    );
+}
+
+#[test]
+fn scene_open_accepts_literal_rge_project() {
+    // The literal extensionless `.rge-project` path (no `Path::extension()`)
+    // must route to the scene branch — this is the file-name case the
+    // dialog's All-Files filter exists to make pickable (OQ2). Dialog
+    // returns a `.rge-project`; the scene hook yields a 2-entity world;
+    // the swap runs and clears the seeded `glb_source_path`.
+    let mut s = EditorShell::new()
+        .with_glb_open_dialog(Box::new(MockOpenDialog {
+            result: Some(std::path::PathBuf::from("/tmp/.rge-project")),
+        }))
+        .with_scene_open_hook(Box::new(MockSceneOpenHook {
+            entity_count: 2,
+            fail: false,
+        }));
+    s.attach_glb_reload_source(std::path::PathBuf::from("/tmp/prior.glb"), AlwaysFailHook);
+
+    s.handle_open_request();
+
+    assert_eq!(
+        s.world().kernel().entity_count(),
+        2,
+        "literal .rge-project must route to the scene branch and swap the world"
+    );
+    assert!(
+        s.glb_source_path().is_none(),
+        "literal .rge-project scene Open must clear glb_source_path"
     );
 }

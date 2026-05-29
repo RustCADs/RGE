@@ -646,7 +646,7 @@ impl AssetReloadHook for GlbLoaderHook {
 }
 
 // ---------------------------------------------------------------------------
-// ISSUE-258 — in-app "Open GLB" dialog hook
+// ISSUE-258 / SCENE-OPEN-WIRING — in-app "Open" dialog hook
 // ---------------------------------------------------------------------------
 
 /// Binary-owned [`GlbOpenDialog`] impl backed by `rfd`'s native file
