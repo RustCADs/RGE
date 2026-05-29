@@ -631,6 +631,73 @@ impl EditorShell {
         }
     }
 
+    /// Replace the live editor [`World`] at runtime with a caller-provided
+    /// kernel world, resetting the shell to the same load-only baseline
+    /// [`Self::with_world`] produces. **Editing-only** (mirrors the PIE gate
+    /// on [`Self::reload_render_assets`]). Substrate for in-app scene Open
+    /// (EDITOR-WORLD-SWAP; the `Ctrl+O` wiring is a follow-up dispatch).
+    ///
+    /// Resets to the `with_world` data baseline:
+    /// - clears the CAD-mode fields (`cad_world` / `projection` / `cad_graph`
+    ///   / `cad_entity`);
+    /// - clears all render content (`prebuilt_render_*` + the GPU `meshes` /
+    ///   `materials` + `highlight_index_buffer`) so the viewport renders blank
+    ///   — `encode_main_pass` skips an empty mesh set, matching the `--scene`
+    ///   load-only semantics (rendering scene entities is future work);
+    /// - drops the PIE `snapshot` and resets the selection (`coord`);
+    /// - installs a fresh [`CommandBus`] so an old-world undo/redo can never
+    ///   replay against the new kernel world;
+    /// - clears `glb_source_path` (the swapped-in world has no GLB hot-reload
+    ///   source).
+    ///
+    /// Preserves the GPU device/context, the editor camera, the attached
+    /// loader/dialog hooks (`reload_hook` / `open_dialog` — `Ctrl+O` and the
+    /// R-key reload stay wired), `PlayState`, the audit ledger, and the tick
+    /// counter. `notify`-watcher teardown is the binary's concern (it reacts
+    /// to the now-`None` [`Self::glb_source_path`]); this method does no
+    /// watcher work.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err` with NO mutation if called outside [`PlayState::Editing`]
+    /// — a mid-PIE world swap would corrupt the snapshot/restore contract.
+    pub fn replace_world(&mut self, world: KernelWorld) -> Result<(), String> {
+        if self.play_state() != PlayState::Editing {
+            return Err(format!(
+                "replace_world: PIE state is {}; world swap only allowed in Editing",
+                self.play_state().label()
+            ));
+        }
+
+        // Install the new kernel world into a fresh wrapper (this also clears
+        // the wrapper's legacy blob storage), defaulting a `TimeScale` in only
+        // if the caller did not provide one — mirrors `with_world`.
+        let mut wrapper = World::new();
+        *wrapper.kernel_mut() = world;
+        if wrapper.kernel().resource::<TimeScale>().is_none() {
+            wrapper.kernel_mut().insert_resource(TimeScale::default());
+        }
+        self.world = wrapper;
+
+        // Reset to the `with_world` data baseline.
+        self.cad_world = None;
+        self.projection = None;
+        self.cad_graph = None;
+        self.cad_entity = None;
+        self.prebuilt_render_meshes.clear();
+        self.prebuilt_render_base_colors.clear();
+        self.prebuilt_render_base_textures.clear();
+        self.meshes.clear();
+        self.materials.clear();
+        self.highlight_index_buffer = None;
+        self.snapshot = None;
+        self.coord = EditorCoord::new();
+        self.command_bus = CommandBus::new();
+        self.glb_source_path = None;
+
+        Ok(())
+    }
+
     /// Construct an [`EditorShell`] with a pre-built CAD scene attached
     /// to the render path. **Sub-δ.1.B entry point** for `rge-editor`.
     ///

@@ -1240,3 +1240,156 @@ fn open_request_outside_editing_is_noop() {
     );
     assert!(s.meshes.is_empty());
 }
+
+// ---------------------------------------------------------------------------
+// EDITOR-WORLD-SWAP — runtime `replace_world` substrate
+// ---------------------------------------------------------------------------
+
+#[test]
+fn replace_world_installs_new_world_and_stays_non_cad() {
+    // Swap from a default (`with_world`) shell: the live world reflects the
+    // swapped-in kernel world, and the shell stays in non-CAD / blank-render
+    // mode.
+    let mut s = EditorShell::new();
+    let mut next = rge_kernel_ecs::World::new();
+    next.spawn();
+    next.spawn();
+    next.spawn();
+    s.replace_world(next)
+        .expect("world swap allowed in Editing");
+    assert_eq!(
+        s.world().kernel().entity_count(),
+        3,
+        "the live world must reflect the swapped-in kernel world"
+    );
+    assert!(s.cad_world.is_none());
+    assert!(s.projection.is_none());
+    assert!(s.prebuilt_render_meshes.is_empty());
+    assert!(s.meshes.is_empty());
+}
+
+#[test]
+fn replace_world_from_cad_mode_clears_cad_fields() {
+    // White-box: force the CAD-mode fields `Some` (constructing a full
+    // `with_world_projection_graph` cuboid is disproportionate for a unit
+    // test, and `replace_world` clears all four CAD fields with one
+    // unconditional reset). Assert every CAD field is `None` afterward.
+    let mut s = EditorShell::new();
+    s.cad_world = Some(rge_kernel_ecs::World::new());
+    let dummy_entity = s.cad_world.as_mut().unwrap().spawn();
+    s.cad_entity = Some(dummy_entity);
+    let next = rge_kernel_ecs::World::new();
+    s.replace_world(next)
+        .expect("world swap allowed in Editing");
+    assert!(s.cad_world.is_none(), "cad_world must clear");
+    assert!(s.cad_entity.is_none(), "cad_entity must clear");
+    assert!(s.projection.is_none(), "projection must stay clear");
+    assert!(s.cad_graph.is_none(), "cad_graph must stay clear");
+}
+
+#[test]
+fn replace_world_from_render_mesh_mode_blanks_viewport() {
+    // Swap from a glTF render-only shell: the prebuilt render content is
+    // cleared so the viewport renders blank (the v0 `--scene` semantics).
+    let mesh = build_test_render_mesh();
+    let mut s = EditorShell::with_render_mesh(mesh);
+    assert_eq!(
+        s.prebuilt_render_meshes.len(),
+        1,
+        "precondition: 1 prebuilt mesh"
+    );
+    let next = rge_kernel_ecs::World::new();
+    s.replace_world(next)
+        .expect("world swap allowed in Editing");
+    assert!(
+        s.prebuilt_render_meshes.is_empty(),
+        "prebuilt meshes cleared"
+    );
+    assert!(
+        s.prebuilt_render_base_colors.is_empty(),
+        "base colors cleared"
+    );
+    assert!(
+        s.prebuilt_render_base_textures.is_empty(),
+        "textures cleared"
+    );
+    assert!(s.meshes.is_empty(), "GPU meshes cleared");
+    assert!(s.materials.is_empty(), "GPU materials cleared");
+}
+
+#[test]
+fn replace_world_is_rejected_outside_editing() {
+    // Editing-only gate: a swap during Play must be a no-op error.
+    let mut s = EditorShell::new();
+    build_scene(&mut s, 4);
+    s.handle_button(ToolbarButtonId::Play).expect("enter Play");
+    assert_eq!(s.play_state(), PlayState::Playing);
+    let before = s.world().kernel().entity_count();
+    let mut next = rge_kernel_ecs::World::new();
+    next.spawn();
+    let result = s.replace_world(next);
+    assert!(result.is_err(), "world swap outside Editing must error");
+    assert_eq!(
+        s.play_state(),
+        PlayState::Playing,
+        "state unchanged on the error path"
+    );
+    assert_eq!(
+        s.world().kernel().entity_count(),
+        before,
+        "the live world must be untouched on the error path"
+    );
+}
+
+#[test]
+fn replace_world_resets_command_bus() {
+    // A dirty undo/redo stack + dirty flag from the old world must NOT
+    // survive a swap, or an old-world undo could replay against the new
+    // kernel world.
+    let mut s = EditorShell::new();
+    s.set_time_scale(2.0);
+    assert!(
+        s.inspector_snapshot().is_dirty,
+        "precondition: a command dirtied the bus"
+    );
+    let next = rge_kernel_ecs::World::new();
+    s.replace_world(next)
+        .expect("world swap allowed in Editing");
+    let snap = s.inspector_snapshot();
+    assert!(
+        !snap.is_dirty,
+        "replace_world must install a fresh, clean CommandBus"
+    );
+    assert_eq!(
+        snap.undo_stack_len, 0,
+        "undo stack must be empty after swap"
+    );
+    assert_eq!(snap.undo_cursor, 0, "undo cursor must reset after swap");
+}
+
+#[test]
+fn replace_world_clears_glb_source_but_keeps_hooks() {
+    // The swapped-in world has no GLB hot-reload source, so the source
+    // pointer clears; the loader hook is preserved so Ctrl+O / R-key stay
+    // wired (the binary tears the watcher down off the now-`None` source).
+    let mut s = EditorShell::new();
+    s.attach_glb_reload_source(
+        std::path::PathBuf::from("/tmp/world-swap.glb"),
+        AlwaysFailHook,
+    );
+    assert!(
+        s.glb_source_path().is_some(),
+        "precondition: a GLB source is attached"
+    );
+    let next = rge_kernel_ecs::World::new();
+    s.replace_world(next)
+        .expect("world swap allowed in Editing");
+    assert!(
+        s.glb_source_path().is_none(),
+        "replace_world must clear the GLB source pointer"
+    );
+    assert!(
+        s.reload_hook.is_some(),
+        "loader hook must be preserved across the swap"
+    );
+}
