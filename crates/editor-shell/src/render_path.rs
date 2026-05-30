@@ -286,6 +286,12 @@ impl EditorShell {
 
         // Stash the winit-bound bits not covered by the shared helper.
         self.window = Some(window);
+        // EDITOR-WINDOW-TITLE — a freshly created window starts at the static
+        // creation title ("RGE Editor"); invalidate the title cache so the next
+        // `sync_window_title` re-applies the live title. Without this, a
+        // suspend/resume that installs a NEW window would skip `set_title`
+        // (cached title == desired title) and leave the new window mistitled.
+        self.last_window_title = None;
         self.surface_ctx = Some(surface_ctx);
 
         // Phase 9 egui host integration (dispatch B) — construct the

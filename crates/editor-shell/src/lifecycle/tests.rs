@@ -27,6 +27,7 @@
 //! No `pub(crate)` promotions were required for the extraction; the
 //! tests were already touching only public API surface.
 
+use super::window_title::editor_window_title;
 use super::EditorShell;
 use crate::audit::AuditEvent;
 use crate::play_state::{PlayState, PlayStateTransition};
@@ -2050,5 +2051,66 @@ fn save_outside_editing_with_source_is_noop() {
         s.scene_source_path(),
         Some(std::path::Path::new("/tmp/tracked.rge-scene")),
         "PIE-gated Save leaves the source untouched"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// EDITOR-WINDOW-TITLE — window title reflects scene source + dirty state
+// ---------------------------------------------------------------------------
+
+#[test]
+fn window_title_no_source_clean() {
+    assert_eq!(editor_window_title(None, false), "RGE Editor");
+}
+
+#[test]
+fn window_title_no_source_dirty() {
+    assert_eq!(editor_window_title(None, true), "RGE Editor *");
+}
+
+#[test]
+fn window_title_with_source_clean() {
+    assert_eq!(
+        editor_window_title(Some(std::path::Path::new("/tmp/level.rge-scene")), false),
+        "level.rge-scene — RGE Editor"
+    );
+}
+
+#[test]
+fn window_title_with_source_dirty() {
+    assert_eq!(
+        editor_window_title(Some(std::path::Path::new("/tmp/level.rge-scene")), true),
+        "level.rge-scene * — RGE Editor"
+    );
+}
+
+#[test]
+fn window_title_uses_file_name_not_full_path() {
+    // Only the file name appears, not the directory components.
+    assert_eq!(
+        editor_window_title(Some(std::path::Path::new("/a/b/c/scene.rge-scene")), false),
+        "scene.rge-scene — RGE Editor"
+    );
+}
+
+#[test]
+fn sync_window_title_without_window_is_noop() {
+    // A headless shell has no winit window; the per-frame title sync must not
+    // panic and must leave the windowless shell untouched.
+    let mut s = EditorShell::new();
+    assert!(
+        s.window.is_none(),
+        "precondition: headless shell has no window"
+    );
+
+    s.sync_window_title();
+
+    assert!(
+        s.window.is_none(),
+        "sync_window_title must not create a window"
+    );
+    assert!(
+        s.last_window_title.is_none(),
+        "a windowless sync commits no title"
     );
 }
