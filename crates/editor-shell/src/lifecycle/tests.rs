@@ -2261,7 +2261,7 @@ fn project_save_source_surfaces_folder_name_in_status_snapshot() {
         "/projects/my-game/.rge-project",
     )));
     assert_eq!(
-        s.save_status_snapshot().scene_file_name.as_deref(),
+        s.save_status_snapshot().source_name.as_deref(),
         Some("my-game"),
         "a Project save source must surface its folder name in the status snapshot"
     );
@@ -2274,7 +2274,7 @@ fn scene_save_source_surfaces_file_name_in_status_snapshot() {
         "/projects/demo/level.rge-scene",
     )));
     assert_eq!(
-        s.save_status_snapshot().scene_file_name.as_deref(),
+        s.save_status_snapshot().source_name.as_deref(),
         Some("level.rge-scene")
     );
 }

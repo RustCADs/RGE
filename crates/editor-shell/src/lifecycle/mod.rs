@@ -1429,7 +1429,7 @@ impl EditorShell {
     #[must_use]
     pub fn save_status_snapshot(&self) -> rge_editor_state::SaveStatusSnapshot {
         rge_editor_state::SaveStatusSnapshot {
-            scene_file_name: self
+            source_name: self
                 .save_source()
                 .and_then(SaveSource::display_name)
                 .map(std::string::ToString::to_string),

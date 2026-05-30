@@ -16,10 +16,10 @@ use rge_editor_state::SaveStatusSnapshot;
 // ---------------------------------------------------------------------------
 
 #[test]
-fn fresh_shell_has_no_scene_and_is_clean() {
+fn fresh_shell_has_no_source_and_is_clean() {
     let shell = EditorShell::new();
     let s = shell.save_status_snapshot();
-    assert_eq!(s.scene_file_name, None, "fresh shell has no save source");
+    assert_eq!(s.source_name, None, "fresh shell has no save source");
     assert!(!s.is_dirty, "fresh shell bus is clean");
 }
 
@@ -37,7 +37,7 @@ fn scene_source_surfaces_bare_file_name() {
     let shell = EditorShell::new().with_save_source(SaveSource::Scene(path));
     let s = shell.save_status_snapshot();
     assert_eq!(
-        s.scene_file_name.as_deref(),
+        s.source_name.as_deref(),
         Some("level.rge-scene"),
         "snapshot must carry the file name, not the directory path"
     );
@@ -55,7 +55,7 @@ fn scene_source_matches_save_source_path_accessor() {
         .and_then(std::path::Path::file_name)
         .and_then(|n| n.to_str())
         .map(str::to_string);
-    assert_eq!(shell.save_status_snapshot().scene_file_name, from_accessor);
+    assert_eq!(shell.save_status_snapshot().source_name, from_accessor);
 }
 
 // ---------------------------------------------------------------------------
@@ -75,9 +75,9 @@ fn dirty_flag_reflects_bus_submit_and_mark_saved() {
     let dirty = shell.save_status_snapshot();
     assert!(dirty.is_dirty, "non-no-op submit must flip is_dirty");
     assert_eq!(
-        dirty.scene_file_name.as_deref(),
+        dirty.source_name.as_deref(),
         Some("level.rge-scene"),
-        "scene name persists across edits"
+        "source name persists across edits"
     );
 
     shell.mark_saved_command();
@@ -88,14 +88,14 @@ fn dirty_flag_reflects_bus_submit_and_mark_saved() {
 }
 
 #[test]
-fn dirty_without_scene_source_is_a_real_state() {
-    // Editing a blank / demo world (no `.rge-scene` source) and dirtying the
-    // bus → scene_file_name None + is_dirty true. The formatter renders this
-    // as "No scene *".
+fn dirty_without_source_is_a_real_state() {
+    // Editing a blank / demo world (no save source) and dirtying the
+    // bus → source_name None + is_dirty true. The formatter renders this
+    // as "No file *".
     let mut shell = EditorShell::new();
     shell.set_time_scale(0.5);
     let s = shell.save_status_snapshot();
-    assert_eq!(s.scene_file_name, None);
+    assert_eq!(s.source_name, None);
     assert!(s.is_dirty);
 }
 
@@ -122,8 +122,8 @@ fn save_status_snapshot_is_clone_send_sync() {
 }
 
 #[test]
-fn save_status_snapshot_default_is_no_scene_clean() {
+fn save_status_snapshot_default_is_no_source_clean() {
     let s = SaveStatusSnapshot::default();
-    assert_eq!(s.scene_file_name, None);
+    assert_eq!(s.source_name, None);
     assert!(!s.is_dirty);
 }
