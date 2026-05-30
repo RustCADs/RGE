@@ -28,7 +28,7 @@
 //! tests were already touching only public API surface.
 
 use super::window_title::editor_window_title;
-use super::EditorShell;
+use super::{EditorShell, SaveSource};
 use crate::audit::AuditEvent;
 use crate::play_state::{PlayState, PlayStateTransition};
 use crate::play_toolbar::ToolbarButtonId;
@@ -1883,8 +1883,8 @@ impl crate::SceneSaveHook for RecordingSaveHook {
 }
 
 #[test]
-fn scene_open_commits_scene_source_path() {
-    // A successful `.rge-scene` Open commits the silent-save source.
+fn scene_open_commits_scene_save_source() {
+    // A successful `.rge-scene` Open commits a `SaveSource::Scene`.
     let mut s = EditorShell::new()
         .with_glb_open_dialog(Box::new(MockOpenDialog {
             result: Some(std::path::PathBuf::from("/tmp/level.rge-scene")),
@@ -1897,16 +1897,19 @@ fn scene_open_commits_scene_source_path() {
     s.handle_open_request();
 
     assert_eq!(
-        s.scene_source_path(),
-        Some(std::path::Path::new("/tmp/level.rge-scene")),
-        "a successful .rge-scene Open must commit scene_source_path"
+        s.save_source(),
+        Some(&SaveSource::Scene(std::path::PathBuf::from(
+            "/tmp/level.rge-scene"
+        ))),
+        "a successful .rge-scene Open must commit a SaveSource::Scene"
     );
 }
 
 #[test]
-fn scene_open_of_rge_project_leaves_source_path_none() {
-    // A literal `.rge-project` Open swaps the world but does NOT track a
-    // silent-save source (the writer cannot overwrite a `.rge-project`).
+fn scene_open_of_rge_project_commits_project_save_source() {
+    // PROJECT-SAVE-WIRING: a literal `.rge-project` Open swaps the world AND
+    // commits a `SaveSource::Project` (so `Ctrl+S` writes back to it via the
+    // project hook). Previously a project stayed untracked / Save-As.
     let mut s = EditorShell::new()
         .with_glb_open_dialog(Box::new(MockOpenDialog {
             result: Some(std::path::PathBuf::from("/tmp/.rge-project")),
@@ -1923,9 +1926,12 @@ fn scene_open_of_rge_project_leaves_source_path_none() {
         2,
         ".rge-project Open still swaps the world"
     );
-    assert!(
-        s.scene_source_path().is_none(),
-        ".rge-project must not be tracked as a silent-save source"
+    assert_eq!(
+        s.save_source(),
+        Some(&SaveSource::Project(std::path::PathBuf::from(
+            "/tmp/.rge-project"
+        ))),
+        "a literal .rge-project Open must commit a SaveSource::Project"
     );
 }
 
@@ -1938,7 +1944,7 @@ fn save_with_source_path_overwrites_without_dialog() {
     let last_path = std::rc::Rc::new(std::cell::RefCell::new(None));
     let src = std::path::PathBuf::from("/tmp/tracked.rge-scene");
     let mut s = EditorShell::new()
-        .with_scene_source_path(src.clone())
+        .with_save_source(SaveSource::Scene(src.clone()))
         .with_scene_save_dialog(Box::new(MockSaveDialog { result: None }))
         .with_scene_save_hook(Box::new(RecordingSaveHook {
             calls: std::rc::Rc::clone(&calls),
@@ -1960,9 +1966,9 @@ fn save_with_source_path_overwrites_without_dialog() {
         "silent Save must mark the bus saved"
     );
     assert_eq!(
-        s.scene_source_path(),
-        Some(src.as_path()),
-        "the source path is unchanged after a silent Save"
+        s.save_source(),
+        Some(&SaveSource::Scene(src.clone())),
+        "the save source is unchanged after a silent Save"
     );
 }
 
@@ -1978,15 +1984,15 @@ fn save_without_source_path_prompts_and_commits() {
         }))
         .with_scene_save_hook(Box::new(hook));
     s.set_time_scale(2.0);
-    assert!(s.scene_source_path().is_none(), "precondition: no source");
+    assert!(s.save_source().is_none(), "precondition: no source");
 
     s.handle_save_request();
 
     assert_eq!(calls.get(), 1, "Save-As invokes the writer");
     assert_eq!(
-        s.scene_source_path(),
-        Some(picked.as_path()),
-        "a successful Save-As commits the picked path as the new source"
+        s.save_source(),
+        Some(&SaveSource::Scene(picked.clone())),
+        "a successful Save-As commits the picked path as a new SaveSource::Scene"
     );
     assert!(!s.command_bus().is_dirty(), "Save-As marks the bus saved");
 }
@@ -2006,8 +2012,8 @@ fn save_as_failure_does_not_commit_source_path() {
 
     assert_eq!(calls.get(), 1, "the writer was invoked");
     assert!(
-        s.scene_source_path().is_none(),
-        "a failed Save-As must not commit a source path"
+        s.save_source().is_none(),
+        "a failed Save-As must not commit a source"
     );
     assert!(
         s.command_bus().is_dirty(),
@@ -2016,18 +2022,19 @@ fn save_as_failure_does_not_commit_source_path() {
 }
 
 #[test]
-fn replace_world_clears_scene_source_path() {
-    // A world swap resets the silent-save source.
-    let mut s = EditorShell::new()
-        .with_scene_source_path(std::path::PathBuf::from("/tmp/tracked.rge-scene"));
-    assert!(s.scene_source_path().is_some(), "precondition: source set");
+fn replace_world_clears_save_source() {
+    // A world swap resets the save source.
+    let mut s = EditorShell::new().with_save_source(SaveSource::Scene(std::path::PathBuf::from(
+        "/tmp/tracked.rge-scene",
+    )));
+    assert!(s.save_source().is_some(), "precondition: source set");
 
     s.replace_world(rge_kernel_ecs::World::new())
         .expect("world swap allowed in Editing");
 
     assert!(
-        s.scene_source_path().is_none(),
-        "replace_world must clear scene_source_path"
+        s.save_source().is_none(),
+        "replace_world must clear save_source"
     );
 }
 
@@ -2036,8 +2043,9 @@ fn save_outside_editing_with_source_is_noop() {
     // Even with a tracked source, Save is PIE-gated: during Play it no-ops (the
     // writer is never reached, the source is untouched).
     let (hook, calls) = save_hook(false);
+    let src = std::path::PathBuf::from("/tmp/tracked.rge-scene");
     let mut s = EditorShell::new()
-        .with_scene_source_path(std::path::PathBuf::from("/tmp/tracked.rge-scene"))
+        .with_save_source(SaveSource::Scene(src.clone()))
         .with_scene_save_hook(Box::new(hook));
     build_scene(&mut s, 2);
     s.handle_button(ToolbarButtonId::Play)
@@ -2048,14 +2056,140 @@ fn save_outside_editing_with_source_is_noop() {
 
     assert_eq!(calls.get(), 0, "Save during PIE must not reach the writer");
     assert_eq!(
-        s.scene_source_path(),
-        Some(std::path::Path::new("/tmp/tracked.rge-scene")),
+        s.save_source(),
+        Some(&SaveSource::Scene(src.clone())),
         "PIE-gated Save leaves the source untouched"
     );
 }
 
 // ---------------------------------------------------------------------------
-// EDITOR-WINDOW-TITLE — window title reflects scene source + dirty state
+// PROJECT-SAVE-WIRING — Ctrl+S routes a `SaveSource::Project` to the project
+// hook (overwrite first scene + manifest); the scene hook is never consulted.
+// ---------------------------------------------------------------------------
+
+/// Mock [`crate::ProjectSaveHook`] recording its call count + the last project
+/// path it received, returning `Ok`/`Err` per `fail`. (The real `.rge-project`
+/// disk write is covered by `rge-scene-loader`'s round-trip tests + the binary
+/// `ProjectSaveWriterHook` test; here we only prove the handler's routing + the
+/// mark-saved-on-success contract.)
+struct RecordingProjectSaveHook {
+    fail: bool,
+    calls: std::rc::Rc<std::cell::Cell<usize>>,
+    last_path: std::rc::Rc<std::cell::RefCell<Option<std::path::PathBuf>>>,
+}
+
+impl crate::ProjectSaveHook for RecordingProjectSaveHook {
+    fn save_project_world(
+        &self,
+        _world: &rge_kernel_ecs::World,
+        project_path: &std::path::Path,
+    ) -> Result<(), String> {
+        self.calls.set(self.calls.get() + 1);
+        *self.last_path.borrow_mut() = Some(project_path.to_path_buf());
+        if self.fail {
+            Err("simulated project save failure".into())
+        } else {
+            Ok(())
+        }
+    }
+}
+
+#[test]
+fn save_with_project_source_routes_to_project_hook() {
+    // A `SaveSource::Project` Ctrl+S writes through the project hook (not the
+    // scene hook), receives the project path, and marks the bus saved on Ok.
+    let calls = std::rc::Rc::new(std::cell::Cell::new(0usize));
+    let last_path = std::rc::Rc::new(std::cell::RefCell::new(None));
+    let (scene_hook, scene_calls) = save_hook(false);
+    let project = std::path::PathBuf::from("/tmp/proj/.rge-project");
+    let mut s = EditorShell::new()
+        .with_save_source(SaveSource::Project(project.clone()))
+        .with_scene_save_hook(Box::new(scene_hook))
+        .with_project_save_hook(Box::new(RecordingProjectSaveHook {
+            fail: false,
+            calls: std::rc::Rc::clone(&calls),
+            last_path: std::rc::Rc::clone(&last_path),
+        }));
+    s.set_time_scale(2.0);
+    assert!(s.command_bus().is_dirty());
+
+    s.handle_save_request();
+
+    assert_eq!(
+        calls.get(),
+        1,
+        "Project Save must invoke the project hook once"
+    );
+    assert_eq!(
+        scene_calls.get(),
+        0,
+        "Project Save must NOT consult the scene hook"
+    );
+    assert_eq!(
+        last_path.borrow().as_deref(),
+        Some(project.as_path()),
+        "the project hook must receive the tracked .rge-project path"
+    );
+    assert!(
+        !s.command_bus().is_dirty(),
+        "a successful Project Save must mark the bus saved"
+    );
+    assert_eq!(
+        s.save_source(),
+        Some(&SaveSource::Project(project.clone())),
+        "the Project source is unchanged after a silent Save"
+    );
+}
+
+#[test]
+fn project_save_failure_does_not_mark_saved() {
+    // The project hook returns Err: invoked once, but the bus stays dirty.
+    let calls = std::rc::Rc::new(std::cell::Cell::new(0usize));
+    let last_path = std::rc::Rc::new(std::cell::RefCell::new(None));
+    let project = std::path::PathBuf::from("/tmp/proj/.rge-project");
+    let mut s = EditorShell::new()
+        .with_save_source(SaveSource::Project(project.clone()))
+        .with_project_save_hook(Box::new(RecordingProjectSaveHook {
+            fail: true,
+            calls: std::rc::Rc::clone(&calls),
+            last_path: std::rc::Rc::clone(&last_path),
+        }));
+    s.set_time_scale(2.0);
+    assert!(s.command_bus().is_dirty());
+
+    s.handle_save_request();
+
+    assert_eq!(calls.get(), 1, "the project hook was invoked");
+    assert!(
+        s.command_bus().is_dirty(),
+        "a failed Project Save must NOT mark the bus saved"
+    );
+}
+
+#[test]
+fn project_save_without_hook_is_noop() {
+    // A Project source but no project_save_hook attached: warn + no-op; the bus
+    // stays dirty (defensive — the binary attaches the hook in every mode).
+    let mut s = EditorShell::new().with_save_source(SaveSource::Project(std::path::PathBuf::from(
+        "/tmp/proj/.rge-project",
+    )));
+    s.set_time_scale(2.0);
+    assert!(
+        s.project_save_hook.is_none(),
+        "precondition: no project hook"
+    );
+    assert!(s.command_bus().is_dirty());
+
+    s.handle_save_request();
+
+    assert!(
+        s.command_bus().is_dirty(),
+        "a no-hook Project Save must leave the bus dirty"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// EDITOR-WINDOW-TITLE — window title reflects save source + dirty state
 // ---------------------------------------------------------------------------
 
 #[test]

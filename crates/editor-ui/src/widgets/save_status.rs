@@ -23,8 +23,8 @@ use rge_editor_state::SaveStatusSnapshot;
 ///
 /// - `Some(name)` → `"{name}{dirty}"` (e.g. `"level.rge-scene *"`).
 /// - `None`       → `"No scene{dirty}"` (e.g. `"No scene *"` — unsaved edits
-///   in a blank / demo / `.glb` / `.rge-project` context, where there is no
-///   `.rge-scene` silent-save source yet).
+///   in a blank / demo / `.glb` context, where there is no save source yet; an
+///   open `.rge-scene` / `.rge-project` instead surfaces its file name above).
 ///
 /// `dirty` is `" *"` when `is_dirty`, else `""`. No leading/trailing
 /// whitespace beyond the marker; no embedded newlines — suitable for a single

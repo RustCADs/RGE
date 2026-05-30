@@ -85,7 +85,8 @@ use rge_brep_render::RenderMesh;
 use rge_cad_core::{BRepOwnerId, CadGraph, CuboidOp, OperatorNode, Tolerance};
 use rge_cad_projection::{BRepHandle, CadProjection};
 use rge_editor_shell::{
-    AssetReloadHook, EditorShell, GlbOpenDialog, SceneOpenHook, SceneSaveDialog, SceneSaveHook,
+    AssetReloadHook, EditorShell, GlbOpenDialog, ProjectSaveHook, SaveSource, SceneOpenHook,
+    SceneSaveDialog, SceneSaveHook,
 };
 use rge_io_gltf::{import_glb, Cache, Entity, MemoryCache, Scene, Transform};
 use rge_kernel_ecs::World;
@@ -743,6 +744,22 @@ impl SceneSaveHook for SceneSaveWriterHook {
     }
 }
 
+/// Binary-owned [`ProjectSaveHook`] impl backed by
+/// `rge_scene_loader::save_project_world_to_path` (PROJECT-SAVE-WIRING). Handed
+/// to [`EditorShell`] via [`EditorShell::with_project_save_hook`] in every launch
+/// mode so `Ctrl+S` on an open `.rge-project` writes the world back to it
+/// (overwrite the first scene + re-write the manifest). Owns the
+/// `rge-scene-loader` edge so editor-shell never gains that dependency — the
+/// project-axis companion to [`SceneSaveWriterHook`]. Unit struct because the
+/// writer is stateless (it re-extracts the live world on each call).
+struct ProjectSaveWriterHook;
+
+impl ProjectSaveHook for ProjectSaveWriterHook {
+    fn save_project_world(&self, world: &World, project_path: &Path) -> Result<(), String> {
+        rge_scene_loader::save_project_world_to_path(world, project_path).map_err(|e| e.to_string())
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Cuboid demo (existing — unchanged behaviour)
 // ---------------------------------------------------------------------------
@@ -1092,16 +1109,17 @@ fn main() -> ExitCode {
             .with_glb_open_dialog(Box::new(GlbOpenFileDialog))
             .with_scene_open_hook(Box::new(SceneOpenLoaderHook))
             .with_scene_save_dialog(Box::new(SceneSaveFileDialog))
-            .with_scene_save_hook(Box::new(SceneSaveWriterHook));
-        // SCENE-SAVE-SOURCE-PATH: seed the silent-save target only for a
-        // `.rge-scene` launch; a `.rge-project` leaves it None (first Ctrl+S =
-        // Save-As, which the writer can satisfy).
-        if scene_path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .is_some_and(|n| n.ends_with(".rge-scene"))
-        {
-            shell = shell.with_scene_source_path(scene_path.clone());
+            .with_scene_save_hook(Box::new(SceneSaveWriterHook))
+            .with_project_save_hook(Box::new(ProjectSaveWriterHook));
+        // PROJECT-SAVE-WIRING: seed the save source so the first `Ctrl+S` writes
+        // straight back to the launched file — `SaveSource::Project` for a
+        // literal `.rge-project`, `SaveSource::Scene` for a `.rge-scene`. (The
+        // loader already rejected any other `--scene` argument above.)
+        let launch_name = scene_path.file_name().and_then(|n| n.to_str());
+        if launch_name == Some(".rge-project") {
+            shell = shell.with_save_source(SaveSource::Project(scene_path.clone()));
+        } else if launch_name.is_some_and(|n| n.ends_with(".rge-scene")) {
+            shell = shell.with_save_source(SaveSource::Scene(scene_path.clone()));
         }
         shell.attach_glb_loader_hook(GlbLoaderHook);
         let mut app = EditorApp {
@@ -1153,7 +1171,8 @@ fn main() -> ExitCode {
             .with_glb_open_dialog(Box::new(GlbOpenFileDialog))
             .with_scene_open_hook(Box::new(SceneOpenLoaderHook))
             .with_scene_save_dialog(Box::new(SceneSaveFileDialog))
-            .with_scene_save_hook(Box::new(SceneSaveWriterHook));
+            .with_scene_save_hook(Box::new(SceneSaveWriterHook))
+            .with_project_save_hook(Box::new(ProjectSaveWriterHook));
             // Asset hot-reload — both the manual R-key path AND the
             // ISSUE-85 automatic notify watcher route through the
             // same `EditorShell::handle_asset_reload` (and the
@@ -1193,7 +1212,8 @@ fn main() -> ExitCode {
                 .with_glb_open_dialog(Box::new(GlbOpenFileDialog))
                 .with_scene_open_hook(Box::new(SceneOpenLoaderHook))
                 .with_scene_save_dialog(Box::new(SceneSaveFileDialog))
-                .with_scene_save_hook(Box::new(SceneSaveWriterHook));
+                .with_scene_save_hook(Box::new(SceneSaveWriterHook))
+                .with_project_save_hook(Box::new(ProjectSaveWriterHook));
             shell.attach_glb_loader_hook(GlbLoaderHook);
             (shell, None)
         }
@@ -1709,6 +1729,58 @@ mod tests {
         );
 
         std::fs::remove_file(&out).ok();
+    }
+
+    // -----------------------------------------------------------------------
+    // PROJECT-SAVE-WIRING — binary ProjectSaveWriterHook disk round-trip
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn project_save_writer_hook_round_trips_via_disk() {
+        // The binary ProjectSaveWriterHook writes the live world back to an
+        // existing `.rge-project` through the real substrate (overwrite first
+        // scene + re-write manifest). `save_project_world_to_path` overwrites in
+        // place, so copy the golden project tree into a unique temp dir first —
+        // never point the writer at the repo golden.
+        let golden_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("golden-projects")
+            .join("simple-scene");
+        let golden_manifest = golden_dir.join(".rge-project");
+        let world = rge_scene_loader::load_scene_world_from_path(&golden_manifest)
+            .expect("load golden simple-scene project");
+        let before = world.entity_count();
+        assert!(before > 0, "golden simple-scene must have entities");
+
+        // Build a writable copy of the project tree: <tmp>/.rge-project +
+        // <tmp>/scenes/main.rge-scene (the manifest's first scene).
+        let tmp =
+            std::env::temp_dir().join(format!("rge_editor_project_save_{}", std::process::id()));
+        let scenes_dir = tmp.join("scenes");
+        std::fs::create_dir_all(&scenes_dir).expect("create temp project scenes dir");
+        let tmp_manifest = tmp.join(".rge-project");
+        std::fs::copy(&golden_manifest, &tmp_manifest).expect("copy manifest");
+        std::fs::copy(
+            golden_dir.join("scenes").join("main.rge-scene"),
+            scenes_dir.join("main.rge-scene"),
+        )
+        .expect("copy scene");
+
+        // Save the live world back into the temp project via the binary hook,
+        // then reload from the temp manifest and assert the entity set survives.
+        ProjectSaveWriterHook
+            .save_project_world(&world, &tmp_manifest)
+            .expect("ProjectSaveWriterHook writes a .rge-project");
+        let reloaded = rge_scene_loader::load_scene_world_from_path(&tmp_manifest)
+            .expect("reload saved .rge-project");
+        assert_eq!(
+            reloaded.entity_count(),
+            before,
+            "save -> load via the binary project hook must preserve the entity set"
+        );
+
+        std::fs::remove_dir_all(&tmp).ok();
     }
 
     // -----------------------------------------------------------------------

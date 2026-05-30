@@ -2,13 +2,13 @@
 //! `EditorShell::save_status_snapshot()`. Sibling to
 //! `inspector_snapshot_smoke.rs`.
 //!
-//! Pins: a fresh shell has no scene + is clean; an opened/Save-As scene
+//! Pins: a fresh shell has no save source + is clean; an opened/Save-As
 //! source surfaces as its bare *file name* (not the full path); the dirty
 //! flag mirrors the Command Bus; building the snapshot is a pure read.
 
 use std::path::PathBuf;
 
-use rge_editor_shell::EditorShell;
+use rge_editor_shell::{EditorShell, SaveSource};
 use rge_editor_state::SaveStatusSnapshot;
 
 // ---------------------------------------------------------------------------
@@ -19,7 +19,7 @@ use rge_editor_state::SaveStatusSnapshot;
 fn fresh_shell_has_no_scene_and_is_clean() {
     let shell = EditorShell::new();
     let s = shell.save_status_snapshot();
-    assert_eq!(s.scene_file_name, None, "fresh shell has no scene source");
+    assert_eq!(s.scene_file_name, None, "fresh shell has no save source");
     assert!(!s.is_dirty, "fresh shell bus is clean");
 }
 
@@ -34,7 +34,7 @@ fn scene_source_surfaces_bare_file_name() {
     let path: PathBuf = PathBuf::from("projects")
         .join("demo")
         .join("level.rge-scene");
-    let shell = EditorShell::new().with_scene_source_path(path);
+    let shell = EditorShell::new().with_save_source(SaveSource::Scene(path));
     let s = shell.save_status_snapshot();
     assert_eq!(
         s.scene_file_name.as_deref(),
@@ -45,13 +45,13 @@ fn scene_source_surfaces_bare_file_name() {
 }
 
 #[test]
-fn scene_source_matches_scene_source_path_accessor() {
-    // The snapshot file name must equal what `scene_source_path()` reports
+fn scene_source_matches_save_source_path_accessor() {
+    // The snapshot file name must equal what `save_source_path()` reports
     // as a file name — single source of truth.
     let path: PathBuf = PathBuf::from("a").join("b").join("scene.rge-scene");
-    let shell = EditorShell::new().with_scene_source_path(path);
+    let shell = EditorShell::new().with_save_source(SaveSource::Scene(path));
     let from_accessor = shell
-        .scene_source_path()
+        .save_source_path()
         .and_then(std::path::Path::file_name)
         .and_then(|n| n.to_str())
         .map(str::to_string);
@@ -67,7 +67,8 @@ fn dirty_flag_reflects_bus_submit_and_mark_saved() {
     // `set_time_scale` is a real production bus submit source; one non-no-op
     // submit flips is_dirty, and `mark_saved_command()` clears it — the
     // snapshot must follow both transitions.
-    let mut shell = EditorShell::new().with_scene_source_path(PathBuf::from("level.rge-scene"));
+    let mut shell =
+        EditorShell::new().with_save_source(SaveSource::Scene(PathBuf::from("level.rge-scene")));
     assert!(!shell.save_status_snapshot().is_dirty);
 
     shell.set_time_scale(2.5);
@@ -104,7 +105,8 @@ fn dirty_without_scene_source_is_a_real_state() {
 
 #[test]
 fn save_status_snapshot_is_pure_read() {
-    let shell = EditorShell::new().with_scene_source_path(PathBuf::from("x.rge-scene"));
+    let shell =
+        EditorShell::new().with_save_source(SaveSource::Scene(PathBuf::from("x.rge-scene")));
     let s1 = shell.save_status_snapshot();
     let s2 = shell.save_status_snapshot();
     assert_eq!(s1, s2, "back-to-back snapshots must be equal (pure read)");
