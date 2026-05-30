@@ -9,23 +9,31 @@
 //!
 //! # Design (mirrors the Open hook split)
 //!
-//! - **True Save with Save-As fallback.** When
-//!   [`EditorShell::scene_source_path`] is `Some` (a `.rge-scene` was opened /
-//!   launched, or a prior Save-As committed one), `Ctrl+S` writes the live
-//!   `World` straight back to it via the binary-owned [`SceneSaveHook`]
-//!   (`rge_scene_loader::save_scene_world_to_path`) with **no dialog** (silent
-//!   overwrite). When it is `None`, the binary-owned [`SceneSaveDialog`] prompts
-//!   (Save-As) and the picked path is committed as the new `scene_source_path`
-//!   on success. Either way the Command-Bus saved point is marked
+//! - **True Save with Save-As fallback, routed by [`SaveSource`].** `Ctrl+S`
+//!   dispatches on [`EditorShell::save_source`]:
+//!   - [`SaveSource::Scene`] (a `.rge-scene` was opened / launched, or a prior
+//!     Save-As committed one) → write the live `World` straight back to it via
+//!     the binary-owned [`SceneSaveHook`]
+//!     (`rge_scene_loader::save_scene_world_to_path`) with **no dialog** (silent
+//!     overwrite).
+//!   - [`SaveSource::Project`] (a literal `.rge-project` was opened / launched)
+//!     → write the world back to it via the binary-owned [`ProjectSaveHook`]
+//!     (`rge_scene_loader::save_project_world_to_path` — overwrite the first
+//!     scene + re-write the manifest) with **no dialog**.
+//!   - `None` (blank / demo / `.glb`) → the binary-owned [`SceneSaveDialog`]
+//!     prompts (Save-As) and the picked path is committed as a new
+//!     [`SaveSource::Scene`] on success.
+//!
+//!   Either way the Command-Bus saved point is marked
 //!   ([`EditorShell::mark_saved_command`]) only on a successful write, clearing
-//!   `is_dirty()`. (`.rge-project` sources are not tracked — the writer cannot
-//!   overwrite them — so they stay Save-As.)
+//!   `is_dirty()`. (Save-As to a *new* `.rge-project` tree is still a follow-up;
+//!   the dialog produces a `.rge-scene` source.)
 //!
 //! - **editor-shell owns no file-system / loader edge.** The dialog impl owns
-//!   the `rfd` dependency; the writer impl owns `rge-scene-loader`. editor-shell
-//!   holds only the boxed `dyn` trait objects and calls through them — it never
-//!   gains an `rfd`, `rge-scene-loader`, or `rge-data` dependency. Mirrors
-//!   [`GlbOpenDialog`](super::GlbOpenDialog) /
+//!   the `rfd` dependency; the scene + project writer impls own
+//!   `rge-scene-loader`. editor-shell holds only the boxed `dyn` trait objects
+//!   and calls through them — it never gains an `rfd`, `rge-scene-loader`, or
+//!   `rge-data` dependency. Mirrors [`GlbOpenDialog`](super::GlbOpenDialog) /
 //!   [`SceneOpenHook`](super::SceneOpenHook) exactly.
 //!
 //! - **Editing-gated.** Save only fires in [`PlayState::Editing`], mirroring the
@@ -37,6 +45,7 @@
 
 use std::path::PathBuf;
 
+use super::SaveSource;
 use crate::lifecycle::EditorShell;
 use crate::play_state::PlayState;
 
@@ -87,33 +96,63 @@ pub trait SceneSaveHook {
     ) -> Result<(), String>;
 }
 
+/// Writer-callback for in-app Save of a `.rge-project` — the project-axis
+/// companion to [`SceneSaveHook`].
+///
+/// The editor binary (`rge-editor::main`) impls this over
+/// `rge_scene_loader::save_project_world_to_path` and hands an instance to
+/// [`EditorShell`] via [`EditorShell::with_project_save_hook`]. Keeping the impl
+/// in the binary leaves editor-shell free of any `rge-scene-loader` /
+/// `rge-data` dependency — the shell holds only a `Box<dyn ProjectSaveHook>` and
+/// calls [`Self::save_project_world`] when the user saves an open
+/// `.rge-project`.
+///
+/// `&self` (not `&mut self`) because the writer is stateless — every save
+/// re-extracts from the live world and writes afresh.
+pub trait ProjectSaveHook {
+    /// Write `world` back to the project at `project_path` (overwrite its first
+    /// scene + re-write the manifest).
+    ///
+    /// On any failure, return `Err(message)`: the `Ctrl+S` handler warn-logs it
+    /// and does NOT mark the bus saved. On `Ok`, the handler marks the
+    /// Command-Bus saved point (clearing `is_dirty()`).
+    fn save_project_world(
+        &self,
+        world: &rge_kernel_ecs::World,
+        project_path: &std::path::Path,
+    ) -> Result<(), String>;
+}
+
 impl EditorShell {
     /// `Ctrl+S` handler — invoked from the
     /// [`MarkSaved`](super::EditorKeyCommand::MarkSaved) arm of
-    /// [`Self::handle_key_command`]. Writes the live `World` through the
-    /// [`SceneSaveHook`] stashed by [`Self::with_scene_save_hook`] and marks the
-    /// Command-Bus saved point **only** on a successful write.
+    /// [`Self::handle_key_command`]. Routes the live `World` to disk by the open
+    /// [`SaveSource`] and marks the Command-Bus saved point **only** on a
+    /// successful write.
     ///
-    /// Target selection:
-    /// - **Silent overwrite** — when [`Self::scene_source_path`] is `Some` (a
-    ///   `.rge-scene` was opened / launched, or a prior Save-As committed one),
-    ///   the world is written straight back to it with **no dialog**.
-    /// - **Save-As** — when it is `None`, the [`SceneSaveDialog`] stashed by
-    ///   [`Self::with_scene_save_dialog`] prompts for a destination; on a
-    ///   successful write the picked path is committed as the new
-    ///   `scene_source_path` so the next `Ctrl+S` overwrites silently.
+    /// Routing on [`Self::save_source`]:
+    /// - [`SaveSource::Scene`] → silent overwrite via the [`SceneSaveHook`]
+    ///   stashed by [`Self::with_scene_save_hook`] (**no dialog**).
+    /// - [`SaveSource::Project`] → silent write via the [`ProjectSaveHook`]
+    ///   stashed by [`Self::with_project_save_hook`] (overwrite the first scene +
+    ///   re-write the manifest; **no dialog**).
+    /// - `None` → Save-As: the [`SceneSaveDialog`] stashed by
+    ///   [`Self::with_scene_save_dialog`] prompts for a `.rge-scene`
+    ///   destination; on a successful write the picked path is committed as a
+    ///   new [`SaveSource::Scene`] so the next `Ctrl+S` overwrites silently.
     ///
     /// All failure paths log and no-op (the bus saved point / `is_dirty()` and
-    /// `scene_source_path` are left untouched):
+    /// `save_source` are left untouched):
     /// - `play_state() != Editing` — Save is disallowed during PIE (warn-log;
     ///   consistent with the `Ctrl+O` / R-key gate).
     /// - Save-As with no `save_dialog` attached — warn-log (defensive — the
     ///   binary attaches one in every launch mode).
     /// - `pick_save_path()` returned `None` — the user cancelled (info-log; NO
     ///   mutation).
-    /// - `scene_save_hook` is `None` — no writer attached (warn-log; defensive).
+    /// - The matching writer hook is `None` — none attached (warn-log;
+    ///   defensive).
     /// - Hook returned `Err` — the path was rejected / serialize / I/O failed;
-    ///   the bus is NOT marked saved and no source path is committed.
+    ///   the bus is NOT marked saved and no source is committed.
     ///
     /// Public so headless tests can drive Save without synthesizing a winit
     /// `KeyEvent`; production usage routes through the `Ctrl+S` →
@@ -130,17 +169,40 @@ impl EditorShell {
             return;
         }
 
-        // (b) Target selection. A known `scene_source_path` is a silent
-        //     overwrite (no dialog); otherwise prompt Save-As. `from_dialog`
-        //     records whether the path must be committed as the new source on
-        //     success.
-        let (path, from_dialog) = match self.scene_source_path.clone() {
-            Some(src) => (src, false),
+        // (b) Route by the open SaveSource. Clone it so the `&self` read ends
+        //     before the `&mut self` mark / commit below. Scene + Project are
+        //     silent writes; None is Save-As (commits a new Scene on success).
+        //     The `write_*` helpers warn-log a missing hook / a write error and
+        //     return `false`; this router only logs the success + marks saved.
+        match self.save_source.clone() {
+            Some(SaveSource::Scene(path)) => {
+                if self.write_scene_world(&path) {
+                    tracing::info!(
+                        target: "rge::editor-shell::save_request",
+                        path = %path.display(),
+                        "save OK; .rge-scene overwritten and bus marked saved (is_dirty cleared)"
+                    );
+                    self.mark_saved_command();
+                }
+            }
+            Some(SaveSource::Project(path)) => {
+                if self.write_project_world(&path) {
+                    tracing::info!(
+                        target: "rge::editor-shell::save_request",
+                        path = %path.display(),
+                        "save OK; .rge-project written (first scene + manifest) and bus marked saved (is_dirty cleared)"
+                    );
+                    self.mark_saved_command();
+                }
+            }
             None => {
+                // Save-As — no tracked source. Prompt for a `.rge-scene`
+                // destination; on a successful write commit it as a new
+                // `SaveSource::Scene` so the next `Ctrl+S` overwrites silently.
                 let Some(dialog) = self.save_dialog.as_ref() else {
                     tracing::warn!(
                         target: "rge::editor-shell::save_request",
-                        "Ctrl+S ignored: no scene_source_path and no save_dialog attached (missing with_scene_save_dialog)"
+                        "Ctrl+S ignored: no save source and no save_dialog attached (missing with_scene_save_dialog)"
                     );
                     return;
                 };
@@ -151,47 +213,73 @@ impl EditorShell {
                     );
                     return;
                 };
-                (picked, true)
+                if self.write_scene_world(&picked) {
+                    tracing::info!(
+                        target: "rge::editor-shell::save_request",
+                        path = %picked.display(),
+                        "Save-As OK; .rge-scene written, source committed, bus marked saved (is_dirty cleared)"
+                    );
+                    self.save_source = Some(SaveSource::Scene(picked));
+                    self.mark_saved_command();
+                }
             }
-        };
+        }
+    }
 
-        // (c) Writer presence + write. Scope the `&self` borrows (hook + world)
-        //     so they end before the `&mut self` commit below. `self.world.
-        //     kernel()` hands the inner `rge_kernel_ecs::World` to the writer.
-        let save_result = {
-            let Some(hook) = self.scene_save_hook.as_ref() else {
+    /// Write the live world to a `.rge-scene` at `path` via the
+    /// [`SceneSaveHook`]. Scopes the `&self` borrows (hook + world) so they end
+    /// before any `&mut self` commit in the caller. Returns `true` on a
+    /// successful write; `false` (with a warn-log) when no `scene_save_hook` is
+    /// attached or the hook returned `Err`. Does NOT mark the bus saved — the
+    /// caller owns the success-side mark + source commit.
+    fn write_scene_world(&self, path: &std::path::Path) -> bool {
+        let Some(hook) = self.scene_save_hook.as_ref() else {
+            tracing::warn!(
+                target: "rge::editor-shell::save_request",
+                path = %path.display(),
+                "Ctrl+S ignored: no scene_save_hook attached (missing with_scene_save_hook)"
+            );
+            return false;
+        };
+        match hook.save_scene_world(self.world.kernel(), path) {
+            Ok(()) => true,
+            Err(e) => {
                 tracing::warn!(
                     target: "rge::editor-shell::save_request",
                     path = %path.display(),
-                    "Ctrl+S ignored: no scene_save_hook attached (missing with_scene_save_hook)"
+                    error = %e,
+                    "scene save failed; bus NOT marked saved, editor state unchanged"
                 );
-                return;
-            };
-            hook.save_scene_world(self.world.kernel(), &path)
-        };
-
-        // (d) On success: mark saved, and (Save-As path only) commit the picked path
-        //     as the new silent-save source so the next `Ctrl+S` overwrites it.
-        //     On failure: NOT marked, `scene_source_path` untouched.
-        match save_result {
-            Ok(()) => {
-                tracing::info!(
-                    target: "rge::editor-shell::save_request",
-                    path = %path.display(),
-                    silent = !from_dialog,
-                    "save OK; .rge-scene written and bus marked saved (is_dirty cleared)"
-                );
-                if from_dialog {
-                    self.scene_source_path = Some(path);
-                }
-                self.mark_saved_command();
+                false
             }
-            Err(e) => tracing::warn!(
+        }
+    }
+
+    /// Write the live world back to the `.rge-project` at `path` via the
+    /// [`ProjectSaveHook`] (overwrite first scene + manifest). Mirrors
+    /// [`Self::write_scene_world`]: returns `true` on success; `false` (with a
+    /// warn-log) when no `project_save_hook` is attached or the hook returned
+    /// `Err`. Does NOT mark the bus saved.
+    fn write_project_world(&self, path: &std::path::Path) -> bool {
+        let Some(hook) = self.project_save_hook.as_ref() else {
+            tracing::warn!(
                 target: "rge::editor-shell::save_request",
                 path = %path.display(),
-                error = %e,
-                "scene save failed; bus NOT marked saved, editor state unchanged"
-            ),
+                "Ctrl+S ignored: no project_save_hook attached (missing with_project_save_hook)"
+            );
+            return false;
+        };
+        match hook.save_project_world(self.world.kernel(), path) {
+            Ok(()) => true,
+            Err(e) => {
+                tracing::warn!(
+                    target: "rge::editor-shell::save_request",
+                    path = %path.display(),
+                    error = %e,
+                    "project save failed; bus NOT marked saved, editor state unchanged"
+                );
+                false
+            }
         }
     }
 }

@@ -216,13 +216,15 @@ pub mod commands;
 pub mod open_request;
 pub mod playback;
 pub mod save_request;
+pub mod save_source;
 pub mod window_title;
 
 pub use asset_reload::AssetReloadHook;
 pub use commands::{EditorKeyCommand, SetTimeScale};
 pub use open_request::{GlbOpenDialog, SceneOpenHook};
 pub use playback::EditorPlaybackCommand;
-pub use save_request::{SceneSaveDialog, SceneSaveHook};
+pub use save_request::{ProjectSaveHook, SceneSaveDialog, SceneSaveHook};
+pub use save_source::SaveSource;
 
 /// The editor host. Owns:
 ///
@@ -432,14 +434,28 @@ pub struct EditorShell {
     /// [`SceneSaveHook`].
     pub(crate) scene_save_hook: Option<Box<dyn SceneSaveHook>>,
 
-    /// In-app "Save" (Ctrl+S) — the `*.rge-scene` file a silent Save overwrites.
-    /// `Some(path)` after opening / launching a `.rge-scene` (or a successful
-    /// Save-As); `Ctrl+S` then writes straight back to it with no dialog. `None`
-    /// for a blank / demo / `.glb` / `.rge-project` context — `Ctrl+S` falls
+    /// In-app "Save" (Ctrl+S) — caller-supplied writer callback that writes the
+    /// live `World` back to a `.rge-project` (overwrite its first scene +
+    /// re-write the manifest). The project-axis companion to
+    /// [`Self::scene_save_hook`]. Boxed-dyn so the editor binary's
+    /// `rge-scene-loader` impl can be handed to editor-shell without threading
+    /// `rge-scene-loader` / `rge-data` through — editor-shell never gains either
+    /// dependency. `None` when no hook was attached; a `Project` `Ctrl+S`
+    /// warn-logs and no-ops there. Set via [`Self::with_project_save_hook`]. See
+    /// [`ProjectSaveHook`].
+    pub(crate) project_save_hook: Option<Box<dyn ProjectSaveHook>>,
+
+    /// In-app "Save" (Ctrl+S) — the document a `Ctrl+S` writes back to: a
+    /// `.rge-scene` (silent overwrite) or a literal `.rge-project` (overwrite
+    /// first scene + manifest). `Some(_)` after opening / launching a
+    /// `.rge-scene` / `.rge-project` (or a successful Save-As, which always
+    /// produces a [`SaveSource::Scene`]); `Ctrl+S` then routes by variant with
+    /// no dialog. `None` for a blank / demo / `.glb` context — `Ctrl+S` falls
     /// back to Save-As. Cleared by [`Self::replace_world`] and re-committed by
-    /// the scene branch of [`Self::handle_open_request`]. Set at construction
-    /// via [`Self::with_scene_source_path`]; read via [`Self::scene_source_path`].
-    pub(crate) scene_source_path: Option<PathBuf>,
+    /// [`Self::handle_open_request`]. Set at construction via
+    /// [`Self::with_save_source`]; read via [`Self::save_source`] /
+    /// [`Self::save_source_path`].
+    pub(crate) save_source: Option<SaveSource>,
 
     /// EDITOR-WINDOW-TITLE — the last title handed to the winit window's
     /// `set_title`, so [`Self::sync_window_title`] only re-titles on a change
@@ -693,7 +709,8 @@ impl EditorShell {
             scene_open_hook: None,
             save_dialog: None,
             scene_save_hook: None,
-            scene_source_path: None,
+            project_save_hook: None,
+            save_source: None,
             last_window_title: None,
         }
     }
@@ -715,14 +732,15 @@ impl EditorShell {
     /// - drops the PIE `snapshot` and resets the selection (`coord`);
     /// - installs a fresh [`CommandBus`] so an old-world undo/redo can never
     ///   replay against the new kernel world;
-    /// - clears `glb_source_path` AND `scene_source_path` (the swapped-in world
-    ///   has no GLB hot-reload source; the scene-Open handler re-commits the
-    ///   save source on success for a `.rge-scene`).
+    /// - clears `glb_source_path` AND `save_source` (the swapped-in world
+    ///   has no GLB hot-reload source; the Open handler re-commits the
+    ///   save source on success for a `.rge-scene` / `.rge-project`).
     ///
     /// Preserves the GPU device/context, the editor camera, the attached
     /// loader/dialog/scene/save hooks (`reload_hook` / `open_dialog` /
-    /// `scene_open_hook` / `save_dialog` / `scene_save_hook` — `Ctrl+O`,
-    /// `Ctrl+S`, and the R-key reload stay wired),
+    /// `scene_open_hook` / `save_dialog` / `scene_save_hook` /
+    /// `project_save_hook` — `Ctrl+O`, `Ctrl+S`, and the R-key reload stay
+    /// wired),
     /// `PlayState`, the audit ledger, and the tick counter. `notify`-watcher
     /// teardown is the binary's concern (it reacts to the now-`None`
     /// [`Self::glb_source_path`] and drops the watcher); this method does no
@@ -765,7 +783,7 @@ impl EditorShell {
         self.coord = EditorCoord::new();
         self.command_bus = CommandBus::new();
         self.glb_source_path = None;
-        self.scene_source_path = None;
+        self.save_source = None;
 
         Ok(())
     }
@@ -856,7 +874,8 @@ impl EditorShell {
             scene_open_hook: None,
             save_dialog: None,
             scene_save_hook: None,
-            scene_source_path: None,
+            project_save_hook: None,
+            save_source: None,
             last_window_title: None,
         }
     }
@@ -1111,7 +1130,8 @@ impl EditorShell {
             scene_open_hook: None,
             save_dialog: None,
             scene_save_hook: None,
-            scene_source_path: None,
+            project_save_hook: None,
+            save_source: None,
             last_window_title: None,
         }
     }
@@ -1242,20 +1262,39 @@ impl EditorShell {
         self
     }
 
-    /// Seed the `*.rge-scene` source path a silent `Ctrl+S` overwrites.
+    /// Attach a project-save writer hook for the `Ctrl+S` (`.rge-project`)
+    /// handler.
     ///
-    /// Called by the editor binary (`rge-editor::main`) on a `--scene
-    /// <file>.rge-scene` launch so the first `Ctrl+S` writes straight back to
-    /// the launched file (no Save-As prompt). A `.rge-project` launch does NOT
-    /// call this (the writer cannot overwrite a `.rge-project`, so it stays a
-    /// Save-As). Equivalent to a successful scene Open committing the path via
-    /// [`Self::handle_open_request`].
+    /// Called by the editor binary (`rge-editor::main`) in every launch mode so
+    /// `Ctrl+S` on an open `.rge-project` writes the world back to it. The
+    /// `hook` is the binary-owned `rge-scene-loader` impl of [`ProjectSaveHook`]
+    /// (over `save_project_world_to_path`); editor-shell holds only the boxed
+    /// trait object and never gains an `rge-scene-loader` / `rge-data`
+    /// dependency. The project-axis companion to [`Self::with_scene_save_hook`].
+    ///
+    /// Consuming builder (`mut self -> Self`) so it composes in the binary's
+    /// construction chain. The `Project` arm of [`Self::handle_save_request`]
+    /// requires this hook — with a `Project` source but no writer, `Ctrl+S`
+    /// warn-logs and no-ops.
+    #[must_use]
+    pub fn with_project_save_hook(mut self, hook: Box<dyn ProjectSaveHook>) -> Self {
+        self.project_save_hook = Some(hook);
+        self
+    }
+
+    /// Seed the [`SaveSource`] a `Ctrl+S` writes back to.
+    ///
+    /// Called by the editor binary (`rge-editor::main`) on a `--scene <file>`
+    /// launch so the first `Ctrl+S` writes straight back to the launched file
+    /// (no Save-As prompt): [`SaveSource::Scene`] for a `.rge-scene`,
+    /// [`SaveSource::Project`] for a literal `.rge-project`. Equivalent to a
+    /// successful Open committing the source via [`Self::handle_open_request`].
     ///
     /// Consuming builder (`mut self -> Self`) so it composes in the binary's
     /// construction chain.
     #[must_use]
-    pub fn with_scene_source_path(mut self, path: PathBuf) -> Self {
-        self.scene_source_path = Some(path);
+    pub fn with_save_source(mut self, source: SaveSource) -> Self {
+        self.save_source = Some(source);
         self
     }
 
@@ -1277,15 +1316,24 @@ impl EditorShell {
         self.glb_source_path.as_deref()
     }
 
-    /// The current `*.rge-scene` silent-save source path, if any.
+    /// The current [`SaveSource`] a `Ctrl+S` writes back to, if any.
     ///
-    /// `Some(path)` after opening / launching a `.rge-scene` or a successful
-    /// Save-As; a silent `Ctrl+S` overwrites it. `None` for a blank / demo /
-    /// `.glb` / `.rge-project` context (where `Ctrl+S` is Save-As). Exposed so
-    /// tests can assert the commit-on-Open / commit-on-Save-As ordering.
+    /// `Some(_)` after opening / launching a `.rge-scene` / `.rge-project` or a
+    /// successful Save-As; `Ctrl+S` routes by variant. `None` for a blank /
+    /// demo / `.glb` context (where `Ctrl+S` is Save-As). Exposed so tests can
+    /// assert the commit-on-Open / commit-on-Save-As ordering.
     #[must_use]
-    pub fn scene_source_path(&self) -> Option<&std::path::Path> {
-        self.scene_source_path.as_deref()
+    pub fn save_source(&self) -> Option<&SaveSource> {
+        self.save_source.as_ref()
+    }
+
+    /// The on-disk path of the current [`SaveSource`], if any — a display
+    /// convenience for the window title / status bar (which take an
+    /// `Option<&Path>`). `Some(path)` is the `.rge-scene` file or the literal
+    /// `.rge-project`; `None` matches [`Self::save_source`] being `None`.
+    #[must_use]
+    pub fn save_source_path(&self) -> Option<&std::path::Path> {
+        self.save_source.as_ref().map(SaveSource::path)
     }
 
     /// Borrow the live world (mutable access exposed for tests / scene-load).
@@ -1373,15 +1421,16 @@ impl EditorShell {
     }
 
     /// Build a fresh [`rge_editor_state::SaveStatusSnapshot`] for the bottom
-    /// status bar — the open `.rge-scene` source file name (pre-extracted via
-    /// `Path::file_name`) + the Command-Bus dirty flag. Pure read, zero side
-    /// effects; mirrors [`Self::inspector_snapshot`]. Produced fresh per frame
-    /// and published through `save_status_handoff` BEFORE the egui pass.
+    /// status bar — the open save source's file name (the `.rge-scene` file or
+    /// the literal `.rge-project`, pre-extracted via `Path::file_name`) + the
+    /// Command-Bus dirty flag. Pure read, zero side effects; mirrors
+    /// [`Self::inspector_snapshot`]. Produced fresh per frame and published
+    /// through `save_status_handoff` BEFORE the egui pass.
     #[must_use]
     pub fn save_status_snapshot(&self) -> rge_editor_state::SaveStatusSnapshot {
         rge_editor_state::SaveStatusSnapshot {
             scene_file_name: self
-                .scene_source_path()
+                .save_source_path()
                 .and_then(std::path::Path::file_name)
                 .and_then(|name| name.to_str())
                 .map(std::string::ToString::to_string),

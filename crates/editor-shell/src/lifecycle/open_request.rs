@@ -80,6 +80,7 @@
 
 use std::path::PathBuf;
 
+use super::SaveSource;
 use crate::lifecycle::EditorShell;
 use crate::play_state::PlayState;
 
@@ -274,25 +275,27 @@ impl EditorShell {
                 }
             };
             // `replace_world` is Editing-gated (already checked above) and
-            // clears `glb_source_path` + `scene_source_path`, so the binary
+            // clears `glb_source_path` + `save_source`, so the binary
             // tears down the GLB watcher on its next `sync_glb_watcher`.
             match self.replace_world(world) {
                 Ok(()) => {
-                    // Commit the silent-save target — but ONLY for a
-                    // `*.rge-scene` source. A `.rge-project` cannot be
-                    // overwritten by the writer (`save_scene_world_to_path`
-                    // rejects it), so it stays `None` and `Ctrl+S` is Save-As.
-                    if candidate
-                        .file_name()
-                        .and_then(|name| name.to_str())
-                        .is_some_and(|name| name.ends_with(".rge-scene"))
-                    {
-                        self.scene_source_path = Some(candidate.clone());
-                    }
+                    // Commit the save source for the opened document so the next
+                    // `Ctrl+S` writes straight back to it: a `SaveSource::Scene`
+                    // for a `*.rge-scene`, a `SaveSource::Project` for a literal
+                    // `.rge-project` (overwrite first scene + manifest via the
+                    // project writer). `candidate_is_scene` already gated this
+                    // branch to exactly those two kinds.
+                    let is_project = candidate.file_name().and_then(|name| name.to_str())
+                        == Some(".rge-project");
+                    self.save_source = Some(if is_project {
+                        SaveSource::Project(candidate.clone())
+                    } else {
+                        SaveSource::Scene(candidate.clone())
+                    });
                     tracing::info!(
                         target: "rge::editor-shell::open_request",
                         path = %candidate.display(),
-                        scene_source_tracked = self.scene_source_path.is_some(),
+                        is_project,
                         "scene open OK; world swapped, viewport blanked, glb_source_path cleared"
                     );
                 }
