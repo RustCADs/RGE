@@ -467,7 +467,8 @@ fn component_value(
 /// The path-level encode inverse of [`SceneWorldLoadError`].
 #[derive(Debug, thiserror::Error)]
 pub enum SceneWorldSaveError {
-    /// File name was not `*.rge-scene` (a `.rge-project` write is a follow-up).
+    /// File name was not `*.rge-scene` (use [`save_project_world_to_path`] for
+    /// a `.rge-project`).
     #[error("{} has unsupported extension (expected .rge-scene)", .0.display())]
     UnsupportedExtension(std::path::PathBuf),
     /// [`extract_scene_from_world`] returned an error.
@@ -498,8 +499,8 @@ pub enum SceneWorldSaveError {
 /// [`load_scene_world_from_path`].
 ///
 /// A `.rge-project` path (or any non-`*.rge-scene` name) is rejected as
-/// [`SceneWorldSaveError::UnsupportedExtension`]: writing a project means
-/// emitting a scene file *and* updating the manifest, deferred to a follow-up.
+/// [`SceneWorldSaveError::UnsupportedExtension`]: writing a project (emitting a
+/// scene file *and* updating the manifest) is [`save_project_world_to_path`].
 /// Dispatch is on [`std::path::Path::file_name`], matching
 /// [`load_scene_world_from_path`].
 ///
@@ -533,6 +534,147 @@ pub fn save_scene_world_to_path(
     )?;
     std::fs::write(path, text).map_err(|source| SceneWorldSaveError::Write {
         path: path.to_path_buf(),
+        source,
+    })
+}
+
+/// Errors from writing a live [`World`] back to an existing `.rge-project`
+/// (overwrite its first scene + re-write the manifest). The save-side inverse
+/// of the `.rge-project` branch of [`load_scene_world_from_path`].
+#[derive(Debug, thiserror::Error)]
+pub enum ProjectWorldSaveError {
+    /// File name was not exactly `.rge-project`.
+    #[error("{} has unsupported extension (expected .rge-project)", .0.display())]
+    UnsupportedExtension(std::path::PathBuf),
+    /// Reading the existing `.rge-project` manifest from disk failed.
+    #[error("read .rge-project {}: {source}", .path.display())]
+    Read {
+        /// The manifest path that failed to read.
+        path: std::path::PathBuf,
+        /// Underlying I/O error.
+        #[source]
+        source: std::io::Error,
+    },
+    /// RON parse of the `.rge-project` manifest failed.
+    #[error("parse .rge-project {}: {source}", .path.display())]
+    ParseProject {
+        /// The manifest path that failed to parse.
+        path: std::path::PathBuf,
+        /// Underlying RON parse error.
+        #[source]
+        source: ron::de::SpannedError,
+    },
+    /// The manifest's `scenes` list is empty — no scene to write the world to.
+    #[error("{} has no scenes to save the world into", .0.display())]
+    EmptyProjectScenes(std::path::PathBuf),
+    /// The `.rge-project` path has no parent directory to resolve scenes against.
+    #[error("{} has no parent directory", .0.display())]
+    ProjectHasNoParentDir(std::path::PathBuf),
+    /// Writing the resolved `.rge-scene` failed (the scene-write half).
+    #[error("write project scene: {0}")]
+    Scene(#[source] SceneWorldSaveError),
+    /// Pretty-RON serialization of the manifest failed.
+    #[error("serialize .rge-project {}: {source}", .path.display())]
+    SerializeManifest {
+        /// The manifest path being written.
+        path: std::path::PathBuf,
+        /// Underlying RON serialization error.
+        #[source]
+        source: ron::Error,
+    },
+    /// Writing the `.rge-project` manifest to disk failed.
+    #[error("write .rge-project {}: {source}", .path.display())]
+    WriteManifest {
+        /// The manifest path that failed to write.
+        path: std::path::PathBuf,
+        /// Underlying I/O error.
+        #[source]
+        source: std::io::Error,
+    },
+}
+
+/// Overwrite an existing `.rge-project`'s first scene with `world` and re-write
+/// the manifest. The save-side inverse of the `.rge-project` branch of
+/// [`load_scene_world_from_path`]: it mirrors that reader's resolution exactly
+/// (exact `.rge-project` file name; `scenes.first()`; project-parent-relative
+/// scene path) so a save → load round-trips. The scene write reuses
+/// [`save_scene_world_to_path`]; the manifest is re-serialized (version
+/// re-stamped [`rge_data::SchemaVersion::V0_1_0`]) and written back.
+///
+/// `project_path` MUST be an existing `.rge-project` — its manifest is read to
+/// resolve the target scene. v0 covers the **overwrite-open-project** case;
+/// creating a NEW project tree (Save-As) is a follow-up.
+///
+/// Pure read + extract + RON + I/O — no GPU, no winit — so it is exercised
+/// headlessly (see `tests/project_save_round_trip.rs`).
+///
+/// # Errors
+///
+/// Returns a [`ProjectWorldSaveError`] on a non-`.rge-project` name, manifest
+/// read / RON-parse failure, an empty `scenes` list, a missing parent
+/// directory, a wrapped [`SceneWorldSaveError`] from the scene write, or a
+/// manifest serialize / write failure.
+pub fn save_project_world_to_path(
+    world: &World,
+    project_path: &std::path::Path,
+) -> Result<(), ProjectWorldSaveError> {
+    // Exact-name gate — mirror `load_scene_world_from_path`'s
+    // `file_name == ".rge-project"`.
+    let file_name = project_path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("");
+    if file_name != ".rge-project" {
+        return Err(ProjectWorldSaveError::UnsupportedExtension(
+            project_path.to_path_buf(),
+        ));
+    }
+
+    // Read + RON-parse the existing manifest.
+    let raw =
+        std::fs::read_to_string(project_path).map_err(|source| ProjectWorldSaveError::Read {
+            path: project_path.to_path_buf(),
+            source,
+        })?;
+    let mut project: Project =
+        ron::from_str(&raw).map_err(|source| ProjectWorldSaveError::ParseProject {
+            path: project_path.to_path_buf(),
+            source,
+        })?;
+
+    // Resolve the target scene exactly as the reader does: first scene,
+    // relative to the project's parent directory.
+    let scene_rel = project
+        .scenes
+        .first()
+        .ok_or_else(|| ProjectWorldSaveError::EmptyProjectScenes(project_path.to_path_buf()))?;
+    let project_dir = project_path
+        .parent()
+        .ok_or_else(|| ProjectWorldSaveError::ProjectHasNoParentDir(project_path.to_path_buf()))?;
+    let scene_path = project_dir.join(scene_rel.as_str());
+
+    // v0 scene name = file stem, matching the `save_scene_world_to_path` caller
+    // convention.
+    let name = scene_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("scene");
+
+    // Write the live world to the resolved scene (reuse the scene writer).
+    save_scene_world_to_path(world, &scene_path, name).map_err(ProjectWorldSaveError::Scene)?;
+
+    // Re-write the manifest: re-stamp the current schema version and
+    // re-serialize (idempotent for an unchanged manifest; the hook for future
+    // manifest changes). Matches the scene writer's pretty-config.
+    project.version = rge_data::SchemaVersion::V0_1_0;
+    let text = ron::ser::to_string_pretty(&project, ron::ser::PrettyConfig::default()).map_err(
+        |source| ProjectWorldSaveError::SerializeManifest {
+            path: project_path.to_path_buf(),
+            source,
+        },
+    )?;
+    std::fs::write(project_path, text).map_err(|source| ProjectWorldSaveError::WriteManifest {
+        path: project_path.to_path_buf(),
         source,
     })
 }
