@@ -1,6 +1,10 @@
 # Build outputs
 /target/
 **/target/
+# Verify-gate local target dir (isolated cargo target some gate runs use;
+# build artifacts, not source — must never be staged via `git add -A`).
+/target-local-verify/
+**/target-local-verify/
 *.rlib
 *.rmeta
 
