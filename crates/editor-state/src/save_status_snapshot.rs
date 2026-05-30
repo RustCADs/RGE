@@ -1,11 +1,12 @@
 //! Read-only save-state observation snapshot for the editor's bottom
-//! status bar — the open save source's file name + the Command-Bus dirty flag.
+//! status bar — the open save source's display name + the Command-Bus dirty
+//! flag.
 //!
 //! # Sibling to [`crate::InspectorSnapshot`], not a 6th coordination category
 //!
 //! Like [`crate::InspectorSnapshot`], this is a read-only **observation
 //! aggregator** — a plain, owned view of editor-session save state assembled
-//! by `editor-shell` from already-public accessors (`save_source_path`,
+//! by `editor-shell` from already-public accessors (`save_source().display_name()`,
 //! `command_bus().is_dirty()`) for consumption by the `editor-ui` status-bar
 //! widget. It owns no state, stores no IDs; `editor-shell` produces a fresh
 //! instance per frame via `EditorShell::save_status_snapshot()`. The §0.6
@@ -33,7 +34,7 @@
 //! # Architectural invariants (shared with `InspectorSnapshot`)
 //!
 //! - **Single source per field.** `scene_file_name` is derived once from
-//!   `EditorShell::save_source_path()`; `is_dirty` mirrors
+//!   `EditorShell::save_source().display_name()`; `is_dirty` mirrors
 //!   `CommandBus::is_dirty()`. No staleness, no caching.
 //! - **No side effects on construction.** Building the snapshot is a pure
 //!   read; no audit-ledger events, no bus submits.
@@ -44,13 +45,13 @@
 ///
 /// # Field stability
 ///
-/// - `scene_file_name`: the file name (no directory) of the open save source —
-///   the `.rge-scene` file or the literal `.rge-project` — pre-extracted via
-///   `Path::file_name` in the producer so the formatter does no path I/O.
-///   `Some(name)` after opening / launching a `.rge-scene` / `.rge-project` or
-///   a successful Save-As; `None` for a blank / demo / `.glb` context (mirrors
-///   `EditorShell::save_source_path` presence). (The field name predates
-///   project-save; it carries either kind of source name.)
+/// - `scene_file_name`: the display name of the open save source — the
+///   `.rge-scene` file name, or the project **folder** name for a `.rge-project`
+///   (e.g. `my-game`) — resolved by `SaveSource::display_name` in the producer
+///   so the formatter does no path I/O. `Some(name)` after opening / launching a
+///   `.rge-scene` / `.rge-project` or a successful Save-As; `None` for a blank /
+///   demo / `.glb` context. (The field name predates project-save; it carries
+///   either kind of source name.)
 /// - `is_dirty`: mirror of `CommandBus::is_dirty`; `true` when there are
 ///   unsaved edits (the bus cursor is past the last `mark_saved`).
 ///
@@ -62,8 +63,8 @@
 /// `Copy` (carries an owned `String`).
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct SaveStatusSnapshot {
-    /// File name of the open save source (`.rge-scene` or `.rge-project`), if
-    /// any (no directory).
+    /// Display name of the open save source: the `.rge-scene` file name, or the
+    /// project folder name for a `.rge-project` (no directory). `None` if none.
     pub scene_file_name: Option<String>,
     /// `CommandBus::is_dirty()` — `true` when there are unsaved edits.
     pub is_dirty: bool,

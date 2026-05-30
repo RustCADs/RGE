@@ -2205,7 +2205,7 @@ fn window_title_no_source_dirty() {
 #[test]
 fn window_title_with_source_clean() {
     assert_eq!(
-        editor_window_title(Some(std::path::Path::new("/tmp/level.rge-scene")), false),
+        editor_window_title(Some("level.rge-scene"), false),
         "level.rge-scene — RGE Editor"
     );
 }
@@ -2213,17 +2213,69 @@ fn window_title_with_source_clean() {
 #[test]
 fn window_title_with_source_dirty() {
     assert_eq!(
-        editor_window_title(Some(std::path::Path::new("/tmp/level.rge-scene")), true),
+        editor_window_title(Some("level.rge-scene"), true),
         "level.rge-scene * — RGE Editor"
     );
 }
 
 #[test]
-fn window_title_uses_file_name_not_full_path() {
-    // Only the file name appears, not the directory components.
+fn window_title_uses_display_name_verbatim() {
+    // The pure formatter no longer extracts a file name — it formats the
+    // already-resolved display name as-is (extraction lives in
+    // SaveSource::display_name). A project folder name passes through unchanged.
     assert_eq!(
-        editor_window_title(Some(std::path::Path::new("/a/b/c/scene.rge-scene")), false),
-        "scene.rge-scene — RGE Editor"
+        editor_window_title(Some("my-game"), false),
+        "my-game — RGE Editor"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// SAVE-SOURCE-DISPLAY-NAME — SaveSource::display_name (title/status display)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn display_name_scene_is_file_name() {
+    let s = SaveSource::Scene(std::path::PathBuf::from("/a/b/level.rge-scene"));
+    assert_eq!(s.display_name(), Some("level.rge-scene"));
+}
+
+#[test]
+fn display_name_project_is_parent_folder_name() {
+    // A project reads as its containing folder, not the literal `.rge-project`.
+    let s = SaveSource::Project(std::path::PathBuf::from("/projects/my-game/.rge-project"));
+    assert_eq!(s.display_name(), Some("my-game"));
+}
+
+#[test]
+fn display_name_project_without_parent_falls_back_to_file_name() {
+    // A bare `.rge-project` (no parent dir) falls back to the file name.
+    let s = SaveSource::Project(std::path::PathBuf::from(".rge-project"));
+    assert_eq!(s.display_name(), Some(".rge-project"));
+}
+
+#[test]
+fn project_save_source_surfaces_folder_name_in_status_snapshot() {
+    // End-to-end: a Project save source surfaces its folder name (not
+    // `.rge-project`) in the status snapshot the bottom bar renders.
+    let s = EditorShell::new().with_save_source(SaveSource::Project(std::path::PathBuf::from(
+        "/projects/my-game/.rge-project",
+    )));
+    assert_eq!(
+        s.save_status_snapshot().scene_file_name.as_deref(),
+        Some("my-game"),
+        "a Project save source must surface its folder name in the status snapshot"
+    );
+}
+
+#[test]
+fn scene_save_source_surfaces_file_name_in_status_snapshot() {
+    // A Scene source is unchanged: its file name surfaces (regression guard).
+    let s = EditorShell::new().with_save_source(SaveSource::Scene(std::path::PathBuf::from(
+        "/projects/demo/level.rge-scene",
+    )));
+    assert_eq!(
+        s.save_status_snapshot().scene_file_name.as_deref(),
+        Some("level.rge-scene")
     );
 }
 
