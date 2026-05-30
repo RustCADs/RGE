@@ -4,6 +4,9 @@
 //!   `&dyn rge_kernel_graph_foundation::VizAdapter`.
 //! - [`inspector`] — Phase 9 read-only editor-session inspector;
 //!   consumes `&rge_editor_state::InspectorSnapshot`.
+//! - [`save_status`] — bottom status-bar scene-name + dirty indicator;
+//!   consumes `&rge_editor_state::SaveStatusSnapshot`.
 
 pub mod inspector;
 pub mod node_graph;
+pub mod save_status;

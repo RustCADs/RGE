@@ -331,6 +331,7 @@ impl EditorShell {
                 rge_editor_egui_host::ViewportId::ROOT,
             );
             self.inspector_handoff = Some(Arc::clone(host.inspector_handoff()));
+            self.save_status_handoff = Some(Arc::clone(host.save_status_handoff()));
             self.egui_host = Some(host);
         }
 
@@ -451,6 +452,17 @@ impl EditorShell {
         // run yet — pre-resumed shells, headless tests).
         if let Some(handoff) = self.inspector_handoff.as_ref() {
             let snapshot = self.inspector_snapshot();
+            handoff.publish(Arc::new(snapshot));
+        }
+
+        // EDITOR-SAVE-STATUS-INDICATOR — sibling publish of the save-status
+        // snapshot (open scene file name + dirty flag) through the held
+        // `Arc<SaveStatusHandoff>`, so the host's bottom status bar sees this
+        // frame's state. Same `&self`-only borrow, disjoint from the host's
+        // `&mut self.egui_host` render borrow below. No-op when render init
+        // has not run (pre-resumed shells, headless tests).
+        if let Some(handoff) = self.save_status_handoff.as_ref() {
+            let snapshot = self.save_status_snapshot();
             handoff.publish(Arc::new(snapshot));
         }
 
@@ -585,6 +597,17 @@ impl EditorShell {
         // below.
         if let Some(handoff) = self.inspector_handoff.as_ref() {
             let snapshot = self.inspector_snapshot();
+            handoff.publish(Arc::new(snapshot));
+        }
+
+        // EDITOR-SAVE-STATUS-INDICATOR — sibling publish of the save-status
+        // snapshot (open scene file name + dirty flag) through the held
+        // `Arc<SaveStatusHandoff>`, so the host's bottom status bar sees this
+        // frame's state. Same `&self`-only borrow, disjoint from the host's
+        // `&mut self.egui_host` render borrow below. No-op when render init
+        // has not run (pre-resumed shells, headless tests).
+        if let Some(handoff) = self.save_status_handoff.as_ref() {
+            let snapshot = self.save_status_snapshot();
             handoff.publish(Arc::new(snapshot));
         }
 
