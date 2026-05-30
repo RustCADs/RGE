@@ -41,7 +41,7 @@
 //!   - [`EguiHost::new`] builds the initial `DockState` as a 2-pane
 //!     layout: `Viewport` on the left/main area (~75%), `Inspector`
 //!     docked right (~25%).
-//! - **Dispatch F** (this dispatch) — face-pick over viewport. The
+//! - **Dispatch F** — face-pick over viewport. The
 //!   egui dock area consumes ALL pointer input by default (because it
 //!   covers the whole window), making `handle_left_click` unreachable.
 //!   This dispatch adds the smallest substrate that lets editor-shell
@@ -59,6 +59,19 @@
 //!     [`EguiHost::is_pointer_over_viewport`] accessors expose the
 //!     captured rect (with the physical→logical DPI conversion
 //!     handled internally).
+//! - **EDITOR-SAVE-STATUS-INDICATOR** — in-app bottom status bar showing the
+//!   open scene file name + dirty marker, alongside the inspector:
+//!   - [`handoff::SaveStatusHandoff`] — a second latest-only handoff
+//!     (verbatim sibling of [`handoff::InspectorHandoff`]) carrying an
+//!     [`rge_editor_state::SaveStatusSnapshot`].
+//!   - [`EguiHost`] now owns BOTH the `Arc<InspectorHandoff>` and the
+//!     `Arc<SaveStatusHandoff>`; [`EguiHost::save_status_handoff`] exposes
+//!     the clone so editor-shell publishes a fresh save-status snapshot each
+//!     frame, the same way it publishes the inspector snapshot.
+//!   - [`EguiHost::render`] draws a bottom [`egui::TopBottomPanel`] (via
+//!     [`rge_editor_ui::widgets::save_status::ui`]) BEFORE the
+//!     [`egui_dock::DockArea`], so the status bar sits below the dock; the
+//!     `render` signature is unchanged.
 //!
 //! # Headless by design
 //!
@@ -74,10 +87,13 @@
 //!   the constructor consumes are produced by editor-shell's `resumed`
 //!   callback but passed in as borrowed primitives).
 //! - `rge-editor-state` — for [`rge_editor_state::InspectorSnapshot`]
-//!   inside [`handoff::InspectorHandoff`] and the tab body.
+//!   inside [`handoff::InspectorHandoff`] and the tab body, and
+//!   [`rge_editor_state::SaveStatusSnapshot`] inside
+//!   [`handoff::SaveStatusHandoff`].
 //! - `rge-editor-ui` — for [`rge_editor_ui::widgets::inspector::ui`]
 //!   which the [`tabs::EditorTabViewer::ui`] dispatch calls when an
-//!   Inspector tab renders.
+//!   Inspector tab renders, and [`rge_editor_ui::widgets::save_status::ui`]
+//!   which [`EguiHost::render`] calls for the bottom status bar.
 
 #![allow(clippy::module_name_repetitions)]
 
@@ -126,8 +142,10 @@ pub const INSPECTOR_PANE_OLD_FRACTION: f32 = 0.75;
 
 /// egui + egui_dock host. Owns the three core egui subsystems, the
 /// most-recently-observed surface dimensions, the editor's dock state,
-/// and the inspector-snapshot handoff that connects the editor-shell
-/// publisher to the in-host [`InspectorTabBody`] consumer.
+/// and two latest-only snapshot handoffs that connect the editor-shell
+/// publisher to the host: the inspector handoff (consumed by the in-host
+/// [`InspectorTabBody`]) and the save-status handoff (consumed by the
+/// bottom status bar in [`Self::render`]).
 ///
 /// # Trait bounds
 ///
@@ -504,19 +522,22 @@ impl EguiHost {
     /// caller drew before. The pass has no depth attachment (egui is a
     /// 2D overlay; depth tests don't apply).
     ///
-    /// The frame's UI is the host's [`egui_dock::DockArea`] — there is
-    /// no caller-supplied UI closure (the dispatch-B `run_ui` parameter
-    /// was dropped in dispatch C, since the host now owns its layout
-    /// via [`DockState`]). Future dispatches that add menu rendering,
-    /// floating windows, or status bars layer those inside the same
-    /// render path.
+    /// The frame's UI is a bottom save-status [`egui::TopBottomPanel`]
+    /// (open scene name + dirty marker) plus the host's
+    /// [`egui_dock::DockArea`] filling the remaining area above it —
+    /// there is no caller-supplied UI closure (the dispatch-B `run_ui`
+    /// parameter was dropped in dispatch C, since the host now owns its
+    /// layout via [`DockState`]). Future dispatches that add menu
+    /// rendering or floating windows layer those inside the same render
+    /// path.
     ///
     /// # Flow (per the egui 0.34 + egui-wgpu 0.34 lifecycle)
     ///
     /// 1. Take winit-translated input from
     ///    [`egui_winit::State::take_egui_input`].
-    /// 2. Run the dock area UI via [`egui::Context::run_ui`], producing
-    ///    a [`egui::FullOutput`].
+    /// 2. Run the UI via [`egui::Context::run_ui`] — the bottom
+    ///    save-status panel, then the dock area — producing a
+    ///    [`egui::FullOutput`].
     /// 3. Apply platform output ([`egui_winit::State::handle_platform_output`]).
     /// 4. Free textures egui marked for deletion this frame.
     /// 5. Upload new texture deltas to the renderer.

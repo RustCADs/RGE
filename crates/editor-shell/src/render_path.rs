@@ -205,7 +205,7 @@ impl EditorShell {
     /// 1. `winit::Window` → `Arc<Window>`
     /// 2. `GfxContext::new_headless()` (instance / adapter / device / queue)
     /// 3. `SurfaceContext::new(&ctx, Arc<Window>)` (configure + surface)
-    /// 4. `EguiHost::new(...)` + `InspectorHandoff` clone
+    /// 4. `EguiHost::new(...)` + `InspectorHandoff` + `SaveStatusHandoff` clones
     ///
     /// **Phase 2 (gated on `has_cad_scene || has_prebuilt_mesh`)** —
     /// delegates to [`Self::init_render_state_post_surface`]:
@@ -219,7 +219,8 @@ impl EditorShell {
     /// (empty-world `--scene` launch) Phase 2 is skipped entirely; the
     /// cuboid pipeline + frame-graph + mesh fields remain `None` /
     /// empty and [`Self::render_frame`] takes its egui-only branch so
-    /// the dock + Inspector tab chrome are still visible.
+    /// the dock + Inspector tab + bottom save-status bar chrome are still
+    /// visible.
     ///
     /// Returns `Err(...)` only if the GPU-side initialisation fails (no
     /// adapter, no compatible surface format, surface create_surface,
@@ -230,11 +231,12 @@ impl EditorShell {
         //
         // Phase 1 runs UNCONDITIONALLY when production winit `resumed`
         // invokes this method. It constructs the winit window,
-        // [`GfxContext`], [`SurfaceContext`], [`EguiHost`], and
-        // [`InspectorHandoff`] so a world-only `--scene` launch (no
-        // CAD scene, no prebuilt render mesh) still produces a visible
-        // editor window with the dock + Inspector chrome painted via
-        // the egui-only branch in [`Self::render_frame`].
+        // [`GfxContext`], [`SurfaceContext`], [`EguiHost`], and the
+        // [`InspectorHandoff`] + [`SaveStatusHandoff`] clones so a
+        // world-only `--scene` launch (no CAD scene, no prebuilt render
+        // mesh) still produces a visible editor window with the dock +
+        // Inspector tab + bottom save-status bar chrome painted via the
+        // egui-only branch in [`Self::render_frame`].
         //
         // Phase 2 remains gated on `has_cad_scene || has_prebuilt_mesh`
         // and consumes [`Self::init_render_state_post_surface`] to build
@@ -308,14 +310,15 @@ impl EditorShell {
         // (`render_path::build_lit_mesh_compiled_frame_graph` uses
         // `sample_count = 1`).
         //
-        // Dispatch C — after the host is constructed, clone its
-        // `Arc<InspectorHandoff>` into `self.inspector_handoff` so the
-        // per-frame publish path (in [`Self::render_frame`] below) can
-        // call `handoff.publish(Arc::new(self.inspector_snapshot()))`
-        // without re-borrowing `self.egui_host`. Both the host's tab
-        // body and `self.inspector_handoff` point at the same
-        // underlying slot — the publish/acquire pair is the live
-        // dispatch C wire.
+        // After the host is constructed, clone its two handoffs into
+        // `self.inspector_handoff` + `self.save_status_handoff` (Dispatch C
+        // for the inspector; EDITOR-SAVE-STATUS-INDICATOR for the save-status
+        // bar) so the per-frame publish path (in [`Self::render_frame`] below)
+        // can call `handoff.publish(Arc::new(self.inspector_snapshot()))` and
+        // `handoff.publish(Arc::new(self.save_status_snapshot()))` without
+        // re-borrowing `self.egui_host`. Each `self.*_handoff` points at the
+        // same slot as the host's consumer (the Inspector tab body / the
+        // bottom status bar) — the publish/acquire pairs are the live wires.
         if let (Some(gfx_ctx), Some(surface_ctx), Some(window)) = (
             self.gfx_ctx.as_ref(),
             self.surface_ctx.as_ref(),
@@ -355,8 +358,9 @@ impl EditorShell {
     /// `--scene` launch), this method dispatches to
     /// [`Self::render_frame_egui_only`] instead. That branch
     /// acquires the surface texture, clears the target, publishes the
-    /// inspector handoff, runs `EguiHost::render`, submits, presents,
-    /// and returns `true`. It never touches the cuboid pipeline,
+    /// inspector + save-status handoffs, runs `EguiHost::render`,
+    /// submits, presents, and returns `true`. It never touches the
+    /// cuboid pipeline,
     /// frame-graph, or depth-view rendering.
     ///
     /// Returns `false` when the render path is not initialised at all
@@ -367,7 +371,8 @@ impl EditorShell {
         // populates `pipeline` and `compiled_frame_graph` together as
         // part of Phase 2; either being absent means Phase 2 did not
         // run (empty-world launch). Take the egui-only path so the
-        // dock + Inspector chrome paint on a cleared target.
+        // dock + Inspector tab + bottom save-status bar chrome paint on a
+        // cleared target.
         if self.pipeline.is_none() || self.compiled_frame_graph.is_none() {
             return self.render_frame_egui_only();
         }
@@ -511,8 +516,8 @@ impl EditorShell {
     /// Activated by [`Self::render_frame`] when the cuboid pipeline /
     /// frame graph were not constructed (empty-world `--scene`
     /// launch). Acquires the surface texture, issues a clear-only
-    /// pass to [`DEFAULT_CLEAR`], publishes the inspector handoff,
-    /// runs [`rge_editor_egui_host::EguiHost::render`] against the
+    /// pass to [`DEFAULT_CLEAR`], publishes the inspector + save-status
+    /// handoffs, runs [`rge_editor_egui_host::EguiHost::render`] against the
     /// same encoder, submits, presents, and returns `true`.
     ///
     /// Does NOT touch the cuboid pipeline, the frame-graph substrate,
