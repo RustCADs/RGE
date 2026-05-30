@@ -216,6 +216,7 @@ pub mod commands;
 pub mod open_request;
 pub mod playback;
 pub mod save_request;
+pub mod window_title;
 
 pub use asset_reload::AssetReloadHook;
 pub use commands::{EditorKeyCommand, SetTimeScale};
@@ -439,6 +440,11 @@ pub struct EditorShell {
     /// the scene branch of [`Self::handle_open_request`]. Set at construction
     /// via [`Self::with_scene_source_path`]; read via [`Self::scene_source_path`].
     pub(crate) scene_source_path: Option<PathBuf>,
+
+    /// EDITOR-WINDOW-TITLE — the last title handed to the winit window's
+    /// `set_title`, so [`Self::sync_window_title`] only re-titles on a change
+    /// (not every frame). `None` until the first sync.
+    pub(crate) last_window_title: Option<String>,
 
     /// winit window the surface is bound to (kept alive for the surface's
     /// `'static` lifetime). `None` until `resumed`.
@@ -674,6 +680,7 @@ impl EditorShell {
             save_dialog: None,
             scene_save_hook: None,
             scene_source_path: None,
+            last_window_title: None,
         }
     }
 
@@ -835,6 +842,7 @@ impl EditorShell {
             save_dialog: None,
             scene_save_hook: None,
             scene_source_path: None,
+            last_window_title: None,
         }
     }
 
@@ -1088,6 +1096,7 @@ impl EditorShell {
             save_dialog: None,
             scene_save_hook: None,
             scene_source_path: None,
+            last_window_title: None,
         }
     }
 
@@ -1895,6 +1904,9 @@ impl ApplicationHandler<()> for EditorShell {
             }
             WindowEvent::RedrawRequested => {
                 self.tick_redraw();
+                // EDITOR-WINDOW-TITLE — reflect the open scene + dirty state in
+                // the title bar (set_title only fires on change).
+                self.sync_window_title();
                 // Phase 6.2 runtime integration — acquire the most
                 // recently published snapshot from the per-ADR-117
                 // `RenderHandoff` slot. `render_frame` currently
