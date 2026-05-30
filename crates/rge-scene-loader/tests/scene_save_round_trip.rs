@@ -199,15 +199,16 @@ fn save_then_load_round_trips_via_disk() {
 fn unsupported_extension_is_rejected() {
     let world = World::new();
 
-    // The literal `.rge-project` the loader accepts is rejected on save in v0
-    // (project write + manifest update is a follow-up).
+    // The literal `.rge-project` the loader accepts is rejected by the SCENE
+    // writer — projects are written via `save_project_world_to_path`
+    // (PROJECT-SAVE-SUBSTRATE), not this function.
     let proj = std::env::temp_dir().join(".rge-project");
     assert!(
         matches!(
             save_scene_world_to_path(&world, &proj, "x"),
             Err(SceneWorldSaveError::UnsupportedExtension(_))
         ),
-        "literal .rge-project must be rejected on save"
+        "literal .rge-project must be rejected by the scene writer"
     );
 
     // A wrong extension is rejected before any file is written.
