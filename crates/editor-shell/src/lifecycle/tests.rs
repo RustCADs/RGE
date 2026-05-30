@@ -2189,7 +2189,7 @@ fn project_save_without_hook_is_noop() {
 }
 
 // ---------------------------------------------------------------------------
-// EDITOR-WINDOW-TITLE — window title reflects scene source + dirty state
+// EDITOR-WINDOW-TITLE — window title reflects save source + dirty state
 // ---------------------------------------------------------------------------
 
 #[test]

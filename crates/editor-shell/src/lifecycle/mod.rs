@@ -636,9 +636,9 @@ pub struct EditorShell {
     // `inspector_handoff`; remains `None` for shells that never trigger render
     // init. Used by the same per-frame publish path
     // ([`crate::render_path::EditorShell::render_frame`]) to publish a fresh
-    // [`rge_editor_state::SaveStatusSnapshot`] (open scene file name + dirty
-    // flag) BEFORE the egui pass, so the host's bottom status bar renders this
-    // frame's save state. Sibling to `inspector_handoff` — same `&self`-only
+    // [`rge_editor_state::SaveStatusSnapshot`] (open save source file name +
+    // dirty flag) BEFORE the egui pass, so the host's bottom status bar renders
+    // this frame's save state. Sibling to `inspector_handoff` — same `&self`-only
     // publish borrow, independent of the `&mut self.egui_host` render borrow.
     pub(crate) save_status_handoff: Option<Arc<SaveStatusHandoff>>,
 }
@@ -1986,8 +1986,8 @@ impl ApplicationHandler<()> for EditorShell {
             }
             WindowEvent::RedrawRequested => {
                 self.tick_redraw();
-                // EDITOR-WINDOW-TITLE — reflect the open scene + dirty state in
-                // the title bar (set_title only fires on change).
+                // EDITOR-WINDOW-TITLE — reflect the open document + dirty state
+                // in the title bar (set_title only fires on change).
                 self.sync_window_title();
                 // Phase 6.2 runtime integration — acquire the most
                 // recently published snapshot from the per-ADR-117

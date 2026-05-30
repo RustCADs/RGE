@@ -461,7 +461,7 @@ impl EditorShell {
         }
 
         // EDITOR-SAVE-STATUS-INDICATOR — sibling publish of the save-status
-        // snapshot (open scene file name + dirty flag) through the held
+        // snapshot (open save source file name + dirty flag) through the held
         // `Arc<SaveStatusHandoff>`, so the host's bottom status bar sees this
         // frame's state. Same `&self`-only borrow, disjoint from the host's
         // `&mut self.egui_host` render borrow below. No-op when render init
@@ -606,7 +606,7 @@ impl EditorShell {
         }
 
         // EDITOR-SAVE-STATUS-INDICATOR — sibling publish of the save-status
-        // snapshot (open scene file name + dirty flag) through the held
+        // snapshot (open save source file name + dirty flag) through the held
         // `Arc<SaveStatusHandoff>`, so the host's bottom status bar sees this
         // frame's state. Same `&self`-only borrow, disjoint from the host's
         // `&mut self.egui_host` render borrow below. No-op when render init

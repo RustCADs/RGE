@@ -2,7 +2,7 @@
 //! `EditorShell::save_status_snapshot()`. Sibling to
 //! `inspector_snapshot_smoke.rs`.
 //!
-//! Pins: a fresh shell has no scene + is clean; an opened/Save-As scene
+//! Pins: a fresh shell has no save source + is clean; an opened/Save-As
 //! source surfaces as its bare *file name* (not the full path); the dirty
 //! flag mirrors the Command Bus; building the snapshot is a pure read.
 
@@ -19,7 +19,7 @@ use rge_editor_state::SaveStatusSnapshot;
 fn fresh_shell_has_no_scene_and_is_clean() {
     let shell = EditorShell::new();
     let s = shell.save_status_snapshot();
-    assert_eq!(s.scene_file_name, None, "fresh shell has no scene source");
+    assert_eq!(s.scene_file_name, None, "fresh shell has no save source");
     assert!(!s.is_dirty, "fresh shell bus is clean");
 }
 

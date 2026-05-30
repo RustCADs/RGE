@@ -9,8 +9,8 @@
 //!   [`rge_editor_state::InspectorSnapshot`] to the host's
 //!   [`crate::InspectorTabBody`] consumer.
 //! - [`SaveStatusHandoff`] = `Handoff<SaveStatusSnapshot>` — carries a
-//!   [`rge_editor_state::SaveStatusSnapshot`] (open scene file name + dirty
-//!   flag) to the host's bottom status bar.
+//!   [`rge_editor_state::SaveStatusSnapshot`] (open save source file name +
+//!   dirty flag) to the host's bottom status bar.
 //!
 //! # Why aliases over a shared generic (not three hand-written copies)
 //!
@@ -45,8 +45,8 @@ use rge_editor_state::{Handoff, InspectorSnapshot, SaveStatusSnapshot};
 /// latest-only contract.
 pub type InspectorHandoff = Handoff<InspectorSnapshot>;
 
-/// Latest-only handoff carrying a [`SaveStatusSnapshot`] (open scene file name
-/// + dirty flag) from the editor-shell publisher to the host's bottom status
-/// bar. A type alias over the shared [`Handoff`]; see
+/// Latest-only handoff carrying a [`SaveStatusSnapshot`] (open save source file
+/// name + dirty flag) from the editor-shell publisher to the host's bottom
+/// status bar. A type alias over the shared [`Handoff`]; see
 /// [`rge_editor_state::Handoff`] for the full latest-only contract.
 pub type SaveStatusHandoff = Handoff<SaveStatusSnapshot>;

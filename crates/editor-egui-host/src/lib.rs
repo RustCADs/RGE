@@ -60,7 +60,7 @@
 //!     captured rect (with the physical→logical DPI conversion
 //!     handled internally).
 //! - **EDITOR-SAVE-STATUS-INDICATOR** — in-app bottom status bar showing the
-//!   open scene file name + dirty marker, alongside the inspector:
+//!   open save source file name + dirty marker, alongside the inspector:
 //!   - [`handoff::SaveStatusHandoff`] — a second latest-only handoff carrying
 //!     a [`rge_editor_state::SaveStatusSnapshot`] (like
 //!     [`handoff::InspectorHandoff`], a type alias over the shared
@@ -205,7 +205,7 @@ pub struct EguiHost {
     inspector_handoff: Arc<InspectorHandoff>,
 
     /// `Arc<SaveStatusHandoff>` retained by the host so editor-shell can
-    /// publish a fresh save-status snapshot (open scene file name + dirty
+    /// publish a fresh save-status snapshot (open save source file name + dirty
     /// flag) each frame; the host's `render` acquires it to draw the bottom
     /// status bar. Sibling to `inspector_handoff` — same latest-only shape.
     save_status_handoff: Arc<SaveStatusHandoff>,
@@ -524,7 +524,7 @@ impl EguiHost {
     /// 2D overlay; depth tests don't apply).
     ///
     /// The frame's UI is a bottom save-status [`egui::TopBottomPanel`]
-    /// (open scene name + dirty marker) plus the host's
+    /// (open save source name + dirty marker) plus the host's
     /// [`egui_dock::DockArea`] filling the remaining area above it —
     /// there is no caller-supplied UI closure (the dispatch-B `run_ui`
     /// parameter was dropped in dispatch C, since the host now owns its
@@ -594,7 +594,7 @@ impl EguiHost {
             .unwrap_or_default();
         let dock_state = &mut self.dock_state;
         let full_output = self.context.run_ui(raw_input, |root_ui| {
-            // Bottom status bar — open scene file name + dirty marker. Added
+            // Bottom status bar — open save source file name + dirty marker. Added
             // BEFORE the DockArea so egui reserves the bottom strip and the
             // dock fills the remaining central rect.
             egui::TopBottomPanel::bottom("rge_save_status_bar").show_inside(root_ui, |ui| {

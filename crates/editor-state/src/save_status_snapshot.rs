@@ -1,5 +1,5 @@
 //! Read-only save-state observation snapshot for the editor's bottom
-//! status bar — the open scene's file name + the Command-Bus dirty flag.
+//! status bar — the open save source's file name + the Command-Bus dirty flag.
 //!
 //! # Sibling to [`crate::InspectorSnapshot`], not a 6th coordination category
 //!
@@ -62,7 +62,8 @@
 /// `Copy` (carries an owned `String`).
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct SaveStatusSnapshot {
-    /// File name of the open `.rge-scene` source, if any (no directory).
+    /// File name of the open save source (`.rge-scene` or `.rge-project`), if
+    /// any (no directory).
     pub scene_file_name: Option<String>,
     /// `CommandBus::is_dirty()` — `true` when there are unsaved edits.
     pub is_dirty: bool,

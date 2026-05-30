@@ -32,8 +32,9 @@ fn no_scene_clean_shows_no_scene() {
 
 #[test]
 fn no_scene_dirty_appends_marker() {
-    // A real state: unsaved edits in a blank / demo / `.glb` / `.rge-project`
-    // context, where there is no `.rge-scene` silent-save source yet.
+    // A real state: unsaved edits in a blank / demo / `.glb` context, where
+    // there is no save source yet (an open `.rge-scene` / `.rge-project`
+    // surfaces its file name instead).
     let s = snapshot(None, true);
     assert_eq!(save_status_line(&s), "No scene *");
 }
