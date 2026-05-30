@@ -1421,18 +1421,17 @@ impl EditorShell {
     }
 
     /// Build a fresh [`rge_editor_state::SaveStatusSnapshot`] for the bottom
-    /// status bar — the open save source's file name (the `.rge-scene` file or
-    /// the literal `.rge-project`, pre-extracted via `Path::file_name`) + the
-    /// Command-Bus dirty flag. Pure read, zero side effects; mirrors
-    /// [`Self::inspector_snapshot`]. Produced fresh per frame and published
-    /// through `save_status_handoff` BEFORE the egui pass.
+    /// status bar — the open save source's display name (the `.rge-scene` file
+    /// name, or the project folder name for a `.rge-project`, via
+    /// [`SaveSource::display_name`]) + the Command-Bus dirty flag. Pure read,
+    /// zero side effects; mirrors [`Self::inspector_snapshot`]. Produced fresh
+    /// per frame and published through `save_status_handoff` BEFORE the egui pass.
     #[must_use]
     pub fn save_status_snapshot(&self) -> rge_editor_state::SaveStatusSnapshot {
         rge_editor_state::SaveStatusSnapshot {
             scene_file_name: self
-                .save_source_path()
-                .and_then(std::path::Path::file_name)
-                .and_then(|name| name.to_str())
+                .save_source()
+                .and_then(SaveSource::display_name)
                 .map(std::string::ToString::to_string),
             is_dirty: self.command_bus().is_dirty(),
         }
