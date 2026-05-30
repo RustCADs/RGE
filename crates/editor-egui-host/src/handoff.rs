@@ -32,7 +32,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use rge_editor_state::InspectorSnapshot;
+use rge_editor_state::{InspectorSnapshot, SaveStatusSnapshot};
 
 /// Latest-only immutable handoff slot for the editor inspector snapshot.
 ///
@@ -175,6 +175,129 @@ impl std::fmt::Debug for InspectorHandoff {
     }
 }
 
+// ---------------------------------------------------------------------------
+// SaveStatusHandoff
+// ---------------------------------------------------------------------------
+
+/// Latest-only immutable handoff slot for the editor save-status snapshot.
+///
+/// A verbatim sibling of [`InspectorHandoff`] (which itself mirrors the
+/// canonical `RenderHandoff` shape) — the `Mutex<Option<Arc<_>>>` +
+/// `AtomicU64` composition is copied so a future audit can grep for
+/// `Mutex<Option<Arc<` and find the same exact shape at every handoff site.
+/// It carries an [`rge_editor_state::SaveStatusSnapshot`] (the open scene's
+/// file name + dirty flag) from the editor-shell publisher to the host's
+/// bottom status-bar render in [`crate::EguiHost::render`].
+///
+/// # Semantics (identical to [`InspectorHandoff`])
+///
+/// - **Latest-only.** [`Self::publish`] *replaces* rather than queues.
+/// - **Immutable from publish.** Holds `Arc<SaveStatusSnapshot>`, exposing
+///   only `&SaveStatusSnapshot`; the publisher cannot mutate after publish.
+/// - **Non-blocking on both sides.** Render never blocks the publisher beyond
+///   the trivial mutex-protected swap of a single `Arc` reference.
+/// - **`generation()` is O(1).** A monotonically advancing `u64` bumped on
+///   each publish; render can poll it without taking the slot mutex.
+///
+/// # Empty-state behavior
+///
+/// Before any publish, [`Self::acquire`] returns `None`; the host's status bar
+/// renders the [`SaveStatusSnapshot::default()`] state (`"No scene"`) so the
+/// bar is visible from frame 1 with no flicker and no panic on an empty slot.
+///
+/// # Trait bounds
+///
+/// `Send + Sync` (composition of `Send + Sync` std primitives). Intentionally
+/// **not** `Clone` — the canonical usage is `Arc<SaveStatusHandoff>`, cloned
+/// via `Arc::clone` so all shareholders observe the same slot.
+pub struct SaveStatusHandoff {
+    /// Most-recent published snapshot. `None` before first publish.
+    slot: Mutex<Option<Arc<SaveStatusSnapshot>>>,
+
+    /// Monotonically advancing counter, incremented after each successful
+    /// `publish` (Release-ordered, paired with `acquire`'s Acquire load).
+    generation: AtomicU64,
+}
+
+impl SaveStatusHandoff {
+    /// Construct an empty handoff. `acquire()` returns `None` and
+    /// `generation()` returns `0` until [`Self::publish`] runs.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            slot: Mutex::new(None),
+            generation: AtomicU64::new(0),
+        }
+    }
+
+    /// Publish a new snapshot, replacing any prior un-acquired one
+    /// (latest-only / drop-old). Increments the generation counter after the
+    /// slot is updated so any reader observing the new generation is
+    /// guaranteed to see the new snapshot on its next `acquire()`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the slot mutex is poisoned (a prior holder panicked while
+    /// holding the lock). Poisoning is treated as a hard-stop bug;
+    /// single-publisher / single-consumer v0 means it can only come from a
+    /// deeper invariant break.
+    pub fn publish(&self, snapshot: Arc<SaveStatusSnapshot>) {
+        let mut guard = self
+            .slot
+            .lock()
+            .expect("SaveStatusHandoff slot mutex poisoned");
+        *guard = Some(snapshot);
+        // Release the guard BEFORE bumping the generation so the ordering
+        // pair (publish-Release / acquire-Acquire) covers a valid mutex
+        // window for the next consumer.
+        drop(guard);
+        self.generation.fetch_add(1, Ordering::Release);
+    }
+
+    /// Acquire the most recently published snapshot, or `None` if nothing has
+    /// been published yet. The slot retains its `Arc` reference, so
+    /// subsequent acquires within the same generation are cheap.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the slot mutex is poisoned (see [`Self::publish`]).
+    #[must_use]
+    pub fn acquire(&self) -> Option<Arc<SaveStatusSnapshot>> {
+        let guard = self
+            .slot
+            .lock()
+            .expect("SaveStatusHandoff slot mutex poisoned");
+        guard.clone()
+    }
+
+    /// Current generation counter (monotonically advancing on each publish).
+    /// Cheap "did the publisher publish since I last looked?" check without
+    /// taking the slot mutex.
+    ///
+    /// Ordering: `Acquire`, paired with the `Release` increment in
+    /// [`Self::publish`].
+    #[must_use]
+    pub fn generation(&self) -> u64 {
+        self.generation.load(Ordering::Acquire)
+    }
+}
+
+impl Default for SaveStatusHandoff {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl std::fmt::Debug for SaveStatusHandoff {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Mirror InspectorHandoff/RenderHandoff Debug: avoid taking the slot
+        // lock so the impl is panic-free under poisoned-lock conditions.
+        f.debug_struct("SaveStatusHandoff")
+            .field("generation", &self.generation())
+            .finish_non_exhaustive()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -269,6 +392,102 @@ mod tests {
         let handoff = InspectorHandoff::new();
         handoff.publish(Arc::new(InspectorSnapshot::default()));
         handoff.publish(Arc::new(InspectorSnapshot::default()));
+        let formatted = format!("{handoff:?}");
+        assert!(
+            formatted.contains("generation: 2"),
+            "Debug impl must include generation; got {formatted:?}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod save_status_tests {
+    use super::*;
+
+    fn snap(scene: Option<&str>, dirty: bool) -> SaveStatusSnapshot {
+        SaveStatusSnapshot {
+            scene_file_name: scene.map(str::to_string),
+            is_dirty: dirty,
+        }
+    }
+
+    #[test]
+    fn fresh_handoff_returns_none_and_zero_generation() {
+        let handoff = SaveStatusHandoff::new();
+        assert!(handoff.acquire().is_none());
+        assert_eq!(handoff.generation(), 0);
+    }
+
+    #[test]
+    fn publish_then_acquire_returns_published_snapshot() {
+        let handoff = SaveStatusHandoff::new();
+        handoff.publish(Arc::new(snap(Some("level.rge-scene"), true)));
+
+        let got = handoff.acquire().expect("snapshot present after publish");
+        assert_eq!(got.scene_file_name.as_deref(), Some("level.rge-scene"));
+        assert!(got.is_dirty);
+    }
+
+    #[test]
+    fn publish_advances_generation_monotonically() {
+        let handoff = SaveStatusHandoff::new();
+        assert_eq!(handoff.generation(), 0);
+
+        handoff.publish(Arc::new(SaveStatusSnapshot::default()));
+        assert_eq!(handoff.generation(), 1);
+
+        handoff.publish(Arc::new(SaveStatusSnapshot::default()));
+        assert_eq!(handoff.generation(), 2);
+
+        handoff.publish(Arc::new(SaveStatusSnapshot::default()));
+        assert_eq!(handoff.generation(), 3);
+    }
+
+    #[test]
+    fn latest_only_replaces_previous_snapshot() {
+        let handoff = SaveStatusHandoff::new();
+        handoff.publish(Arc::new(snap(Some("old.rge-scene"), false)));
+        handoff.publish(Arc::new(snap(Some("new.rge-scene"), true)));
+
+        let got = handoff.acquire().expect("snapshot present");
+        assert_eq!(
+            got.scene_file_name.as_deref(),
+            Some("new.rge-scene"),
+            "latest publish must win over older one"
+        );
+        assert!(got.is_dirty);
+    }
+
+    #[test]
+    fn acquire_does_not_drain_slot() {
+        let handoff = SaveStatusHandoff::new();
+        handoff.publish(Arc::new(snap(Some("scene.rge-scene"), false)));
+
+        let first = handoff.acquire().expect("first acquire");
+        let second = handoff.acquire().expect("second acquire");
+        assert_eq!(first.scene_file_name.as_deref(), Some("scene.rge-scene"));
+        assert_eq!(second.scene_file_name.as_deref(), Some("scene.rge-scene"));
+        assert_eq!(handoff.generation(), 1);
+    }
+
+    #[test]
+    fn default_constructs_empty_handoff() {
+        let handoff = SaveStatusHandoff::default();
+        assert!(handoff.acquire().is_none());
+        assert_eq!(handoff.generation(), 0);
+    }
+
+    #[test]
+    fn handoff_is_send_and_sync() {
+        fn assert_send_sync<T: Send + Sync + 'static>() {}
+        assert_send_sync::<SaveStatusHandoff>();
+    }
+
+    #[test]
+    fn debug_reports_generation_without_locking_slot() {
+        let handoff = SaveStatusHandoff::new();
+        handoff.publish(Arc::new(SaveStatusSnapshot::default()));
+        handoff.publish(Arc::new(SaveStatusSnapshot::default()));
         let formatted = format!("{handoff:?}");
         assert!(
             formatted.contains("generation: 2"),

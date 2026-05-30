@@ -41,7 +41,7 @@
 //!   - [`EguiHost::new`] builds the initial `DockState` as a 2-pane
 //!     layout: `Viewport` on the left/main area (~75%), `Inspector`
 //!     docked right (~25%).
-//! - **Dispatch F** (this dispatch) — face-pick over viewport. The
+//! - **Dispatch F** — face-pick over viewport. The
 //!   egui dock area consumes ALL pointer input by default (because it
 //!   covers the whole window), making `handle_left_click` unreachable.
 //!   This dispatch adds the smallest substrate that lets editor-shell
@@ -59,6 +59,19 @@
 //!     [`EguiHost::is_pointer_over_viewport`] accessors expose the
 //!     captured rect (with the physical→logical DPI conversion
 //!     handled internally).
+//! - **EDITOR-SAVE-STATUS-INDICATOR** — in-app bottom status bar showing the
+//!   open scene file name + dirty marker, alongside the inspector:
+//!   - [`handoff::SaveStatusHandoff`] — a second latest-only handoff
+//!     (verbatim sibling of [`handoff::InspectorHandoff`]) carrying an
+//!     [`rge_editor_state::SaveStatusSnapshot`].
+//!   - [`EguiHost`] now owns BOTH the `Arc<InspectorHandoff>` and the
+//!     `Arc<SaveStatusHandoff>`; [`EguiHost::save_status_handoff`] exposes
+//!     the clone so editor-shell publishes a fresh save-status snapshot each
+//!     frame, the same way it publishes the inspector snapshot.
+//!   - [`EguiHost::render`] draws a bottom [`egui::TopBottomPanel`] (via
+//!     [`rge_editor_ui::widgets::save_status::ui`]) BEFORE the
+//!     [`egui_dock::DockArea`], so the status bar sits below the dock; the
+//!     `render` signature is unchanged.
 //!
 //! # Headless by design
 //!
@@ -74,10 +87,13 @@
 //!   the constructor consumes are produced by editor-shell's `resumed`
 //!   callback but passed in as borrowed primitives).
 //! - `rge-editor-state` — for [`rge_editor_state::InspectorSnapshot`]
-//!   inside [`handoff::InspectorHandoff`] and the tab body.
+//!   inside [`handoff::InspectorHandoff`] and the tab body, and
+//!   [`rge_editor_state::SaveStatusSnapshot`] inside
+//!   [`handoff::SaveStatusHandoff`].
 //! - `rge-editor-ui` — for [`rge_editor_ui::widgets::inspector::ui`]
 //!   which the [`tabs::EditorTabViewer::ui`] dispatch calls when an
-//!   Inspector tab renders.
+//!   Inspector tab renders, and [`rge_editor_ui::widgets::save_status::ui`]
+//!   which [`EguiHost::render`] calls for the bottom status bar.
 
 #![allow(clippy::module_name_repetitions)]
 
@@ -96,7 +112,7 @@ use winit::window::Window;
 pub mod handoff;
 pub mod tabs;
 
-pub use handoff::InspectorHandoff;
+pub use handoff::{InspectorHandoff, SaveStatusHandoff};
 pub use tabs::{EditorTabViewer, InspectorTabBody, TabBody, ViewportRectSink};
 
 // ---------------------------------------------------------------------------
@@ -126,8 +142,10 @@ pub const INSPECTOR_PANE_OLD_FRACTION: f32 = 0.75;
 
 /// egui + egui_dock host. Owns the three core egui subsystems, the
 /// most-recently-observed surface dimensions, the editor's dock state,
-/// and the inspector-snapshot handoff that connects the editor-shell
-/// publisher to the in-host [`InspectorTabBody`] consumer.
+/// and two latest-only snapshot handoffs that connect the editor-shell
+/// publisher to the host: the inspector handoff (consumed by the in-host
+/// [`InspectorTabBody`]) and the save-status handoff (consumed by the
+/// bottom status bar in [`Self::render`]).
 ///
 /// # Trait bounds
 ///
@@ -184,6 +202,12 @@ pub struct EguiHost {
     /// at construction; the two clones (host field + tab body field)
     /// point at the same underlying slot.
     inspector_handoff: Arc<InspectorHandoff>,
+
+    /// `Arc<SaveStatusHandoff>` retained by the host so editor-shell can
+    /// publish a fresh save-status snapshot (open scene file name + dirty
+    /// flag) each frame; the host's `render` acquires it to draw the bottom
+    /// status bar. Sibling to `inspector_handoff` — same latest-only shape.
+    save_status_handoff: Arc<SaveStatusHandoff>,
 
     /// Dispatch F — shared sink that captures the
     /// [`TabBody::Viewport`] body rect (egui logical points) on each
@@ -288,6 +312,7 @@ impl EguiHost {
         // `INSPECTOR_PANE_OLD_FRACTION` so a future polish dispatch can
         // tune it without re-reading the egui_dock semantics.
         let inspector_handoff = Arc::new(InspectorHandoff::new());
+        let save_status_handoff = Arc::new(SaveStatusHandoff::new());
         let viewport_tab = TabBody::Viewport;
         let inspector_tab =
             TabBody::Inspector(InspectorTabBody::new(Arc::clone(&inspector_handoff)));
@@ -324,6 +349,7 @@ impl EguiHost {
             pixels_per_point,
             dock_state,
             inspector_handoff,
+            save_status_handoff,
             viewport_tab_rect_sink,
         }
     }
@@ -399,6 +425,20 @@ impl EguiHost {
     #[must_use]
     pub fn inspector_handoff(&self) -> &Arc<InspectorHandoff> {
         &self.inspector_handoff
+    }
+
+    /// Borrow the shared save-status handoff.
+    ///
+    /// Editor-shell publishes a fresh [`rge_editor_state::SaveStatusSnapshot`]
+    /// through this handoff once per frame BEFORE calling [`Self::render`];
+    /// the host's `render` acquires the most-recently-published snapshot to
+    /// draw the bottom status bar. Sibling to [`Self::inspector_handoff`].
+    ///
+    /// Clone the `Arc` (`Arc::clone(host.save_status_handoff())`) if the
+    /// caller needs to hold an owned handle across borrows of the host.
+    #[must_use]
+    pub fn save_status_handoff(&self) -> &Arc<SaveStatusHandoff> {
+        &self.save_status_handoff
     }
 
     /// Borrow the host's dock state. Exposed primarily for tests that
@@ -482,19 +522,22 @@ impl EguiHost {
     /// caller drew before. The pass has no depth attachment (egui is a
     /// 2D overlay; depth tests don't apply).
     ///
-    /// The frame's UI is the host's [`egui_dock::DockArea`] — there is
-    /// no caller-supplied UI closure (the dispatch-B `run_ui` parameter
-    /// was dropped in dispatch C, since the host now owns its layout
-    /// via [`DockState`]). Future dispatches that add menu rendering,
-    /// floating windows, or status bars layer those inside the same
-    /// render path.
+    /// The frame's UI is a bottom save-status [`egui::TopBottomPanel`]
+    /// (open scene name + dirty marker) plus the host's
+    /// [`egui_dock::DockArea`] filling the remaining area above it —
+    /// there is no caller-supplied UI closure (the dispatch-B `run_ui`
+    /// parameter was dropped in dispatch C, since the host now owns its
+    /// layout via [`DockState`]). Future dispatches that add menu
+    /// rendering or floating windows layer those inside the same render
+    /// path.
     ///
     /// # Flow (per the egui 0.34 + egui-wgpu 0.34 lifecycle)
     ///
     /// 1. Take winit-translated input from
     ///    [`egui_winit::State::take_egui_input`].
-    /// 2. Run the dock area UI via [`egui::Context::run_ui`], producing
-    ///    a [`egui::FullOutput`].
+    /// 2. Run the UI via [`egui::Context::run_ui`] — the bottom
+    ///    save-status panel, then the dock area — producing a
+    ///    [`egui::FullOutput`].
     /// 3. Apply platform output ([`egui_winit::State::handle_platform_output`]).
     /// 4. Free textures egui marked for deletion this frame.
     /// 5. Upload new texture deltas to the renderer.
@@ -539,8 +582,23 @@ impl EguiHost {
             *guard = None;
         }
         let viewport_sink = Arc::clone(&self.viewport_tab_rect_sink);
+        // Acquire the latest save-status snapshot BEFORE the `run_ui` borrow
+        // (mirrors the dock_state / viewport_sink split-borrow above, since
+        // `self.context` is borrowed by `run_ui`). Empty slot → default
+        // (`"No scene"`) so the status bar is visible from frame 1.
+        let save_status = self
+            .save_status_handoff
+            .acquire()
+            .map(|arc| (*arc).clone())
+            .unwrap_or_default();
         let dock_state = &mut self.dock_state;
         let full_output = self.context.run_ui(raw_input, |root_ui| {
+            // Bottom status bar — open scene file name + dirty marker. Added
+            // BEFORE the DockArea so egui reserves the bottom strip and the
+            // dock fills the remaining central rect.
+            egui::TopBottomPanel::bottom("rge_save_status_bar").show_inside(root_ui, |ui| {
+                rge_editor_ui::widgets::save_status::ui(&save_status, ui);
+            });
             let mut viewer = EditorTabViewer::with_viewport_rect_sink(Arc::clone(&viewport_sink));
             egui_dock::DockArea::new(dock_state)
                 .style(egui_dock::Style::from_egui(root_ui.style().as_ref()))

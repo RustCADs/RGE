@@ -183,7 +183,7 @@ use rge_brep_render::RenderMesh;
 use rge_cad_core::CadGraph;
 use rge_cad_projection::{BRepHandle, CadProjection};
 use rge_editor_actions::CommandBus;
-use rge_editor_egui_host::{EguiHost, InspectorHandoff};
+use rge_editor_egui_host::{EguiHost, InspectorHandoff, SaveStatusHandoff};
 use rge_gfx::{
     Camera as GfxCamera, DirectionalLight, GfxContext, IndexBuffer, LitMesh, LitMeshPipeline,
     Material, SurfaceContext,
@@ -612,6 +612,19 @@ pub struct EditorShell {
     // and does NOT contend with the `&mut self.egui_host` borrow the
     // host's `render()` call needs immediately after.
     pub(crate) inspector_handoff: Option<Arc<InspectorHandoff>>,
+
+    // ---- Save-status bar (EDITOR-SAVE-STATUS-INDICATOR) ---------------------
+    //
+    // Cloned `Arc` to the same [`SaveStatusHandoff`] the host stores. Set in
+    // [`crate::render_path::EditorShell::init_render_state`] alongside
+    // `inspector_handoff`; remains `None` for shells that never trigger render
+    // init. Used by the same per-frame publish path
+    // ([`crate::render_path::EditorShell::render_frame`]) to publish a fresh
+    // [`rge_editor_state::SaveStatusSnapshot`] (open scene file name + dirty
+    // flag) BEFORE the egui pass, so the host's bottom status bar renders this
+    // frame's save state. Sibling to `inspector_handoff` — same `&self`-only
+    // publish borrow, independent of the `&mut self.egui_host` render borrow.
+    pub(crate) save_status_handoff: Option<Arc<SaveStatusHandoff>>,
 }
 
 impl EditorShell {
@@ -670,6 +683,7 @@ impl EditorShell {
             modifiers: ModifiersState::empty(),
             egui_host: None,
             inspector_handoff: None,
+            save_status_handoff: None,
             prebuilt_render_meshes: Vec::new(),
             prebuilt_render_base_colors: Vec::new(),
             prebuilt_render_base_textures: Vec::new(),
@@ -832,6 +846,7 @@ impl EditorShell {
             modifiers: ModifiersState::empty(),
             egui_host: None,
             inspector_handoff: None,
+            save_status_handoff: None,
             prebuilt_render_meshes: Vec::new(),
             prebuilt_render_base_colors: Vec::new(),
             prebuilt_render_base_textures: Vec::new(),
@@ -1086,6 +1101,7 @@ impl EditorShell {
             modifiers: ModifiersState::empty(),
             egui_host: None,
             inspector_handoff: None,
+            save_status_handoff: None,
             prebuilt_render_meshes: meshes,
             prebuilt_render_base_colors: base_colors,
             prebuilt_render_base_textures: textures,
@@ -1353,6 +1369,23 @@ impl EditorShell {
             is_dirty: bus.is_dirty(),
             undo_stack_len: bus.stack().len(),
             undo_cursor: bus.stack().cursor(),
+        }
+    }
+
+    /// Build a fresh [`rge_editor_state::SaveStatusSnapshot`] for the bottom
+    /// status bar — the open `.rge-scene` source file name (pre-extracted via
+    /// `Path::file_name`) + the Command-Bus dirty flag. Pure read, zero side
+    /// effects; mirrors [`Self::inspector_snapshot`]. Produced fresh per frame
+    /// and published through `save_status_handoff` BEFORE the egui pass.
+    #[must_use]
+    pub fn save_status_snapshot(&self) -> rge_editor_state::SaveStatusSnapshot {
+        rge_editor_state::SaveStatusSnapshot {
+            scene_file_name: self
+                .scene_source_path()
+                .and_then(std::path::Path::file_name)
+                .and_then(|name| name.to_str())
+                .map(std::string::ToString::to_string),
+            is_dirty: self.command_bus().is_dirty(),
         }
     }
 
