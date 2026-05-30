@@ -9,13 +9,17 @@
 //!
 //! # Design (mirrors the Open hook split)
 //!
-//! - **Save-As only (v0).** Every `Ctrl+S` prompts for a `*.rge-scene`
-//!   destination via the binary-owned [`SceneSaveDialog`], writes the live
-//!   `World` through the binary-owned [`SceneSaveHook`]
-//!   (`rge_scene_loader::save_scene_world_to_path`), and — only on success —
-//!   marks the Command-Bus saved point ([`EditorShell::mark_saved_command`]),
-//!   clearing `is_dirty()`. There is no `scene_source_path` memory and no
-//!   silent overwrite yet (a follow-up).
+//! - **True Save with Save-As fallback.** When
+//!   [`EditorShell::scene_source_path`] is `Some` (a `.rge-scene` was opened /
+//!   launched, or a prior Save-As committed one), `Ctrl+S` writes the live
+//!   `World` straight back to it via the binary-owned [`SceneSaveHook`]
+//!   (`rge_scene_loader::save_scene_world_to_path`) with **no dialog** (silent
+//!   overwrite). When it is `None`, the binary-owned [`SceneSaveDialog`] prompts
+//!   (Save-As) and the picked path is committed as the new `scene_source_path`
+//!   on success. Either way the Command-Bus saved point is marked
+//!   ([`EditorShell::mark_saved_command`]) only on a successful write, clearing
+//!   `is_dirty()`. (`.rge-project` sources are not tracked — the writer cannot
+//!   overwrite them — so they stay Save-As.)
 //!
 //! - **editor-shell owns no file-system / loader edge.** The dialog impl owns
 //!   the `rfd` dependency; the writer impl owns `rge-scene-loader`. editor-shell
@@ -166,7 +170,7 @@ impl EditorShell {
             hook.save_scene_world(self.world.kernel(), &path)
         };
 
-        // (d) On success: mark saved, and (Save-As only) commit the picked path
+        // (d) On success: mark saved, and (Save-As path only) commit the picked path
         //     as the new silent-save source so the next `Ctrl+S` overwrites it.
         //     On failure: NOT marked, `scene_source_path` untouched.
         match save_result {
