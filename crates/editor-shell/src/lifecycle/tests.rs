@@ -1833,7 +1833,7 @@ fn save_outside_editing_is_noop() {
 
 #[test]
 fn ctrl_s_routes_to_save() {
-    // The keyboard arm: Ctrl+S -> EditorKeyCommand::MarkSaved ->
+    // The keyboard arm: Ctrl+S -> EditorKeyCommand::Save ->
     // handle_key_command must now drive the full Save flow (writer invoked + bus
     // marked saved), not a bare mark_saved.
     let (hook, calls) = save_hook(false);
@@ -1845,12 +1845,12 @@ fn ctrl_s_routes_to_save() {
     s.set_time_scale(2.0);
     assert!(s.command_bus().is_dirty());
 
-    s.handle_key_command(super::EditorKeyCommand::MarkSaved);
+    s.handle_key_command(super::EditorKeyCommand::Save);
 
     assert_eq!(
         calls.get(),
         1,
-        "Ctrl+S (MarkSaved) must route through handle_save_request to the writer"
+        "Ctrl+S (Save) must route through handle_save_request to the writer"
     );
     assert!(
         !s.command_bus().is_dirty(),
