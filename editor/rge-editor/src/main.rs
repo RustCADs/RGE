@@ -699,6 +699,10 @@ impl SceneOpenHook for SceneOpenLoaderHook {
     fn load_scene_world(&self, path: &std::path::Path) -> Result<World, String> {
         rge_scene_loader::load_scene_world_from_path(path).map_err(|e| e.to_string())
     }
+
+    fn project_display_name(&self, path: &std::path::Path) -> Option<String> {
+        rge_scene_loader::read_project_name(path)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1117,7 +1121,14 @@ fn main() -> ExitCode {
         // loader already rejected any other `--scene` argument above.)
         let launch_name = scene_path.file_name().and_then(|n| n.to_str());
         if launch_name == Some(".rge-project") {
-            shell = shell.with_save_source(SaveSource::Project(scene_path.clone()));
+            // Capture the manifest `name` for display (folder-name fallback when
+            // absent); the binary owns the `rge-scene-loader` edge so
+            // editor-shell stays loader-free.
+            let name = rge_scene_loader::read_project_name(scene_path);
+            shell = shell.with_save_source(SaveSource::Project {
+                path: scene_path.clone(),
+                name,
+            });
         } else if launch_name.is_some_and(|n| n.ends_with(".rge-scene")) {
             shell = shell.with_save_source(SaveSource::Scene(scene_path.clone()));
         }

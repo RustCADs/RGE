@@ -6,7 +6,7 @@
 //! `tests/simple_scene.rs`; these tests pin the surrounding path layer that
 //! moved out of the `rge-editor` binary (SCENE-WORLD-BRIDGE dispatch).
 
-use rge_scene_loader::{load_scene_world_from_path, SceneWorldLoadError};
+use rge_scene_loader::{load_scene_world_from_path, read_project_name, SceneWorldLoadError};
 
 #[test]
 fn golden_project_path_yields_two_entities() {
@@ -45,4 +45,37 @@ fn unsupported_extension_returns_error() {
         }
         other => panic!("expected UnsupportedExtension, got {other:?}"),
     }
+}
+
+#[test]
+fn read_project_name_returns_golden_manifest_name() {
+    // `read_project_name` parses the tracked golden `.rge-project` and returns
+    // its declared `name` field (here `"simple-scene"`) for display use.
+    let project_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("golden-projects")
+        .join("simple-scene")
+        .join(".rge-project");
+    assert!(
+        project_path.exists(),
+        "tracked golden project must exist at {}",
+        project_path.display()
+    );
+    assert_eq!(
+        read_project_name(&project_path).as_deref(),
+        Some("simple-scene"),
+        "read_project_name must return the manifest `name` field"
+    );
+}
+
+#[test]
+fn read_project_name_returns_none_for_missing_path() {
+    // A non-existent path is a graceful `None` (the caller falls back to the
+    // project folder name) — not an error.
+    assert_eq!(
+        read_project_name(std::path::Path::new("/no/such/.rge-project")),
+        None,
+        "a missing manifest must read as None, not panic or error"
+    );
 }
