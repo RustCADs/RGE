@@ -1,6 +1,6 @@
 //! Forbidden-dependency DAG lint. See PLAN.md §1.8.
 //!
-//! Enforces six dependency rules using the cargo metadata dep graph (direct
+//! Enforces seven dependency rules using the cargo metadata dep graph (direct
 //! workspace-internal deps only; external registry deps are ignored):
 //!
 //! 1. Tier 1 (`kernel/*`) cannot depend on Tier 2 (`crates/*`).
@@ -10,6 +10,8 @@
 //! 5. `physics` cannot depend on `script-host`.
 //! 6. Renderer crates (`gfx`, `gfx-ir`, `brep-render`) cannot depend on
 //!    game-domain crates.
+//! 7. `editor-shell` must stay loader-free — cannot depend on `scene-loader`
+//!    or `data` (the binary owns the loader edge via the hook seam).
 //!
 //! # Workspace package naming
 //!
@@ -173,10 +175,28 @@ fn check_dep_against_rules(
     // Rule 6: Renderer crates cannot depend on game-domain crates.
     if RENDERER_CRATES.contains(&pkg_name) && is_game_domain(dep_name) {
         report.push(Violation {
-            file: manifest_rel,
+            file: manifest_rel.clone(),
             line: None,
             message: format!(
                 "rule 6 (renderer cannot depend on game-domain crates) — `{pkg_name}` depends on \
+                 `{dep_name}`"
+            ),
+        });
+    }
+
+    // Rule 7: `rge-editor-shell` must stay loader-free — it must not depend on
+    // the scene loader (`rge-scene-loader`) or the on-disk data schema
+    // (`rge-data`). The binary `rge-editor` owns those edges and injects loader
+    // behavior through the `SceneOpenHook` / save-hook trait seam, keeping
+    // editor-shell free of file-format + parser deps so a malformed manifest can
+    // never reach the editor host. (Audit P1 — closes the convention-only
+    // "editor-shell is loader-free" drift vector from the #274–#279 save arc.)
+    if pkg_name == "rge-editor-shell" && matches!(dep_name, "rge-scene-loader" | "rge-data") {
+        report.push(Violation {
+            file: manifest_rel,
+            line: None,
+            message: format!(
+                "rule 7 (editor-shell must stay loader-free) — `rge-editor-shell` depends on \
                  `{dep_name}`"
             ),
         });
@@ -469,6 +489,46 @@ mod tests {
         assert!(!is_game_domain("components-spatial"));
     }
 
+    #[test]
+    fn rule7_editor_shell_to_scene_loader_fails() {
+        let msgs = run_check("rge-editor-shell", Tier::Two, "rge-scene-loader", Tier::Two);
+        assert!(
+            msgs.iter().any(|m| m.contains("rule 7")),
+            "expected rule 7 violation, got: {msgs:?}"
+        );
+    }
+
+    #[test]
+    fn rule7_editor_shell_to_data_fails() {
+        let msgs = run_check("rge-editor-shell", Tier::Two, "rge-data", Tier::Two);
+        assert!(
+            msgs.iter().any(|m| m.contains("rule 7")),
+            "expected rule 7 violation, got: {msgs:?}"
+        );
+    }
+
+    #[test]
+    fn rule7_editor_shell_to_editor_state_passes() {
+        // editor-shell legitimately depends on editor-state (and other
+        // non-loader crates) — rule 7 forbids only the loader/data edges.
+        let msgs = run_check("rge-editor-shell", Tier::Two, "rge-editor-state", Tier::Two);
+        assert!(
+            !msgs.iter().any(|m| m.contains("rule 7")),
+            "rule 7 should not fire on non-loader deps, got: {msgs:?}"
+        );
+    }
+
+    #[test]
+    fn rule7_other_crate_to_scene_loader_passes() {
+        // Only rge-editor-shell is bound by rule 7; the binary `rge-editor`
+        // (and anyone else) may depend on the loader.
+        let msgs = run_check("rge-editor", Tier::Other, "rge-scene-loader", Tier::Two);
+        assert!(
+            !msgs.iter().any(|m| m.contains("rule 7")),
+            "rule 7 should only bind editor-shell, got: {msgs:?}"
+        );
+    }
+
     // -----------------------------------------------------------------------
     // Layer 2 — end-to-end against synthetic / real workspaces
     // -----------------------------------------------------------------------
@@ -629,6 +689,50 @@ rge-physics = { path = "../physics" }
     }
 
     #[test]
+    fn synthetic_workspace_editor_shell_to_scene_loader_fails_rule7() {
+        // rge-editor-shell -> rge-scene-loader should fire rule 7.
+        let tmp = make_workspace(&[
+            (
+                "crates/scene-loader",
+                r#"
+[package]
+name = "rge-scene-loader"
+version = "0.1.0"
+edition = "2021"
+[lib]
+path = "src/lib.rs"
+"#,
+            ),
+            (
+                "crates/editor-shell",
+                r#"
+[package]
+name = "rge-editor-shell"
+version = "0.1.0"
+edition = "2021"
+[lib]
+path = "src/lib.rs"
+[dependencies]
+rge-scene-loader = { path = "../scene-loader" }
+"#,
+            ),
+        ]);
+        let report = run(tmp.path()).expect("run lint");
+        assert!(
+            report
+                .violations
+                .iter()
+                .any(|v| v.message.contains("rule 7")),
+            "expected rule 7 violation, got: {:?}",
+            report
+                .violations
+                .iter()
+                .map(|v| &v.message)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
     fn synthetic_workspace_kernel_to_crate_fails_rule1() {
         // rge-kernel-app -> rge-cad-core (Tier 1 -> Tier 2) trips rule 1.
         let tmp = make_workspace(&[
@@ -677,13 +781,14 @@ rge-cad-core = { path = "../../crates/cad-core" }
     /// Pre-audit-6, rules 3-6 were dead code (compared against unprefixed
     /// names). The lint reported "PASS 0 violations" but that status was
     /// meaningless. Post-fix, this test asserts the real workspace still
-    /// passes — which now genuinely means rules 3-6 ran and found no
-    /// violations, rather than silently no-op'd.
+    /// passes — which now genuinely means the rules ran and found no
+    /// violations, rather than silently no-op'd. Rule 7 (editor-shell
+    /// loader-free, added 2026-05-31 / Audit P1) is exercised here too.
     ///
-    /// If this test ever fails, an actual rule 3-6 violation has been
+    /// If this test ever fails, an actual rule 1-7 violation has been
     /// introduced into the real workspace and must be fixed.
     #[test]
-    fn current_workspace_passes_all_six_rules() {
+    fn current_workspace_passes_all_rules() {
         // Walk up from the test binary location to the workspace root.
         let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
         // CARGO_MANIFEST_DIR for this crate is `<root>/tools/architecture-lints`;

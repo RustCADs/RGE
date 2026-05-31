@@ -300,3 +300,174 @@ use components_render::MeshRenderer;
         "expected 'components_render' in output:\n{stdout}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Test 8 — Positive (Part B): rge_-prefixed cad-core authority import.
+//
+// The real-world shape Part B MISSED before the prefix fix:
+//   use rge_cad_core::BRepNode;
+// `BRepNode` is not an allowlisted ID/tag type → exactly one violation.
+// Proves Part B is no longer dead code for `rge_`-prefixed imports.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_part_b_rge_cad_core_authority_import_is_violation() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let root = dir.path();
+
+    write_file(root, "Cargo.toml", root_toml());
+    write_file(
+        root,
+        "crates/editor-state/src/lib.rs",
+        r#"
+use rge_cad_core::BRepNode;
+"#,
+    );
+
+    let (code, stdout, _stderr) = run_lint(root);
+    assert_eq!(
+        code, 1,
+        "rge_cad_core authority import must be a violation (exit 1); stdout:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("FAIL"),
+        "expected FAIL in output:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("BRepNode"),
+        "expected offending type 'BRepNode' in output:\n{stdout}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Test 9 — Negative (Part B): allowlisted cad-core ID/tag imports pass.
+//
+//   use rge_cad_core::{BRepFaceId, BRepOwnerId};
+// Pure identity handles on the ID/tag allowlist → no violation. (This is the
+// real production import in editor-state's face_selection.rs.)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_part_b_cad_core_id_tag_allowlist_passes() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let root = dir.path();
+
+    write_file(root, "Cargo.toml", root_toml());
+    write_file(
+        root,
+        "crates/editor-state/src/face_selection.rs",
+        r#"
+use rge_cad_core::{BRepFaceId, BRepOwnerId};
+"#,
+    );
+
+    let (code, stdout, _stderr) = run_lint(root);
+    assert_eq!(
+        code, 0,
+        "allowlisted cad-core ID/tag imports should pass (exit 0); stdout:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("PASS"),
+        "expected PASS in output:\n{stdout}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Test 10 — Negative (Part B): allowlisted face-tag import passes.
+//
+//   use rge_cad_core::CuboidFaceTag;
+// A plain face-direction tag enum on the allowlist → no violation.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_part_b_cad_core_face_tag_allowlist_passes() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let root = dir.path();
+
+    write_file(root, "Cargo.toml", root_toml());
+    write_file(
+        root,
+        "crates/editor-state/src/face_selection.rs",
+        r#"
+use rge_cad_core::CuboidFaceTag;
+"#,
+    );
+
+    let (code, stdout, _stderr) = run_lint(root);
+    assert_eq!(
+        code, 0,
+        "allowlisted CuboidFaceTag import should pass (exit 0); stdout:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("PASS"),
+        "expected PASS in output:\n{stdout}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Test 11 — Positive (Part B): mixed allowlisted + authority import.
+//
+//   use rge_cad_core::{BRepFaceId, BRepNode};
+// Only the non-allowlisted `BRepNode` is flagged; `BRepFaceId` is fine.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_part_b_cad_core_mixed_import_flags_only_authority() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let root = dir.path();
+
+    write_file(root, "Cargo.toml", root_toml());
+    write_file(
+        root,
+        "crates/editor-state/src/lib.rs",
+        r#"
+use rge_cad_core::{BRepFaceId, BRepNode};
+"#,
+    );
+
+    let (code, stdout, _stderr) = run_lint(root);
+    assert_eq!(
+        code, 1,
+        "a mixed import with a non-allowlisted type must fail (exit 1); stdout:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("FAIL"),
+        "expected FAIL in output:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("BRepNode"),
+        "expected the non-allowlisted 'BRepNode' in output:\n{stdout}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Test 12 — Positive (Part B): cad-core glob import cannot be verified.
+//
+//   use rge_cad_core::*;
+// A glob could pull in authority types → violation.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_part_b_cad_core_glob_import_is_violation() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let root = dir.path();
+
+    write_file(root, "Cargo.toml", root_toml());
+    write_file(
+        root,
+        "crates/editor-state/src/lib.rs",
+        r#"
+use rge_cad_core::*;
+"#,
+    );
+
+    let (code, stdout, _stderr) = run_lint(root);
+    assert_eq!(
+        code, 1,
+        "a cad-core glob import must be a violation (exit 1); stdout:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("FAIL"),
+        "expected FAIL in output:\n{stdout}"
+    );
+}
