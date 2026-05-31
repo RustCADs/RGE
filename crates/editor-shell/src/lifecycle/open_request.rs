@@ -145,6 +145,19 @@ pub trait SceneOpenHook {
     /// blanks the viewport (v0 scene render is blank, matching the
     /// `--scene` semantics).
     fn load_scene_world(&self, path: &std::path::Path) -> Result<rge_kernel_ecs::World, String>;
+
+    /// An optional human-friendly display name for a `.rge-project` at `path` —
+    /// the manifest's declared `name` field — for the window title / status bar.
+    ///
+    /// Default `None`: the caller falls back to the project folder name, so the
+    /// existing behaviour is preserved for any hook that does not override this
+    /// (including test mocks). The binary-owned loader hook overrides it to read
+    /// the manifest, keeping editor-shell loader-free. Only consulted for a
+    /// `.rge-project` source; a `.rge-scene` derives its display name from the
+    /// file name directly.
+    fn project_display_name(&self, _path: &std::path::Path) -> Option<String> {
+        None
+    }
 }
 
 /// Classify an Open candidate as a scene path (`.rge-scene` /
@@ -287,8 +300,22 @@ impl EditorShell {
                     // branch to exactly those two kinds.
                     let is_project = candidate.file_name().and_then(|name| name.to_str())
                         == Some(".rge-project");
+                    // For a project, ask the (binary-owned) open hook for the
+                    // manifest display name; the default impl + all mocks return
+                    // `None` (folder-name fallback in `SaveSource::display_name`),
+                    // so editor-shell never reads the manifest itself.
+                    let project_name = if is_project {
+                        self.scene_open_hook
+                            .as_ref()
+                            .and_then(|hook| hook.project_display_name(&candidate))
+                    } else {
+                        None
+                    };
                     self.save_source = Some(if is_project {
-                        SaveSource::Project(candidate.clone())
+                        SaveSource::Project {
+                            path: candidate.clone(),
+                            name: project_name,
+                        }
                     } else {
                         SaveSource::Scene(candidate.clone())
                     });

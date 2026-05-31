@@ -27,7 +27,18 @@ pub enum SaveSource {
     Scene(PathBuf),
     /// An opened literal `.rge-project`; `Ctrl+S` writes the world back to its
     /// first scene + re-writes the manifest (via `save_project_world_to_path`).
-    Project(PathBuf),
+    ///
+    /// `path` is the literal `.rge-project`; `name` is the manifest's declared
+    /// `name`, captured at open / launch time by the loader-aware caller for
+    /// display (`None` when unavailable — editor-shell is loader-free and never
+    /// reads the manifest here).
+    Project {
+        /// The on-disk `.rge-project` path.
+        path: PathBuf,
+        /// The manifest `name` for display, or `None` to fall back to the
+        /// project folder name. See [`SaveSource::display_name`].
+        name: Option<String>,
+    },
 }
 
 impl SaveSource {
@@ -36,36 +47,48 @@ impl SaveSource {
     #[must_use]
     pub fn path(&self) -> &Path {
         match self {
-            SaveSource::Scene(p) | SaveSource::Project(p) => p,
+            SaveSource::Scene(p) => p,
+            SaveSource::Project { path, .. } => path,
         }
     }
 
     /// `true` for a [`SaveSource::Project`] source.
     #[must_use]
     pub fn is_project(&self) -> bool {
-        matches!(self, SaveSource::Project(_))
+        matches!(self, SaveSource::Project { .. })
     }
 
-    /// A human-friendly display name for the window title / status bar: the
-    /// `.rge-scene` file name for a [`SaveSource::Scene`], or the **project
-    /// folder** name (the parent directory of the `.rge-project`) for a
-    /// [`SaveSource::Project`] — so a project reads as e.g. `my-game` rather than
-    /// the literal `.rge-project`. Falls back to the file name (`.rge-project`)
-    /// when the path has no usable parent directory. `None` only when no UTF-8
-    /// name can be derived (no file name / non-UTF-8), matching the title/status
-    /// behaviour of dropping unnameable sources.
+    /// A human-friendly display name for the window title / status bar.
     ///
-    /// Pure-path: no manifest read (editor-shell is loader-free). Showing the
-    /// manifest `name` field instead is a later refinement.
+    /// - [`SaveSource::Scene`] → the `.rge-scene` file name.
+    /// - [`SaveSource::Project`] → the manifest's declared `name` when present
+    ///   (and non-empty), so a project reads as e.g. `My Cool Game`; otherwise
+    ///   the **project folder** name (the parent directory of the
+    ///   `.rge-project`, e.g. `my-game`), falling back to the file name
+    ///   (`.rge-project`) when the path has no usable parent directory.
+    ///
+    /// The manifest `name` is supplied by the loader-aware caller at open /
+    /// launch time (editor-shell stays loader-free — `display_name` performs no
+    /// disk read). `None` only when no UTF-8 name can be derived (no file name /
+    /// non-UTF-8), matching the title/status behaviour of dropping unnameable
+    /// sources.
     #[must_use]
     pub fn display_name(&self) -> Option<&str> {
         match self {
-            SaveSource::Scene(p) => p.file_name(),
-            SaveSource::Project(p) => p
-                .parent()
-                .and_then(Path::file_name)
-                .or_else(|| p.file_name()),
+            SaveSource::Scene(p) => p.file_name().and_then(|name| name.to_str()),
+            SaveSource::Project { path, name } => {
+                // Prefer a present, non-blank manifest name; an empty or
+                // whitespace-only name must not blank the title, so fall back to
+                // the project folder name.
+                match name.as_deref().filter(|n| !n.trim().is_empty()) {
+                    Some(name) => Some(name),
+                    None => path
+                        .parent()
+                        .and_then(Path::file_name)
+                        .or_else(|| path.file_name())
+                        .and_then(|name| name.to_str()),
+                }
+            }
         }
-        .and_then(|name| name.to_str())
     }
 }

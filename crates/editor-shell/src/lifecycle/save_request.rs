@@ -185,7 +185,7 @@ impl EditorShell {
                     self.mark_saved_command();
                 }
             }
-            Some(SaveSource::Project(path)) => {
+            Some(SaveSource::Project { path, .. }) => {
                 if self.write_project_world(&path) {
                     tracing::info!(
                         target: "rge::editor-shell::save_request",

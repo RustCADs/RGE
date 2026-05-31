@@ -1928,10 +1928,12 @@ fn scene_open_of_rge_project_commits_project_save_source() {
     );
     assert_eq!(
         s.save_source(),
-        Some(&SaveSource::Project(std::path::PathBuf::from(
-            "/tmp/.rge-project"
-        ))),
-        "a literal .rge-project Open must commit a SaveSource::Project"
+        Some(&SaveSource::Project {
+            path: std::path::PathBuf::from("/tmp/.rge-project"),
+            name: None,
+        }),
+        "a literal .rge-project Open must commit a SaveSource::Project (the mock \
+         open hook supplies no manifest name → None)"
     );
 }
 
@@ -2103,7 +2105,10 @@ fn save_with_project_source_routes_to_project_hook() {
     let (scene_hook, scene_calls) = save_hook(false);
     let project = std::path::PathBuf::from("/tmp/proj/.rge-project");
     let mut s = EditorShell::new()
-        .with_save_source(SaveSource::Project(project.clone()))
+        .with_save_source(SaveSource::Project {
+            path: project.clone(),
+            name: None,
+        })
         .with_scene_save_hook(Box::new(scene_hook))
         .with_project_save_hook(Box::new(RecordingProjectSaveHook {
             fail: false,
@@ -2136,7 +2141,10 @@ fn save_with_project_source_routes_to_project_hook() {
     );
     assert_eq!(
         s.save_source(),
-        Some(&SaveSource::Project(project.clone())),
+        Some(&SaveSource::Project {
+            path: project.clone(),
+            name: None,
+        }),
         "the Project source is unchanged after a silent Save"
     );
 }
@@ -2148,7 +2156,10 @@ fn project_save_failure_does_not_mark_saved() {
     let last_path = std::rc::Rc::new(std::cell::RefCell::new(None));
     let project = std::path::PathBuf::from("/tmp/proj/.rge-project");
     let mut s = EditorShell::new()
-        .with_save_source(SaveSource::Project(project.clone()))
+        .with_save_source(SaveSource::Project {
+            path: project.clone(),
+            name: None,
+        })
         .with_project_save_hook(Box::new(RecordingProjectSaveHook {
             fail: true,
             calls: std::rc::Rc::clone(&calls),
@@ -2170,9 +2181,10 @@ fn project_save_failure_does_not_mark_saved() {
 fn project_save_without_hook_is_noop() {
     // A Project source but no project_save_hook attached: warn + no-op; the bus
     // stays dirty (defensive — the binary attaches the hook in every mode).
-    let mut s = EditorShell::new().with_save_source(SaveSource::Project(std::path::PathBuf::from(
-        "/tmp/proj/.rge-project",
-    )));
+    let mut s = EditorShell::new().with_save_source(SaveSource::Project {
+        path: std::path::PathBuf::from("/tmp/proj/.rge-project"),
+        name: None,
+    });
     s.set_time_scale(2.0);
     assert!(
         s.project_save_hook.is_none(),
@@ -2240,30 +2252,87 @@ fn display_name_scene_is_file_name() {
 }
 
 #[test]
-fn display_name_project_is_parent_folder_name() {
-    // A project reads as its containing folder, not the literal `.rge-project`.
-    let s = SaveSource::Project(std::path::PathBuf::from("/projects/my-game/.rge-project"));
+fn display_name_project_prefers_manifest_name() {
+    // With a manifest name in hand, a project reads as its declared name —
+    // not the containing folder.
+    let s = SaveSource::Project {
+        path: std::path::PathBuf::from("/projects/my-game/.rge-project"),
+        name: Some("My Cool Game".to_string()),
+    };
+    assert_eq!(s.display_name(), Some("My Cool Game"));
+}
+
+#[test]
+fn display_name_project_without_manifest_name_falls_back_to_folder() {
+    // No manifest name (`None`) → the containing folder name, not the literal
+    // `.rge-project`.
+    let s = SaveSource::Project {
+        path: std::path::PathBuf::from("/projects/my-game/.rge-project"),
+        name: None,
+    };
+    assert_eq!(s.display_name(), Some("my-game"));
+}
+
+#[test]
+fn display_name_project_empty_manifest_name_falls_back_to_folder() {
+    // An empty manifest name must not blank the title — fall back to the folder.
+    let s = SaveSource::Project {
+        path: std::path::PathBuf::from("/projects/my-game/.rge-project"),
+        name: Some(String::new()),
+    };
+    assert_eq!(s.display_name(), Some("my-game"));
+}
+
+#[test]
+fn display_name_project_whitespace_manifest_name_falls_back_to_folder() {
+    // A whitespace-only manifest name is treated as absent (it must not render a
+    // blank title) — fall back to the project folder name. Regression guard for
+    // the `trim()` check in `display_name`.
+    let s = SaveSource::Project {
+        path: std::path::PathBuf::from("/projects/my-game/.rge-project"),
+        name: Some("   ".to_string()),
+    };
     assert_eq!(s.display_name(), Some("my-game"));
 }
 
 #[test]
 fn display_name_project_without_parent_falls_back_to_file_name() {
-    // A bare `.rge-project` (no parent dir) falls back to the file name.
-    let s = SaveSource::Project(std::path::PathBuf::from(".rge-project"));
+    // A bare `.rge-project` (no parent dir, no manifest name) falls back to the
+    // file name.
+    let s = SaveSource::Project {
+        path: std::path::PathBuf::from(".rge-project"),
+        name: None,
+    };
     assert_eq!(s.display_name(), Some(".rge-project"));
 }
 
 #[test]
 fn project_save_source_surfaces_folder_name_in_status_snapshot() {
-    // End-to-end: a Project save source surfaces its folder name (not
+    // End-to-end: an unnamed Project save source surfaces its folder name (not
     // `.rge-project`) in the status snapshot the bottom bar renders.
-    let s = EditorShell::new().with_save_source(SaveSource::Project(std::path::PathBuf::from(
-        "/projects/my-game/.rge-project",
-    )));
+    let s = EditorShell::new().with_save_source(SaveSource::Project {
+        path: std::path::PathBuf::from("/projects/my-game/.rge-project"),
+        name: None,
+    });
     assert_eq!(
         s.save_status_snapshot().source_name.as_deref(),
         Some("my-game"),
-        "a Project save source must surface its folder name in the status snapshot"
+        "an unnamed Project save source must surface its folder name in the status snapshot"
+    );
+}
+
+#[test]
+fn named_project_save_source_surfaces_manifest_name_in_status_snapshot() {
+    // End-to-end: a Project save source carrying a manifest name surfaces that
+    // name (not the folder) in the status snapshot the bottom bar renders.
+    let s = EditorShell::new().with_save_source(SaveSource::Project {
+        path: std::path::PathBuf::from("/projects/my-game/.rge-project"),
+        name: Some("My Cool Game".to_string()),
+    });
+    assert_eq!(
+        s.save_status_snapshot().source_name.as_deref(),
+        Some("My Cool Game"),
+        "a named Project save source must surface its manifest name in the status snapshot"
     );
 }
 

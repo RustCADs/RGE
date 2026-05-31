@@ -267,6 +267,24 @@ pub fn load_scene_world_from_path(path: &std::path::Path) -> Result<World, Scene
     load_scene_into_world(&scene).map_err(SceneWorldLoadError::Loader)
 }
 
+/// Read the declared `name` from a `.rge-project` manifest at `path`, for
+/// display use (window title / status bar) — e.g. a project whose folder is
+/// `my-game` but whose manifest `name` is `"My Cool Game"` reads as the latter.
+///
+/// Returns `None` on any I/O or RON-parse failure, so a missing or malformed
+/// manifest degrades gracefully (the caller falls back to the project folder
+/// name) rather than surfacing an error. Read-only and world-free — it does NOT
+/// load a world, so it is cheap enough for the one-shot call an Open / launch
+/// makes (it is NOT meant for a per-frame path). An empty `name` is returned
+/// verbatim; the display layer (editor-shell's `SaveSource::display_name`)
+/// treats an empty name as absent.
+#[must_use]
+pub fn read_project_name(path: &std::path::Path) -> Option<String> {
+    let raw = std::fs::read_to_string(path).ok()?;
+    let project: Project = ron::from_str(&raw).ok()?;
+    Some(project.name)
+}
+
 /// Decode one `ComponentValue` and insert the resulting typed component into
 /// `world` against `ecs_id`. The `scene_id` is used only for error reporting.
 fn insert_component(
