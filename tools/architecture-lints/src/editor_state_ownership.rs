@@ -335,8 +335,10 @@ impl<'a> ForbiddenImportVisitor<'a> {
     /// Extract the leading path segment from a [`UseTree`], returning it as a
     /// `String`.
     ///
-    /// Returns `None` for glob / braced trees whose root cannot be determined
-    /// at this level (they are handled by recursion inside the visitor).
+    /// Returns `None` for a glob or a **root-braced group**, which have no single
+    /// leading segment at this level. Root groups are decomposed by
+    /// [`check_use_tree`](Self::check_use_tree), which recurses into each child;
+    /// a root-level glob has no crate root to check.
     fn leading_segment(tree: &UseTree) -> Option<String> {
         match tree {
             UseTree::Path(p) => Some(p.ident.to_string()),
@@ -346,34 +348,63 @@ impl<'a> ForbiddenImportVisitor<'a> {
             UseTree::Glob(_) | UseTree::Group(_) => None,
         }
     }
+
+    /// Check a single `use` tree for a forbidden import.
+    ///
+    /// A **root-braced** group (`use {rge_cad_core::BRepNode, std::fmt};`) has no
+    /// single leading segment — [`leading_segment`](Self::leading_segment)
+    /// returns `None` for it — so each child is recursively checked as its own
+    /// independent import tree. Without this recursion a root-braced authority
+    /// import would bypass Part B entirely: it is valid Rust and reaches
+    /// editor-state exactly as a plain `use rge_cad_core::BRepNode;` would.
+    ///
+    /// For a non-group tree the leading segment is normalized + matched against
+    /// [`FORBIDDEN_IMPORT_PREFIXES`]; a `cad_core` root is leaf-inspected against
+    /// [`CAD_CORE_ID_TAG_ALLOWLIST`] (glob → violation, any non-allowlisted leaf
+    /// → violation), every other forbidden crate is a whole-crate ban.
+    fn check_use_tree(&mut self, tree: &UseTree) {
+        // Root-braced group: each child is an independent import path with its
+        // own leading segment — recurse so none are skipped.
+        if let UseTree::Group(group) = tree {
+            for item in &group.items {
+                self.check_use_tree(item);
+            }
+            return;
+        }
+
+        let Some(seg) = Self::leading_segment(tree) else {
+            return;
+        };
+        if !Self::is_forbidden_crate(&seg) {
+            return;
+        }
+
+        if normalize_crate_root(&seg) == CAD_CORE_CRATE {
+            // cad-core: permit only the pure ID/tag value types in
+            // CAD_CORE_ID_TAG_ALLOWLIST. Inspect the imported leaves of THIS
+            // subtree — a glob can't be verified, and any non-allowlisted leaf
+            // is an authority import.
+            let mut leaves = Vec::new();
+            let mut has_glob = false;
+            collect_leaf_idents(tree, &mut leaves, &mut has_glob);
+            if has_glob {
+                self.record_cad_core_glob(&seg);
+            }
+            for leaf in &leaves {
+                if !CAD_CORE_ID_TAG_ALLOWLIST.contains(&leaf.as_str()) {
+                    self.record_cad_core_type(&seg, leaf);
+                }
+            }
+        } else {
+            // Every other forbidden crate is a whole-crate ban.
+            self.record(&seg);
+        }
+    }
 }
 
 impl<'ast> Visit<'ast> for ForbiddenImportVisitor<'_> {
     fn visit_item_use(&mut self, node: &'ast ItemUse) {
-        if let Some(seg) = Self::leading_segment(&node.tree) {
-            if Self::is_forbidden_crate(&seg) {
-                if normalize_crate_root(&seg) == CAD_CORE_CRATE {
-                    // cad-core: permit only the pure ID/tag value types in
-                    // CAD_CORE_ID_TAG_ALLOWLIST. Inspect the imported leaves —
-                    // a glob can't be verified, and any non-allowlisted leaf is
-                    // an authority import.
-                    let mut leaves = Vec::new();
-                    let mut has_glob = false;
-                    collect_leaf_idents(&node.tree, &mut leaves, &mut has_glob);
-                    if has_glob {
-                        self.record_cad_core_glob(&seg);
-                    }
-                    for leaf in &leaves {
-                        if !CAD_CORE_ID_TAG_ALLOWLIST.contains(&leaf.as_str()) {
-                            self.record_cad_core_type(&seg, leaf);
-                        }
-                    }
-                } else {
-                    // Every other forbidden crate is a whole-crate ban.
-                    self.record(&seg);
-                }
-            }
-        }
+        self.check_use_tree(&node.tree);
     }
 
     fn visit_item_extern_crate(&mut self, node: &'ast syn::ItemExternCrate) {
