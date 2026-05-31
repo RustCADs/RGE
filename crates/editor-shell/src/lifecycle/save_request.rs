@@ -2,9 +2,9 @@
 //!
 //! The save-axis companion to [`open_request`](super::open_request) (the
 //! `Ctrl+O` Open axis). `Ctrl+S` reaches [`EditorShell::handle_save_request`]
-//! via the [`MarkSaved`](super::EditorKeyCommand::MarkSaved) arm of
+//! via the [`Save`](super::EditorKeyCommand::Save) arm of
 //! [`EditorShell::handle_key_command`]: the physical-key decode already maps
-//! `Ctrl+S → MarkSaved`, and SCENE-SAVE-WIRING repoints that arm from a pure
+//! `Ctrl+S → Save`, and SCENE-SAVE-WIRING repoints that arm from a pure
 //! `mark_saved` bookmark to a real Save-to-disk.
 //!
 //! # Design (mirrors the Open hook split)
@@ -125,7 +125,7 @@ pub trait ProjectSaveHook {
 
 impl EditorShell {
     /// `Ctrl+S` handler — invoked from the
-    /// [`MarkSaved`](super::EditorKeyCommand::MarkSaved) arm of
+    /// [`Save`](super::EditorKeyCommand::Save) arm of
     /// [`Self::handle_key_command`]. Routes the live `World` to disk by the open
     /// [`SaveSource`] and marks the Command-Bus saved point **only** on a
     /// successful write.
@@ -156,7 +156,7 @@ impl EditorShell {
     ///
     /// Public so headless tests can drive Save without synthesizing a winit
     /// `KeyEvent`; production usage routes through the `Ctrl+S` →
-    /// [`MarkSaved`](super::EditorKeyCommand::MarkSaved) → `handle_key_command`
+    /// [`Save`](super::EditorKeyCommand::Save) → `handle_key_command`
     /// path.
     pub fn handle_save_request(&mut self) {
         // (a) PIE gate — Save only fires in Editing, mirroring the Ctrl+O gate.

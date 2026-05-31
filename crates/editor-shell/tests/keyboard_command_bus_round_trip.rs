@@ -18,7 +18,7 @@
 //! 6. Calls `shell.handle_key_command(EditorKeyCommand::Redo)` and asserts
 //!    the world re-applies.
 //! 7. Attaches mock save dialog + writer hooks, calls
-//!    `shell.handle_key_command(EditorKeyCommand::MarkSaved)`, and asserts the
+//!    `shell.handle_key_command(EditorKeyCommand::Save)`, and asserts the
 //!    writer is invoked and dirty clears — Ctrl+S now performs a Save (write +
 //!    mark-saved on success), not a bare saved-point bookmark
 //!    (SCENE-SAVE-WIRING). The pure bus `mark_saved` / `is_dirty` semantics are
@@ -221,7 +221,7 @@ fn ctrl_s_via_handle_key_command_saves_and_clears_dirty() {
         }));
     assert!(shell.command_bus().is_dirty());
 
-    shell.handle_key_command(EditorKeyCommand::MarkSaved);
+    shell.handle_key_command(EditorKeyCommand::Save);
 
     assert!(called.get(), "Ctrl+S must invoke the save writer hook");
     assert!(
@@ -302,7 +302,7 @@ fn key_command_mapping_table_is_exact() {
     );
     assert_eq!(
         EditorKeyCommand::from_key_press(KeyCode::KeyS, true, false),
-        Some(EditorKeyCommand::MarkSaved)
+        Some(EditorKeyCommand::Save)
     );
     assert_eq!(
         EditorKeyCommand::from_key_press(KeyCode::Digit2, true, false),
