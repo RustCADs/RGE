@@ -586,7 +586,7 @@ impl EguiHost {
         // Acquire the latest save-status snapshot BEFORE the `run_ui` borrow
         // (mirrors the dock_state / viewport_sink split-borrow above, since
         // `self.context` is borrowed by `run_ui`). Empty slot → default
-        // (`"No scene"`) so the status bar is visible from frame 1.
+        // (`"No file"`) so the status bar is visible from frame 1.
         let save_status = self
             .save_status_handoff
             .acquire()

@@ -22,9 +22,9 @@ use rge_editor_state::SaveStatusSnapshot;
 /// function; the same snapshot always produces the same string.
 ///
 /// - `Some(name)` → `"{name}{dirty}"` (e.g. `"level.rge-scene *"`).
-/// - `None`       → `"No scene{dirty}"` (e.g. `"No scene *"` — unsaved edits
-///   in a blank / demo / `.glb` context, where there is no save source yet; an
-///   open `.rge-scene` / `.rge-project` instead surfaces its file name above).
+/// - `None`       → `"No file{dirty}"` (e.g. `"No file *"` — unsaved edits in a
+///   blank / demo / `.glb` context, where there is no save source yet; an open
+///   `.rge-scene` / `.rge-project` instead surfaces its name above).
 ///
 /// `dirty` is `" *"` when `is_dirty`, else `""`. No leading/trailing
 /// whitespace beyond the marker; no embedded newlines — suitable for a single
@@ -32,9 +32,9 @@ use rge_editor_state::SaveStatusSnapshot;
 #[must_use]
 pub fn save_status_line(snapshot: &SaveStatusSnapshot) -> String {
     let dirty = if snapshot.is_dirty { " *" } else { "" };
-    match snapshot.scene_file_name.as_deref() {
+    match snapshot.source_name.as_deref() {
         Some(name) => format!("{name}{dirty}"),
-        None => format!("No scene{dirty}"),
+        None => format!("No file{dirty}"),
     }
 }
 
