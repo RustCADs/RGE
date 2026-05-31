@@ -77,9 +77,10 @@ impl SaveSource {
         match self {
             SaveSource::Scene(p) => p.file_name().and_then(|name| name.to_str()),
             SaveSource::Project { path, name } => {
-                // Prefer a present, non-empty manifest name; an empty name must
-                // not blank the title, so fall back to the project folder name.
-                match name.as_deref().filter(|n| !n.is_empty()) {
+                // Prefer a present, non-blank manifest name; an empty or
+                // whitespace-only name must not blank the title, so fall back to
+                // the project folder name.
+                match name.as_deref().filter(|n| !n.trim().is_empty()) {
                     Some(name) => Some(name),
                     None => path
                         .parent()

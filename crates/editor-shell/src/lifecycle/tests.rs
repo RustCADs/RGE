@@ -2284,6 +2284,18 @@ fn display_name_project_empty_manifest_name_falls_back_to_folder() {
 }
 
 #[test]
+fn display_name_project_whitespace_manifest_name_falls_back_to_folder() {
+    // A whitespace-only manifest name is treated as absent (it must not render a
+    // blank title) — fall back to the project folder name. Regression guard for
+    // the `trim()` check in `display_name`.
+    let s = SaveSource::Project {
+        path: std::path::PathBuf::from("/projects/my-game/.rge-project"),
+        name: Some("   ".to_string()),
+    };
+    assert_eq!(s.display_name(), Some("my-game"));
+}
+
+#[test]
 fn display_name_project_without_parent_falls_back_to_file_name() {
     // A bare `.rge-project` (no parent dir, no manifest name) falls back to the
     // file name.
