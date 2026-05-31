@@ -1422,8 +1422,8 @@ impl EditorShell {
 
     /// Build a fresh [`rge_editor_state::SaveStatusSnapshot`] for the bottom
     /// status bar — the open save source's display name (the `.rge-scene` file
-    /// name, or the project folder name for a `.rge-project`, via
-    /// [`SaveSource::display_name`]) + the Command-Bus dirty flag. Pure read,
+    /// name, or a `.rge-project`'s manifest name — its folder name when unnamed —
+    /// via [`SaveSource::display_name`]) + the Command-Bus dirty flag. Pure read,
     /// zero side effects; mirrors [`Self::inspector_snapshot`]. Produced fresh
     /// per frame and published through `save_status_handoff` BEFORE the egui pass.
     #[must_use]

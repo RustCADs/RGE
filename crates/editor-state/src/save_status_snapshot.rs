@@ -46,11 +46,11 @@
 /// # Field stability
 ///
 /// - `source_name`: the display name of the open save source — the `.rge-scene`
-///   file name, or the project **folder** name for a `.rge-project` (e.g.
-///   `my-game`) — resolved by `SaveSource::display_name` in the producer so the
-///   formatter does no path I/O. `Some(name)` after opening / launching a
-///   `.rge-scene` / `.rge-project` or a successful Save-As; `None` for a blank /
-///   demo / `.glb` context.
+///   file name, or a `.rge-project`'s manifest `name` (its **folder** name, e.g.
+///   `my-game`, when the manifest declares none) — resolved by
+///   `SaveSource::display_name` in the producer so the formatter does no path
+///   I/O. `Some(name)` after opening / launching a `.rge-scene` / `.rge-project`
+///   or a successful Save-As; `None` for a blank / demo / `.glb` context.
 /// - `is_dirty`: mirror of `CommandBus::is_dirty`; `true` when there are
 ///   unsaved edits (the bus cursor is past the last `mark_saved`).
 ///
@@ -62,8 +62,9 @@
 /// `Copy` (carries an owned `String`).
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct SaveStatusSnapshot {
-    /// Display name of the open save source: the `.rge-scene` file name, or the
-    /// project folder name for a `.rge-project` (no directory). `None` if none.
+    /// Display name of the open save source: the `.rge-scene` file name, or a
+    /// `.rge-project`'s manifest name — its folder name when the manifest
+    /// declares none (or no directory). `None` if none.
     pub source_name: Option<String>,
     /// `CommandBus::is_dirty()` — `true` when there are unsaved edits.
     pub is_dirty: bool,
