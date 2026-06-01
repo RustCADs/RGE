@@ -666,8 +666,8 @@ pub struct EditorShell {
     // Cloned `Arc` to the host's [`MenuCommandHandoff`] — a host→shell FIFO, NOT
     // a latest-only snapshot like the two handoffs above. Set in
     // [`crate::render_path::EditorShell::init_render_state`] alongside them;
-    // `None` for shells that never trigger render init. Drained each frame AFTER
-    // `EguiHost::render` by
+    // `None` for shells that never trigger render init. Drained at the TOP of
+    // each `render_frame` (before this frame's render borrows) by
     // [`crate::render_path::EditorShell::drain_and_route_menu_commands`], which
     // routes each `Command` one-way into the existing Open/Save/Save-As handlers.
     pub(crate) menu_command_handoff: Option<Arc<MenuCommandHandoff>>,
