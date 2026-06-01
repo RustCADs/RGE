@@ -4488,6 +4488,7 @@ dependencies = [
  "rge-editor-actions",
  "rge-editor-egui-host",
  "rge-editor-state",
+ "rge-editor-ui",
  "rge-gfx",
  "rge-input",
  "rge-kernel-ecs",

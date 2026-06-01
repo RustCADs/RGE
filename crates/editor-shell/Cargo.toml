@@ -30,6 +30,15 @@ rge-editor-actions = { path = "../editor-actions" }
 # forbidden (would create a cycle and foreclose the planned host
 # direction). The host crate has zero edge to editor-shell by design.
 rge-editor-egui-host = { path = "../editor-egui-host" }
+# Phase 9 menu wiring — dispatch B (MENUBAR-FILE-WIRING): editor-shell drains the
+# host's `MenuCommandHandoff` at the top of each redraw frame and routes the canonical
+# `rge_editor_ui::menus::Command` one-way into the existing Open/Save/Save-As
+# handlers. A real semantic dependency on the menu command vocabulary — declared
+# directly (NOT hidden behind a host re-export; `Command` is authority vocabulary,
+# unlike the host's `ViewportId`/`EventResponse` adapter re-exports). editor-shell
+# and editor-ui are both Tier-2; `forbidden-dep` rule 4 restricts editor-ui's
+# OUTGOING deps only, so editor-shell → editor-ui is permitted under the gate.
+rge-editor-ui     = { path = "../editor-ui" }
 rge-kernel-ecs    = { path = "../../kernel/ecs" }
 # Phase 9 keyboard → CommandBus integration: editor-shell consumes the
 # `translate_keyboard` winit-event-to-`KeyCode` adapter from `rge-input`.
