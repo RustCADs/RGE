@@ -2644,6 +2644,49 @@ fn save_as_new_project_hook_error_does_not_adopt_or_mark_saved() {
 }
 
 #[test]
+fn save_as_new_project_outside_editing_is_noop() {
+    // PIE gate — Save-As (new project) only fires in Editing, mirroring
+    // `save_outside_editing_is_noop` for the Ctrl+S path. During Play the
+    // handler returns at the PIE check BEFORE the dialog or the new-project hook
+    // is consulted, so a mid-Play Ctrl+Shift+S can never persist the transient
+    // play-state world as a brand-new on-disk `.rge-project`.
+    let calls = std::rc::Rc::new(std::cell::Cell::new(0usize));
+    let last_dir = std::rc::Rc::new(std::cell::RefCell::new(None));
+    let mut s = EditorShell::new()
+        .with_new_project_save_dialog(Box::new(MockNewProjectDialog {
+            dir: Some(std::path::PathBuf::from("/projects/my-game")),
+        }))
+        .with_new_project_save_hook(Box::new(RecordingNewProjectHook {
+            fail: false,
+            created: std::path::PathBuf::from("/projects/my-game/.rge-project"),
+            calls: std::rc::Rc::clone(&calls),
+            last_dir: std::rc::Rc::clone(&last_dir),
+        }));
+    build_scene(&mut s, 2);
+    s.handle_button(ToolbarButtonId::Play)
+        .expect("Play transition from Editing");
+    assert_eq!(s.play_state(), PlayState::Playing);
+
+    s.handle_save_as_new_project_request();
+
+    assert_eq!(
+        calls.get(),
+        0,
+        "Save-As during PIE must not reach the new-project hook"
+    );
+    assert_eq!(
+        s.save_source(),
+        None,
+        "a gated Save-As adopts no save source"
+    );
+    assert_eq!(
+        s.play_state(),
+        PlayState::Playing,
+        "state unchanged on the gated path"
+    );
+}
+
+#[test]
 fn ctrl_shift_s_decodes_to_save_as_project() {
     use rge_input::KeyCode;
 
