@@ -107,13 +107,14 @@ use std::sync::Arc;
 // `egui_winit::EventResponse` for the input adapter return type.
 pub use egui::ViewportId;
 pub use egui_winit::EventResponse;
+use rge_editor_ui::menus::Command;
 use winit::event::WindowEvent;
 use winit::window::Window;
 
 pub mod handoff;
 pub mod tabs;
 
-pub use handoff::{InspectorHandoff, SaveStatusHandoff};
+pub use handoff::{InspectorHandoff, MenuCommandHandoff, SaveStatusHandoff};
 pub use tabs::{EditorTabViewer, InspectorTabBody, TabBody, ViewportRectSink};
 
 // ---------------------------------------------------------------------------
@@ -138,15 +139,35 @@ pub use tabs::{EditorTabViewer, InspectorTabBody, TabBody, ViewportRectSink};
 pub const INSPECTOR_PANE_OLD_FRACTION: f32 = 0.75;
 
 // ---------------------------------------------------------------------------
+// File menu
+// ---------------------------------------------------------------------------
+
+/// File-menu `(label, `[`Command`]`)` entries in display order — the single
+/// source of truth shared by the menu bar in [`EguiHost::render`] and its test.
+/// MVP = the authoring-loop commands only (Open / Save / Save-As). The
+/// "Save As New Project…" item is LABELLED for the new-project Save-As but
+/// enqueues the existing [`Command::SaveAs`]; the editor-shell consumer
+/// (Dispatch B) routes `Command::SaveAs` →
+/// `EditorShell::handle_save_as_new_project_request`.
+fn file_menu_items() -> [(&'static str, Command); 3] {
+    [
+        ("Open…", Command::OpenFile),
+        ("Save", Command::Save),
+        ("Save As New Project…", Command::SaveAs),
+    ]
+}
+
+// ---------------------------------------------------------------------------
 // EguiHost
 // ---------------------------------------------------------------------------
 
 /// egui + egui_dock host. Owns the three core egui subsystems, the
 /// most-recently-observed surface dimensions, the editor's dock state,
-/// and two latest-only snapshot handoffs that connect the editor-shell
-/// publisher to the host: the inspector handoff (consumed by the in-host
-/// [`InspectorTabBody`]) and the save-status handoff (consumed by the
-/// bottom status bar in [`Self::render`]).
+/// two latest-only snapshot handoffs that connect the editor-shell
+/// publisher to the host (the inspector handoff, consumed by the in-host
+/// [`InspectorTabBody`], and the save-status handoff, consumed by the
+/// bottom status bar in [`Self::render`]), and a [`MenuCommandHandoff`] —
+/// a host→shell FIFO queue the File menu bar enqueues [`Command`]s onto.
 ///
 /// # Trait bounds
 ///
@@ -209,6 +230,14 @@ pub struct EguiHost {
     /// flag) each frame; the host's `render` acquires it to draw the bottom
     /// status bar. Sibling to `inspector_handoff` — same latest-only shape.
     save_status_handoff: Arc<SaveStatusHandoff>,
+
+    /// `Arc<MenuCommandHandoff>` retained by the host so the editor-shell
+    /// consumer can drain the menu-dispatched [`Command`]s the File menu bar
+    /// enqueues (via [`Self::menu_command_handoff`]). Unlike the two handoffs
+    /// above this is a host→shell **FIFO command queue**, not a latest-only
+    /// snapshot slot. Dispatch A only enqueues; the shell-side drain + routing
+    /// lands in Dispatch B.
+    menu_command_handoff: Arc<MenuCommandHandoff>,
 
     /// Dispatch F — shared sink that captures the
     /// [`TabBody::Viewport`] body rect (egui logical points) on each
@@ -314,6 +343,7 @@ impl EguiHost {
         // tune it without re-reading the egui_dock semantics.
         let inspector_handoff = Arc::new(InspectorHandoff::new());
         let save_status_handoff = Arc::new(SaveStatusHandoff::new());
+        let menu_command_handoff = Arc::new(MenuCommandHandoff::new());
         let viewport_tab = TabBody::Viewport;
         let inspector_tab =
             TabBody::Inspector(InspectorTabBody::new(Arc::clone(&inspector_handoff)));
@@ -351,6 +381,7 @@ impl EguiHost {
             dock_state,
             inspector_handoff,
             save_status_handoff,
+            menu_command_handoff,
             viewport_tab_rect_sink,
         }
     }
@@ -440,6 +471,21 @@ impl EguiHost {
     #[must_use]
     pub fn save_status_handoff(&self) -> &Arc<SaveStatusHandoff> {
         &self.save_status_handoff
+    }
+
+    /// Borrow the shared menu-command handoff (host→shell FIFO).
+    ///
+    /// The File menu bar drawn by [`Self::render`] enqueues a
+    /// [`rge_editor_ui::menus::Command`] when an item is activated; the
+    /// editor-shell consumer (Dispatch B) clones this `Arc` and drains the
+    /// queue each frame, routing each command one-way to its existing handler.
+    /// Dispatch A only enqueues — nothing drains it yet.
+    ///
+    /// Clone the `Arc` (`Arc::clone(host.menu_command_handoff())`) to hold an
+    /// owned handle across borrows of the host.
+    #[must_use]
+    pub fn menu_command_handoff(&self) -> &Arc<MenuCommandHandoff> {
+        &self.menu_command_handoff
     }
 
     /// Borrow the host's dock state. Exposed primarily for tests that
@@ -592,8 +638,30 @@ impl EguiHost {
             .acquire()
             .map(|arc| (*arc).clone())
             .unwrap_or_default();
+        // Clone the menu-command FIFO `Arc` BEFORE the `run_ui` borrow (mirrors
+        // the `save_status` / `viewport_sink` split-borrows) so the closure owns
+        // its handle. The File menu bar pushes onto it; the editor-shell drains
+        // it (Dispatch B).
+        let menu_commands = Arc::clone(&self.menu_command_handoff);
         let dock_state = &mut self.dock_state;
         let full_output = self.context.run_ui(raw_input, |root_ui| {
+            // Top menu bar — File ▸ Open / Save / Save As New Project. Added
+            // BEFORE the bottom status bar + DockArea so egui reserves the top
+            // strip and the dock fills the remaining central rect. Activating an
+            // item ENQUEUES a `Command` onto the host→shell FIFO; nothing
+            // consumes it until the editor-shell drain lands in Dispatch B.
+            egui::Panel::top("rge_menu_bar").show_inside(root_ui, |ui| {
+                egui::MenuBar::new().ui(ui, |ui| {
+                    ui.menu_button("File", |ui| {
+                        for (label, cmd) in file_menu_items() {
+                            if ui.button(label).clicked() {
+                                menu_commands.push(cmd);
+                                ui.close();
+                            }
+                        }
+                    });
+                });
+            });
             // Bottom status bar — open save source file name + dirty marker. Added
             // BEFORE the DockArea so egui reserves the bottom strip and the
             // dock fills the remaining central rect.
@@ -660,5 +728,38 @@ impl EguiHost {
             self.renderer
                 .render(&mut pass, &primitives, &screen_descriptor);
         }
+    }
+}
+
+#[cfg(test)]
+mod menu_tests {
+    use rge_editor_ui::menus::Command;
+
+    use super::{file_menu_items, MenuCommandHandoff};
+
+    #[test]
+    fn file_menu_items_are_the_authoring_loop_commands() {
+        assert_eq!(
+            file_menu_items(),
+            [
+                ("Open…", Command::OpenFile),
+                ("Save", Command::Save),
+                ("Save As New Project…", Command::SaveAs),
+            ],
+            "File menu offers exactly Open / Save / Save-As-new-project, in order"
+        );
+    }
+
+    #[test]
+    fn file_menu_items_round_trip_through_the_handoff_in_order() {
+        let handoff = MenuCommandHandoff::new();
+        for (_, cmd) in file_menu_items() {
+            handoff.push(cmd);
+        }
+        assert_eq!(
+            handoff.drain(),
+            vec![Command::OpenFile, Command::Save, Command::SaveAs],
+            "each File item enqueues its Command; they drain FIFO"
+        );
     }
 }
