@@ -574,16 +574,17 @@ impl EguiHost {
     /// [`egui_dock::DockArea`] filling the remaining area above it —
     /// there is no caller-supplied UI closure (the dispatch-B `run_ui`
     /// parameter was dropped in dispatch C, since the host now owns its
-    /// layout via [`DockState`]). Future dispatches that add menu
-    /// rendering or floating windows layer those inside the same render
+    /// layout via [`DockState`]). A top File menu bar (Open / Save / Save As
+    /// New Project) is rendered above the dock; future dispatches that add
+    /// further menus or floating windows layer those inside the same render
     /// path.
     ///
     /// # Flow (per the egui 0.34 + egui-wgpu 0.34 lifecycle)
     ///
     /// 1. Take winit-translated input from
     ///    [`egui_winit::State::take_egui_input`].
-    /// 2. Run the UI via [`egui::Context::run_ui`] — the bottom
-    ///    save-status panel, then the dock area — producing a
+    /// 2. Run the UI via [`egui::Context::run_ui`] — the top File menu bar,
+    ///    the bottom save-status panel, then the dock area — producing a
     ///    [`egui::FullOutput`].
     /// 3. Apply platform output ([`egui_winit::State::handle_platform_output`]).
     /// 4. Free textures egui marked for deletion this frame.

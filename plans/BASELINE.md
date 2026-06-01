@@ -558,6 +558,25 @@ Until **at least one** of those fires, treat the reflection substrate as observe
 4. Cross-check the editor's call graph against the `CommandBus::submit` / `Action::apply` / `Action::revert` signatures to determine whether user-visible CAD mutations can flow through the existing bus.
 5. Test inventory across `editor-*` (`#[test]` count + integration vs unit breakdown + workflow coverage).
 
+### 2026-06-02 — File menu bar landed FUNCTIONAL (#287 substrate + #288 wiring)
+
+**Forward-only follow-up (MENUBAR-RECONCILE-DRAINTEST).** Supersedes the "Menu-entry wiring for Save-As … no functional `MenuRegistry::resolve` … keyboard-only" still-open bullet in the 2026-06-01 subsection below — the File **menu bar** is now functional. (The `MenuRegistry::resolve` data-driven registry remains separately deferred; see "Still open" below.)
+
+**Now FUNCTIONAL — the File menu bar.** End-to-end:
+
+- **Substrate (#287 MENUBAR-FILE-SUBSTRATE, `69b33e6`).** `editor-egui-host` renders a top File menu bar (Open… / Save / Save As New Project) that enqueues the existing `editor_ui::menus::Command` onto a host→shell FIFO `MenuCommandHandoff` (bounded `VecDeque<Command>`, cap 64, drop-newest; a deliberately different shape from the latest-only `Handoff<T>` slots).
+- **Wiring (#288 MENUBAR-FILE-WIRING, `7979f8b`).** `editor-shell` drains the FIFO at the **top of `render_frame`** (`drain_and_route_menu_commands`) and routes `Command::{OpenFile, Save, SaveAs}` **one-way** into the existing `handle_open_request` / `handle_save_request` / `handle_save_as_new_project_request`. Adds the `editor-shell → rge-editor-ui` dep (forbidden-dep-validated; both Tier-2). `Command::SaveAs` is labelled "Save As New Project" and routes to the new-project handler.
+
+So **Open / Save / Save-As are now discoverable AND functional from the File menu**, not keyboard-only (the `Ctrl+O`/`Ctrl+S`/`Ctrl+Shift+S` paths are unchanged). This dispatch (MENUBAR-RECONCILE-DRAINTEST) also added a `render_frame` drain-placement test (`crates/editor-shell/src/lifecycle/tests.rs`, closing the audit's P2 gap that the four route tests called the drain directly without driving `render_frame`) and corrected the stale `EguiHost::render` rustdoc.
+
+**Still open — explicitly NOT closed here (narrowed):**
+
+- **`MenuRegistry::resolve` data-driven dispatch** (the W08 registry) remains deferred — the File bar is a **direct `egui::menu::bar`** over a hardcoded `file_menu_items()` list; `Command::OpenFile` still carries only a diagnostic id; **Edit/View/Play menus, accelerators, and plugin menu entries are unbuilt**. The wire-MenuRegistry-vs-ratify-the-FIFO-bypass decision is the named next frontier.
+- A last-directory-memory dialog; a non-empty-folder confirmation — unchanged.
+- The non-Open/Save audit gaps (drag-drop ingestion, `io-image` consumption, the World-only Command-Bus `Action` context) — unchanged.
+
+**Scope:** docs + one editor-shell test + the `EguiHost::render` rustdoc; no production logic / `Cargo.toml` change; the 2026-06-01 subsections and all earlier dated entries below are byte-identical (pure forward-only prepend).
+
 ### 2026-06-01 — Save-As to a NEW `.rge-project` tree landed (#283 substrate + #284 wiring)
 
 **Forward-only follow-up (SAVEAS-STATUS-SNAPSHOT).** The 2026-06-01 subsection below ("Editor Open/Save surface landed (#264–#281)") and its **Still-open** list recorded "Save-As to a *new* `.rge-project` tree (creating a fresh project directory) remains a carried/deferred item." That shipped; this prepend supersedes it. The subsection below is preserved **byte-identical** (no in-place rewrite). Grounded at main commit `a74e479`.
