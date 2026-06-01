@@ -571,7 +571,7 @@ So **Open / Save / Save-As are now discoverable AND functional from the File men
 
 **Still open — explicitly NOT closed here (narrowed):**
 
-- **`MenuRegistry::resolve` data-driven dispatch** (the W08 registry) remains deferred — the File bar is a **direct `egui::menu::bar`** over a hardcoded `file_menu_items()` list; `Command::OpenFile` still carries only a diagnostic id; **Edit/View/Play menus, accelerators, and plugin menu entries are unbuilt**. The wire-MenuRegistry-vs-ratify-the-FIFO-bypass decision is the named next frontier.
+- **`MenuRegistry::resolve` data-driven dispatch** (the W08 registry) remains deferred — the File bar is a **direct host menu bar** (`egui::MenuBar::new().ui`) over a hardcoded `file_menu_items()` list; `Command::OpenFile` still carries only a diagnostic id; **Edit/View/Play menus, accelerators, and plugin menu entries are unbuilt**. The wire-MenuRegistry-vs-ratify-the-FIFO-bypass decision is the named next frontier.
 - A last-directory-memory dialog; a non-empty-folder confirmation — unchanged.
 - The non-Open/Save audit gaps (drag-drop ingestion, `io-image` consumption, the World-only Command-Bus `Action` context) — unchanged.
 
