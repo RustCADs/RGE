@@ -34,6 +34,7 @@
 
 use std::sync::Arc;
 
+use rge_editor_ui::menus::Command;
 use rge_gfx::{
     build_resource_map, BufferPool, Camera as GfxCamera, CompiledFrameGraph, DepthStateKey,
     DirectionalLight, FrameGraph, GfxContext, LitMesh, LitMeshPipeline, Material,
@@ -335,6 +336,7 @@ impl EditorShell {
             );
             self.inspector_handoff = Some(Arc::clone(host.inspector_handoff()));
             self.save_status_handoff = Some(Arc::clone(host.save_status_handoff()));
+            self.menu_command_handoff = Some(Arc::clone(host.menu_command_handoff()));
             self.egui_host = Some(host);
         }
 
@@ -344,6 +346,40 @@ impl EditorShell {
         }
 
         Ok(())
+    }
+
+    /// Drain the host→shell menu-command FIFO ([`rge_editor_egui_host::MenuCommandHandoff`])
+    /// and route each [`Command`] **one-way** to its existing handler. Called at
+    /// the TOP of [`Self::render_frame`] (the sole redraw entry), processing the
+    /// commands the File bar enqueued during the PREVIOUS frame's egui pass —
+    /// before this frame's surface / window / encoder borrows are taken, so the
+    /// `&mut self` handler calls don't contend with a live `&self` borrow. The
+    /// host's continuous `request_redraw` ensures a command enqueued one frame is
+    /// processed at the top of the next.
+    ///
+    /// MENUBAR-FILE-WIRING (Dispatch B) routes the File authoring-loop commands
+    /// only; any other `Command` is logged + ignored. The handlers own their PIE
+    /// gating, so a menu Save during Play no-ops inside `handle_save_request` —
+    /// no gate is needed here. No-op when render init has not populated the
+    /// handoff (`menu_command_handoff == None`).
+    pub(crate) fn drain_and_route_menu_commands(&mut self) {
+        let Some(handoff) = self.menu_command_handoff.clone() else {
+            return;
+        };
+        for cmd in handoff.drain() {
+            match cmd {
+                Command::OpenFile => self.handle_open_request(),
+                Command::Save => self.handle_save_request(),
+                Command::SaveAs => self.handle_save_as_new_project_request(),
+                other => {
+                    tracing::debug!(
+                        target: "rge::editor-shell::menu",
+                        command = %other.diagnostic_id(),
+                        "menu command not routed (Dispatch B routes File Open/Save/Save-As only)"
+                    );
+                }
+            }
+        }
     }
 
     /// Render one frame on `WindowEvent::RedrawRequested` (sub-δ.1.B).
@@ -367,6 +403,17 @@ impl EditorShell {
     /// (no winit window / surface, e.g. pre-`resumed` shell); caller
     /// should fall through to existing W03 behaviour.
     pub(crate) fn render_frame(&mut self) -> bool {
+        // MENUBAR-FILE-WIRING — drain + route any menu commands the File bar
+        // enqueued during the PREVIOUS frame's egui pass, BEFORE this frame's
+        // borrows (surface frame / window / encoder) are taken, so the
+        // `&mut self` handlers don't contend with a live `&self` borrow.
+        // `render_frame` is the sole redraw entry (it early-returns
+        // `render_frame_egui_only` for the Phase-1 path), so this single drain
+        // covers both render paths; the host's continuous `request_redraw`
+        // guarantees a command enqueued one frame is processed at the top of the
+        // next. No-op until render init populates the handoff.
+        self.drain_and_route_menu_commands();
+
         // ISSUE-249 — Phase 1-only egui presenter. `init_render_state`
         // populates `pipeline` and `compiled_frame_graph` together as
         // part of Phase 2; either being absent means Phase 2 did not

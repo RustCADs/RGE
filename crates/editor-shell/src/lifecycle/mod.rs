@@ -183,7 +183,7 @@ use rge_brep_render::RenderMesh;
 use rge_cad_core::CadGraph;
 use rge_cad_projection::{BRepHandle, CadProjection};
 use rge_editor_actions::CommandBus;
-use rge_editor_egui_host::{EguiHost, InspectorHandoff, SaveStatusHandoff};
+use rge_editor_egui_host::{EguiHost, InspectorHandoff, MenuCommandHandoff, SaveStatusHandoff};
 use rge_gfx::{
     Camera as GfxCamera, DirectionalLight, GfxContext, IndexBuffer, LitMesh, LitMeshPipeline,
     Material, SurfaceContext,
@@ -660,6 +660,17 @@ pub struct EditorShell {
     // this frame's save state. Sibling to `inspector_handoff` — same `&self`-only
     // publish borrow, independent of the `&mut self.egui_host` render borrow.
     pub(crate) save_status_handoff: Option<Arc<SaveStatusHandoff>>,
+
+    // ---- Menu command FIFO (MENUBAR-FILE-WIRING) ----------------------------
+    //
+    // Cloned `Arc` to the host's [`MenuCommandHandoff`] — a host→shell FIFO, NOT
+    // a latest-only snapshot like the two handoffs above. Set in
+    // [`crate::render_path::EditorShell::init_render_state`] alongside them;
+    // `None` for shells that never trigger render init. Drained each frame AFTER
+    // `EguiHost::render` by
+    // [`crate::render_path::EditorShell::drain_and_route_menu_commands`], which
+    // routes each `Command` one-way into the existing Open/Save/Save-As handlers.
+    pub(crate) menu_command_handoff: Option<Arc<MenuCommandHandoff>>,
 }
 
 impl EditorShell {
@@ -719,6 +730,7 @@ impl EditorShell {
             egui_host: None,
             inspector_handoff: None,
             save_status_handoff: None,
+            menu_command_handoff: None,
             prebuilt_render_meshes: Vec::new(),
             prebuilt_render_base_colors: Vec::new(),
             prebuilt_render_base_textures: Vec::new(),
@@ -886,6 +898,7 @@ impl EditorShell {
             egui_host: None,
             inspector_handoff: None,
             save_status_handoff: None,
+            menu_command_handoff: None,
             prebuilt_render_meshes: Vec::new(),
             prebuilt_render_base_colors: Vec::new(),
             prebuilt_render_base_textures: Vec::new(),
@@ -1144,6 +1157,7 @@ impl EditorShell {
             egui_host: None,
             inspector_handoff: None,
             save_status_handoff: None,
+            menu_command_handoff: None,
             prebuilt_render_meshes: meshes,
             prebuilt_render_base_colors: base_colors,
             prebuilt_render_base_textures: textures,

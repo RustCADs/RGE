@@ -2764,3 +2764,125 @@ fn save_as_then_ctrl_s_routes_through_project_hook() {
         "the silent re-save through the adopted Project source marks saved"
     );
 }
+
+// ---------------------------------------------------------------------------
+// MENUBAR-FILE-WIRING (Dispatch B) — menu Command -> handler routing
+// ---------------------------------------------------------------------------
+
+mod menu_routing {
+    use std::sync::Arc;
+
+    use rge_editor_egui_host::MenuCommandHandoff;
+    use rge_editor_ui::menus::Command;
+
+    use super::*;
+
+    /// A `MenuCommandHandoff` pre-loaded with `cmds` (FIFO), wrapped in an `Arc`
+    /// ready to attach to a shell's `menu_command_handoff` field.
+    fn handoff_with(cmds: &[Command]) -> Arc<MenuCommandHandoff> {
+        let h = Arc::new(MenuCommandHandoff::new());
+        for c in cmds {
+            h.push(c.clone());
+        }
+        h
+    }
+
+    #[test]
+    fn menu_open_file_command_routes_to_open() {
+        // Command::OpenFile drained from the menu handoff must reach
+        // handle_open_request — observed by the scene hook's world swapping in.
+        let mut s = EditorShell::new()
+            .with_glb_open_dialog(Box::new(MockOpenDialog {
+                result: Some(std::path::PathBuf::from("/tmp/level.rge-scene")),
+            }))
+            .with_scene_open_hook(Box::new(MockSceneOpenHook {
+                entity_count: 2,
+                fail: false,
+            }));
+        s.menu_command_handoff = Some(handoff_with(&[Command::OpenFile]));
+
+        s.drain_and_route_menu_commands();
+
+        assert_eq!(
+            s.world().kernel().entity_count(),
+            2,
+            "Command::OpenFile routes to handle_open_request (world swapped in)"
+        );
+    }
+
+    #[test]
+    fn menu_save_command_routes_to_save() {
+        // Command::Save reaches handle_save_request — with no tracked source it
+        // takes the Save-As-scene arm, writing via the scene hook + marking saved.
+        let (hook, calls) = save_hook(false);
+        let mut s = EditorShell::new()
+            .with_scene_save_dialog(Box::new(MockSaveDialog {
+                result: Some(std::path::PathBuf::from("/tmp/level.rge-scene")),
+            }))
+            .with_scene_save_hook(Box::new(hook));
+        s.set_time_scale(2.0);
+        assert!(s.command_bus().is_dirty());
+        s.menu_command_handoff = Some(handoff_with(&[Command::Save]));
+
+        s.drain_and_route_menu_commands();
+
+        assert_eq!(
+            calls.get(),
+            1,
+            "Command::Save routes to handle_save_request (writer invoked)"
+        );
+        assert!(
+            !s.command_bus().is_dirty(),
+            "a successful menu Save marks the bus saved"
+        );
+    }
+
+    #[test]
+    fn menu_save_as_command_routes_to_save_as_new_project() {
+        // Command::SaveAs reaches handle_save_as_new_project_request (the menu
+        // item is labelled "Save As New Project") — observed by the new-project
+        // hook firing + a Project source being adopted.
+        let calls = std::rc::Rc::new(std::cell::Cell::new(0usize));
+        let last_dir = std::rc::Rc::new(std::cell::RefCell::new(None));
+        let mut s = EditorShell::new()
+            .with_new_project_save_dialog(Box::new(MockNewProjectDialog {
+                dir: Some(std::path::PathBuf::from("/projects/my-game")),
+            }))
+            .with_new_project_save_hook(Box::new(RecordingNewProjectHook {
+                fail: false,
+                created: std::path::PathBuf::from("/projects/my-game/.rge-project"),
+                calls: std::rc::Rc::clone(&calls),
+                last_dir: std::rc::Rc::clone(&last_dir),
+            }));
+        s.set_time_scale(2.0);
+        s.menu_command_handoff = Some(handoff_with(&[Command::SaveAs]));
+
+        s.drain_and_route_menu_commands();
+
+        assert_eq!(
+            calls.get(),
+            1,
+            "Command::SaveAs routes to handle_save_as_new_project_request"
+        );
+        assert!(
+            s.save_source().is_some_and(|src| src.is_project()),
+            "menu Save-As adopts a new .rge-project save source"
+        );
+    }
+
+    #[test]
+    fn menu_unrouted_command_is_noop() {
+        // A Command outside the File authoring-loop set (e.g. Undo) drains
+        // without firing any handler, panicking, or adopting state.
+        let mut s = EditorShell::new();
+        s.menu_command_handoff = Some(handoff_with(&[Command::Undo]));
+
+        s.drain_and_route_menu_commands();
+
+        assert_eq!(
+            s.save_source(),
+            None,
+            "an unrouted menu command changes nothing"
+        );
+    }
+}
