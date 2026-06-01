@@ -23,13 +23,14 @@ use crate::lifecycle::{EditorShell, SaveSource};
 ///
 /// - `Some(name)` (the source's [`SaveSource::display_name`]) →
 ///   `"{name}{dirty} — RGE Editor"` (e.g. `level.rge-scene * — RGE Editor` for a
-///   scene, or `my-game — RGE Editor` for an open project — its folder name).
+///   scene, or `my-game — RGE Editor` for an open project — its manifest name,
+///   or its folder name when the manifest declares none).
 /// - `None` (default demo / `--glb` / no source, or a non-UTF-8 name) →
 ///   `"RGE Editor{dirty}"`.
 ///
 /// `dirty` is `" *"` when `is_dirty`, else `""`. Pure — the file-name /
-/// folder-name extraction lives in [`SaveSource::display_name`]; the `set_title`
-/// side-effect lives in [`EditorShell::sync_window_title`].
+/// manifest-name / folder-name resolution lives in [`SaveSource::display_name`];
+/// the `set_title` side-effect lives in [`EditorShell::sync_window_title`].
 pub(crate) fn editor_window_title(display_name: Option<&str>, is_dirty: bool) -> String {
     let dirty = if is_dirty { " *" } else { "" };
     match display_name {

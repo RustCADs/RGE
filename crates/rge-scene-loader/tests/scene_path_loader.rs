@@ -79,3 +79,34 @@ fn read_project_name_returns_none_for_missing_path() {
         "a missing manifest must read as None, not panic or error"
     );
 }
+
+#[test]
+fn read_project_name_returns_manifest_name_distinct_from_folder() {
+    // Distinctness guard: the golden's manifest name happens to equal its folder
+    // (`simple-scene`), so `read_project_name_returns_golden_manifest_name`
+    // cannot prove `read_project_name` reads the manifest `name` field rather
+    // than the containing folder name. This fixture's manifest name
+    // (`"Distinct Display Name"`) deliberately differs from its folder
+    // (`distinct-name-project`), pinning the manifest-field read.
+    let project_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("distinct-name-project")
+        .join(".rge-project");
+    assert!(
+        project_path.exists(),
+        "tracked fixture must exist at {}",
+        project_path.display()
+    );
+    let name = read_project_name(&project_path);
+    assert_eq!(
+        name.as_deref(),
+        Some("Distinct Display Name"),
+        "read_project_name must return the manifest `name`, not the folder name"
+    );
+    assert_ne!(
+        name.as_deref(),
+        Some("distinct-name-project"),
+        "read_project_name must NOT return the containing folder name"
+    );
+}

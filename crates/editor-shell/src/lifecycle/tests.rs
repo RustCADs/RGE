@@ -1424,6 +1424,31 @@ impl crate::SceneOpenHook for MockSceneOpenHook {
     }
 }
 
+/// Mock [`crate::SceneOpenHook`] that ALSO supplies a project display name, so
+/// the `.rge-project` open path (`handle_open_request` → `project_display_name`
+/// → `SaveSource::Project { name }`) can be exercised end-to-end. `entity_count`
+/// sizes the swapped-in world; `display_name` is returned verbatim from
+/// `project_display_name` — in the production binary that override delegates to
+/// `rge_scene_loader::read_project_name`.
+struct NamingSceneOpenHook {
+    entity_count: usize,
+    display_name: Option<String>,
+}
+
+impl crate::SceneOpenHook for NamingSceneOpenHook {
+    fn load_scene_world(&self, _path: &std::path::Path) -> Result<rge_kernel_ecs::World, String> {
+        let mut world = rge_kernel_ecs::World::new();
+        for _ in 0..self.entity_count {
+            world.spawn();
+        }
+        Ok(world)
+    }
+
+    fn project_display_name(&self, _path: &std::path::Path) -> Option<String> {
+        self.display_name.clone()
+    }
+}
+
 #[test]
 fn scene_open_swaps_world_and_clears_glb_source() {
     // Dialog returns a `.rge-scene`; the scene hook yields a 2-entity
@@ -2345,6 +2370,77 @@ fn scene_save_source_surfaces_file_name_in_status_snapshot() {
     assert_eq!(
         s.save_status_snapshot().source_name.as_deref(),
         Some("level.rge-scene")
+    );
+}
+
+#[test]
+fn project_open_threads_hook_display_name_into_save_source() {
+    // End-to-end Open wiring (audit Finding 4): opening a `.rge-project` must ask
+    // the binary-owned SceneOpenHook for the manifest display name and thread it
+    // into `SaveSource::Project { name }`, so the title / bottom bar show the
+    // manifest name — not the folder. The direct `display_name` / snapshot tests
+    // construct the variant by hand and bypass this `open_request.rs` plumbing.
+    let mut s = EditorShell::new()
+        .with_glb_open_dialog(Box::new(MockOpenDialog {
+            result: Some(std::path::PathBuf::from("/projects/my-game/.rge-project")),
+        }))
+        .with_scene_open_hook(Box::new(NamingSceneOpenHook {
+            entity_count: 2,
+            display_name: Some("My Cool Game".to_string()),
+        }));
+
+    s.handle_open_request();
+
+    let source = s
+        .save_source()
+        .expect("a .rge-project Open must commit a save source");
+    assert!(
+        source.is_project(),
+        "opening a `.rge-project` must commit a Project save source"
+    );
+    assert_eq!(
+        source.path(),
+        std::path::Path::new("/projects/my-game/.rge-project"),
+        "the committed Project path must be the opened candidate"
+    );
+    // `display_name() == "My Cool Game"` (≠ folder `my-game`) proves the hook's
+    // name was threaded into the variant rather than the folder fallback.
+    assert_eq!(
+        source.display_name(),
+        Some("My Cool Game"),
+        "the hook's project_display_name must drive the source display name"
+    );
+    assert_eq!(
+        s.save_status_snapshot().source_name.as_deref(),
+        Some("My Cool Game"),
+        "the manifest name must reach the status snapshot the bottom bar renders"
+    );
+}
+
+#[test]
+fn project_open_without_hook_name_falls_back_to_folder() {
+    // Companion to the positive case: when the open hook supplies no name (the
+    // default `MockSceneOpenHook` returns `None`), a `.rge-project` Open falls
+    // back to the project folder name through the real open path.
+    let mut s = EditorShell::new()
+        .with_glb_open_dialog(Box::new(MockOpenDialog {
+            result: Some(std::path::PathBuf::from("/projects/my-game/.rge-project")),
+        }))
+        .with_scene_open_hook(Box::new(MockSceneOpenHook {
+            entity_count: 2,
+            fail: false,
+        }));
+
+    s.handle_open_request();
+
+    let source = s
+        .save_source()
+        .expect("a .rge-project Open must commit a save source");
+    assert!(source.is_project(), "must commit a Project save source");
+    assert_eq!(
+        source.display_name(),
+        Some("my-game"),
+        "with no hook name, the Project source must fall back to the folder name"
     );
 }
 

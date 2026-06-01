@@ -1,0 +1,8 @@
+Project(
+    version: "0.1.0",
+    name: "Distinct Display Name",
+    description: "Fixture: manifest name deliberately differs from the containing folder (read_project_name distinctness guard for tests/scene_path_loader.rs).",
+    target_tiers: [desktop],
+    plugins: [],
+    scenes: [],
+)
