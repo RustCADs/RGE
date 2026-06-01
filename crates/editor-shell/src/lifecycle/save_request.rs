@@ -26,8 +26,11 @@
 //!
 //!   Either way the Command-Bus saved point is marked
 //!   ([`EditorShell::mark_saved_command`]) only on a successful write, clearing
-//!   `is_dirty()`. (Save-As to a *new* `.rge-project` tree is still a follow-up;
-//!   the dialog produces a `.rge-scene` source.)
+//!   `is_dirty()`. (This `Ctrl+S` no-source Save-As produces a `.rge-scene`
+//!   [`SaveSource::Scene`]. Save-As to a *new* `.rge-project` tree is a separate
+//!   gesture — `Ctrl+Shift+S`, [`EditorShell::handle_save_as_new_project_request`]
+//!   — which creates the tree and adopts a [`SaveSource::Project`]; see
+//!   [`NewProjectSaveDialog`] / [`NewProjectSaveHook`].)
 //!
 //! - **editor-shell owns no file-system / loader edge.** The dialog impl owns
 //!   the `rfd` dependency; the scene + project writer impls own

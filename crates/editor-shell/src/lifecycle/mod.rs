@@ -466,8 +466,9 @@ pub struct EditorShell {
     /// In-app "Save" (Ctrl+S) — the document a `Ctrl+S` writes back to: a
     /// `.rge-scene` (silent overwrite) or a literal `.rge-project` (overwrite
     /// first scene + manifest). `Some(_)` after opening / launching a
-    /// `.rge-scene` / `.rge-project` (or a successful Save-As, which always
-    /// produces a [`SaveSource::Scene`]); `Ctrl+S` then routes by variant with
+    /// `.rge-scene` / `.rge-project` (or a successful Save-As — `Ctrl+S` with no
+    /// source commits a [`SaveSource::Scene`], `Ctrl+Shift+S` commits a new
+    /// [`SaveSource::Project`]); `Ctrl+S` then routes by variant with
     /// no dialog. `None` for a blank / demo / `.glb` context — `Ctrl+S` falls
     /// back to Save-As. Cleared by [`Self::replace_world`] and re-committed by
     /// [`Self::handle_open_request`]. Set at construction via
