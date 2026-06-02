@@ -142,35 +142,45 @@ pub const INSPECTOR_PANE_OLD_FRACTION: f32 = 0.75;
 // File menu
 // ---------------------------------------------------------------------------
 
-/// Extension-point id for the editor's main-menu **File** surface — the only
-/// point A1 drives. Plugins (A2+) register additional File entries against this
-/// same id.
+/// Extension-point id for the editor's main-menu **File** surface. Plugins (a
+/// future dispatch) register additional File entries against this same id.
 const FILE_MENU_EXTENSION_POINT: &str = "editor.main_menu.file";
 
-/// Build the production [`MenuRegistry`], declare the File extension point,
-/// register the three File entries, resolve once against an empty
-/// [`PredicateContext`], and project the resolved entries to the
-/// `(label, `[`Command`]`)` pairs the menu bar paints.
+/// Extension-point id for the editor's main-menu **Edit** surface (A2).
+const EDIT_MENU_EXTENSION_POINT: &str = "editor.main_menu.edit";
+
+/// Build the production [`MenuRegistry`] with BOTH main-menu extension points
+/// (File + Edit), register each point's entries, resolve ONCE against an empty
+/// [`PredicateContext`], and project each point's resolved entries to the
+/// `(label, `[`Command`]`)` pairs the menu bar paints. Returns `(file, edit)`.
 ///
-/// This REPLACES the former hardcoded `file_menu_items()` array: the registry
-/// is now the single source of truth for the File menu's content + order. The
-/// three entries carry the default order hint (`OrderHint::AtEnd`) in the
-/// default section, so `resolve` returns them in registration order — Open /
-/// Save / Save-As, with byte-identical labels to the previous list, so the
-/// rendered menu is behaviour-identical. The "Save As New Project…" item still
-/// enqueues the existing [`Command::SaveAs`]; the editor-shell consumer routes
-/// `Command::SaveAs` → `EditorShell::handle_save_as_new_project_request`.
+/// The registry is the single source of truth for both menus' content + order.
+/// Every entry carries the default order hint (`OrderHint::AtEnd`) in the
+/// default section, so `resolve` returns each point's entries in registration
+/// order:
+/// - **File** = Open / Save / Save As New Project (byte-identical labels to A1,
+///   behaviour-identical). "Save As New Project…" enqueues [`Command::SaveAs`];
+///   the editor-shell consumer routes it to
+///   `EditorShell::handle_save_as_new_project_request`.
+/// - **Edit** = Undo / Redo, enqueuing [`Command::Undo`] / [`Command::Redo`],
+///   which the editor-shell drain routes to `EditorShell::undo_command` /
+///   `redo_command` — behaviour-identical to the existing `Ctrl+Z` / `Ctrl+Y`
+///   keystroke path.
 ///
-/// A1's menu is static (no predicates / dynamic visibility), so resolving once
-/// at construction is sufficient and the result is cached on the host;
-/// per-frame re-resolve is deferred to A2. Construction errors are unreachable
-/// here (fresh registry, distinct ids), hence the `expect`s.
-fn build_file_menu_entries() -> Vec<(String, Command)> {
+/// Both menus are static (no predicates / dynamic visibility), so resolving
+/// once at construction is sufficient and the results are cached on the host;
+/// per-frame re-resolve is deferred to a future dispatch. Construction errors
+/// are unreachable here (fresh registry, distinct ids), hence the `expect`s.
+fn build_main_menu_entries() -> (Vec<(String, Command)>, Vec<(String, Command)>) {
     let mut registry = MenuRegistry::new();
     let file_point = ExtensionPoint::new(FILE_MENU_EXTENSION_POINT);
+    let edit_point = ExtensionPoint::new(EDIT_MENU_EXTENSION_POINT);
     registry
         .declare_extension_point(file_point.clone())
         .expect("static File extension point declares cleanly");
+    registry
+        .declare_extension_point(edit_point.clone())
+        .expect("static Edit extension point declares cleanly");
     for (id, label, command) in [
         ("file.open", "Open…", Command::OpenFile),
         ("file.save", "Save", Command::Save),
@@ -180,12 +190,23 @@ fn build_file_menu_entries() -> Vec<(String, Command)> {
             .register_entry(&file_point, MenuEntry::new(id, label, command))
             .expect("static File menu entries register cleanly");
     }
-    registry
-        .resolve(&PredicateContext::default())
-        .entries_for(&file_point)
-        .iter()
-        .map(|resolved| (resolved.entry.label.clone(), resolved.entry.command.clone()))
-        .collect()
+    for (id, label, command) in [
+        ("edit.undo", "Undo", Command::Undo),
+        ("edit.redo", "Redo", Command::Redo),
+    ] {
+        registry
+            .register_entry(&edit_point, MenuEntry::new(id, label, command))
+            .expect("static Edit menu entries register cleanly");
+    }
+    let resolved = registry.resolve(&PredicateContext::default());
+    let project = |point: &ExtensionPoint| -> Vec<(String, Command)> {
+        resolved
+            .entries_for(point)
+            .iter()
+            .map(|r| (r.entry.label.clone(), r.entry.command.clone()))
+            .collect()
+    };
+    (project(&file_point), project(&edit_point))
 }
 
 // ---------------------------------------------------------------------------
@@ -285,11 +306,17 @@ pub struct EguiHost {
     viewport_tab_rect_sink: Arc<ViewportRectSink>,
 
     /// The File menu's resolved `(label, `[`Command`]`)` entries, produced once
-    /// at construction by [`build_file_menu_entries`] — the [`MenuRegistry`]
+    /// at construction by [`build_main_menu_entries`] — the [`MenuRegistry`]
     /// resolve output projected for painting. [`Self::render`]'s File menu bar
-    /// iterates this each frame; A1's menu is static so it never changes after
-    /// construction (per-frame re-resolve is deferred to A2).
+    /// iterates this each frame; the menu is static so it never changes after
+    /// construction (per-frame re-resolve is deferred to a future dispatch).
     file_menu_entries: Vec<(String, Command)>,
+
+    /// The Edit menu's resolved `(label, `[`Command`]`)` entries (Undo / Redo),
+    /// produced once at construction by [`build_main_menu_entries`] alongside
+    /// the File entries. [`Self::render`]'s Edit menu bar iterates this; static,
+    /// so it never changes after construction.
+    edit_menu_entries: Vec<(String, Command)>,
 }
 
 impl EguiHost {
@@ -410,9 +437,9 @@ impl EguiHost {
             "EguiHost constructed"
         );
 
-        // A1 — produce the File menu's entries once from the data-driven
-        // `MenuRegistry` (replaces the former hardcoded `file_menu_items()`).
-        let file_menu_entries = build_file_menu_entries();
+        // A1/A2 — produce the File + Edit menu entries once from the data-driven
+        // `MenuRegistry` (one registry, both extension points, resolved once).
+        let (file_menu_entries, edit_menu_entries) = build_main_menu_entries();
 
         Self {
             context,
@@ -426,6 +453,7 @@ impl EguiHost {
             menu_command_handoff,
             viewport_tab_rect_sink,
             file_menu_entries,
+            edit_menu_entries,
         }
     }
 
@@ -687,21 +715,30 @@ impl EguiHost {
         // its handle. The File menu bar pushes onto it; the editor-shell drains
         // it (Dispatch B).
         let menu_commands = Arc::clone(&self.menu_command_handoff);
-        // Borrow the registry-resolved File entries (a disjoint field) before
-        // the `run_ui` closure so the closure captures THIS field-borrow, not
-        // all of `self` (which `&mut self.dock_state` already borrows mutably).
+        // Borrow the registry-resolved File + Edit entries (disjoint fields)
+        // before the `run_ui` closure so the closure captures THESE field-borrows,
+        // not all of `self` (which `&mut self.dock_state` already borrows mutably).
         let file_entries = &self.file_menu_entries;
+        let edit_entries = &self.edit_menu_entries;
         let dock_state = &mut self.dock_state;
         let full_output = self.context.run_ui(raw_input, |root_ui| {
-            // Top menu bar — File ▸ Open / Save / Save As New Project. Added
-            // BEFORE the bottom status bar + DockArea so egui reserves the top
-            // strip and the dock fills the remaining central rect. Activating an
-            // item ENQUEUES a `Command` onto the host→shell FIFO; nothing
-            // consumes it until the editor-shell drain lands in Dispatch B.
+            // Top menu bar — File ▸ Open / Save / Save As New Project, and Edit ▸
+            // Undo / Redo. Added BEFORE the bottom status bar + DockArea so egui
+            // reserves the top strip and the dock fills the remaining central
+            // rect. Activating an item ENQUEUES a `Command` onto the host→shell
+            // FIFO; the editor-shell drain routes it (File wiring + A2 Edit).
             egui::Panel::top("rge_menu_bar").show_inside(root_ui, |ui| {
                 egui::MenuBar::new().ui(ui, |ui| {
                     ui.menu_button("File", |ui| {
                         for (label, cmd) in file_entries {
+                            if ui.button(label.as_str()).clicked() {
+                                menu_commands.push(cmd.clone());
+                                ui.close();
+                            }
+                        }
+                    });
+                    ui.menu_button("Edit", |ui| {
+                        for (label, cmd) in edit_entries {
                             if ui.button(label.as_str()).clicked() {
                                 menu_commands.push(cmd.clone());
                                 ui.close();
@@ -783,12 +820,13 @@ impl EguiHost {
 mod menu_tests {
     use rge_editor_ui::menus::Command;
 
-    use super::{build_file_menu_entries, MenuCommandHandoff};
+    use super::{build_main_menu_entries, MenuCommandHandoff};
 
     #[test]
     fn file_menu_registry_resolves_the_authoring_loop_commands() {
+        let (file, _edit) = build_main_menu_entries();
         assert_eq!(
-            build_file_menu_entries(),
+            file,
             vec![
                 ("Open…".to_owned(), Command::OpenFile),
                 ("Save".to_owned(), Command::Save),
@@ -800,15 +838,43 @@ mod menu_tests {
     }
 
     #[test]
+    fn edit_menu_registry_resolves_undo_redo_in_order() {
+        let (_file, edit) = build_main_menu_entries();
+        assert_eq!(
+            edit,
+            vec![
+                ("Undo".to_owned(), Command::Undo),
+                ("Redo".to_owned(), Command::Redo),
+            ],
+            "the MenuRegistry resolves the Edit menu to exactly Undo / Redo, in order"
+        );
+    }
+
+    #[test]
     fn file_menu_entries_round_trip_through_the_handoff_in_order() {
+        let (file, _edit) = build_main_menu_entries();
         let handoff = MenuCommandHandoff::new();
-        for (_, cmd) in build_file_menu_entries() {
+        for (_, cmd) in file {
             handoff.push(cmd);
         }
         assert_eq!(
             handoff.drain(),
             vec![Command::OpenFile, Command::Save, Command::SaveAs],
             "each resolved File item enqueues its Command; they drain FIFO"
+        );
+    }
+
+    #[test]
+    fn edit_menu_entries_round_trip_through_the_handoff_in_order() {
+        let (_file, edit) = build_main_menu_entries();
+        let handoff = MenuCommandHandoff::new();
+        for (_, cmd) in edit {
+            handoff.push(cmd);
+        }
+        assert_eq!(
+            handoff.drain(),
+            vec![Command::Undo, Command::Redo],
+            "each resolved Edit item enqueues its Command; they drain FIFO"
         );
     }
 }

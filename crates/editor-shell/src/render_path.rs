@@ -34,6 +34,7 @@
 
 use std::sync::Arc;
 
+use rge_editor_actions::BusError;
 use rge_editor_ui::menus::Command;
 use rge_gfx::{
     build_resource_map, BufferPool, Camera as GfxCamera, CompiledFrameGraph, DepthStateKey,
@@ -357,11 +358,13 @@ impl EditorShell {
     /// host's continuous `request_redraw` ensures a command enqueued one frame is
     /// processed at the top of the next.
     ///
-    /// MENUBAR-FILE-WIRING (Dispatch B) routes the File authoring-loop commands
-    /// only; any other `Command` is logged + ignored. The handlers own their PIE
-    /// gating, so a menu Save during Play no-ops inside `handle_save_request` —
-    /// no gate is needed here. No-op when render init has not populated the
-    /// handoff (`menu_command_handoff == None`).
+    /// MENUBAR-FILE-WIRING (Dispatch B) routes the File authoring-loop commands;
+    /// A2 (MENUREGISTRY-EDITMENU) adds the Edit `Undo` / `Redo` commands,
+    /// behaviour-identical to the `Ctrl+Z` / `Ctrl+Y` bus path. Any other
+    /// `Command` is logged + ignored. The handlers own their PIE gating, so a
+    /// menu Save during Play no-ops inside `handle_save_request` — no gate is
+    /// needed here. No-op when render init has not populated the handoff
+    /// (`menu_command_handoff == None`).
     pub(crate) fn drain_and_route_menu_commands(&mut self) {
         let Some(handoff) = self.menu_command_handoff.clone() else {
             return;
@@ -371,11 +374,31 @@ impl EditorShell {
                 Command::OpenFile => self.handle_open_request(),
                 Command::Save => self.handle_save_request(),
                 Command::SaveAs => self.handle_save_as_new_project_request(),
+                // Edit menu (A2) — behaviour-identical to Ctrl+Z / Ctrl+Y: route
+                // to the same bus undo/redo and swallow the empty-stack errors
+                // exactly as `handle_key_command` does, so a menu Undo on a fresh
+                // editor is a no-op rather than diagnostic spam.
+                Command::Undo => match self.undo_command() {
+                    Ok(()) | Err(BusError::NothingToUndo) => {}
+                    Err(e) => tracing::warn!(
+                        target: "rge::editor-shell::menu",
+                        error = ?e,
+                        "menu Undo dispatched but bus returned non-NothingToUndo error"
+                    ),
+                },
+                Command::Redo => match self.redo_command() {
+                    Ok(()) | Err(BusError::NothingToRedo) => {}
+                    Err(e) => tracing::warn!(
+                        target: "rge::editor-shell::menu",
+                        error = ?e,
+                        "menu Redo dispatched but bus returned non-NothingToRedo error"
+                    ),
+                },
                 other => {
                     tracing::debug!(
                         target: "rge::editor-shell::menu",
                         command = %other.diagnostic_id(),
-                        "menu command not routed (Dispatch B routes File Open/Save/Save-As only)"
+                        "menu command not routed (File Open/Save/Save-As + Edit Undo/Redo only)"
                     );
                 }
             }

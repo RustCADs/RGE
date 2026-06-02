@@ -2871,11 +2871,56 @@ mod menu_routing {
     }
 
     #[test]
-    fn menu_unrouted_command_is_noop() {
-        // A Command outside the File authoring-loop set (e.g. Undo) drains
-        // without firing any handler, panicking, or adopting state.
+    fn menu_undo_command_reverts_via_bus() {
+        // Command::Undo drained from the menu handoff must reach undo_command —
+        // observed by the bus reverting the last action: a submitted SetTimeScale
+        // leaves the bus dirty; menu Undo returns it to the saved point.
+        // Behaviour-identical to Ctrl+Z.
         let mut s = EditorShell::new();
+        s.set_time_scale(2.0);
+        assert!(
+            s.command_bus().is_dirty(),
+            "precondition: a submitted action leaves the bus dirty"
+        );
         s.menu_command_handoff = Some(handoff_with(&[Command::Undo]));
+
+        s.drain_and_route_menu_commands();
+
+        assert!(
+            !s.command_bus().is_dirty(),
+            "Command::Undo routes to undo_command (last action reverted to the saved point)"
+        );
+    }
+
+    #[test]
+    fn menu_redo_command_reapplies_via_bus() {
+        // Command::Redo drained from the menu handoff must reach redo_command —
+        // observed by the bus re-applying a previously-undone action.
+        // Behaviour-identical to Ctrl+Y.
+        let mut s = EditorShell::new();
+        s.set_time_scale(2.0);
+        s.undo_command().expect("undo the submitted action");
+        assert!(
+            !s.command_bus().is_dirty(),
+            "precondition: after undo the bus is back at the saved point"
+        );
+        s.menu_command_handoff = Some(handoff_with(&[Command::Redo]));
+
+        s.drain_and_route_menu_commands();
+
+        assert!(
+            s.command_bus().is_dirty(),
+            "Command::Redo routes to redo_command (the undone action is re-applied)"
+        );
+    }
+
+    #[test]
+    fn menu_unrouted_command_is_noop() {
+        // A Command outside the routed set (e.g. Cut — still deferred after A2,
+        // which routes File Open/Save/Save-As + Edit Undo/Redo) drains without
+        // firing any handler, panicking, or adopting state.
+        let mut s = EditorShell::new();
+        s.menu_command_handoff = Some(handoff_with(&[Command::Cut]));
 
         s.drain_and_route_menu_commands();
 
