@@ -2885,4 +2885,38 @@ mod menu_routing {
             "an unrouted menu command changes nothing"
         );
     }
+
+    #[test]
+    fn render_frame_drains_menu_commands_at_its_top() {
+        // The four route tests above call `drain_and_route_menu_commands`
+        // DIRECTLY; this pins that `render_frame` (the sole redraw entry) actually
+        // invokes the drain at its TOP — before this frame's surface/window
+        // borrows — by routing an enqueued `Command::Save` through to the save
+        // hook even on a headless shell. With no render init, `render_frame`
+        // early-returns via `render_frame_egui_only` (which guards on the absent
+        // surface), but the top-of-frame drain runs first. A refactor that moved
+        // the drain below the borrows would fail this test (and reintroduce the
+        // borrow hazard the placement avoids).
+        let (hook, calls) = save_hook(false);
+        let mut s = EditorShell::new()
+            .with_scene_save_dialog(Box::new(MockSaveDialog {
+                result: Some(std::path::PathBuf::from("/tmp/level.rge-scene")),
+            }))
+            .with_scene_save_hook(Box::new(hook));
+        s.set_time_scale(2.0);
+        assert!(s.command_bus().is_dirty());
+        s.menu_command_handoff = Some(handoff_with(&[Command::Save]));
+
+        let _ = s.render_frame();
+
+        assert_eq!(
+            calls.get(),
+            1,
+            "render_frame must drain + route the enqueued menu Command at its top"
+        );
+        assert!(
+            !s.command_bus().is_dirty(),
+            "the routed menu Save marked the bus saved"
+        );
+    }
 }
