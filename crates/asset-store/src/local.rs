@@ -43,7 +43,7 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::fs;
-use std::io::{Read, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
 
 use crate::cache::Bytes;
@@ -208,13 +208,7 @@ impl Cache for LocalCache {
             f.sync_all()
                 .map_err(|e| CacheError::Io(format!("sync_all({}): {e}", staging.display())))?;
         }
-        fs::rename(&staging, &path).map_err(|e| {
-            CacheError::Io(format!(
-                "rename({} -> {}): {e}",
-                staging.display(),
-                path.display()
-            ))
-        })?;
+        finish_payload_write(&staging, &path)?;
 
         self.entries.borrow_mut().insert(
             id,
@@ -356,9 +350,61 @@ fn save_index(path: &Path, entries: &BTreeMap<AssetId, IndexEntry>) -> Result<()
         f.sync_all()
             .map_err(|err| CacheError::Io(format!("sync_all({}): {err}", staging.display())))?;
     }
-    fs::rename(&staging, path)
-        .map_err(|err| CacheError::Io(format!("rename({}): {err}", path.display())))?;
+    replace_index_with_staging(&staging, path)?;
     Ok(())
+}
+
+fn finish_payload_write(staging: &Path, path: &Path) -> Result<(), CacheError> {
+    match fs::rename(staging, path) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == ErrorKind::AlreadyExists && path.exists() => {
+            // Another writer won the content-addressed race. The canonical path
+            // names the same asset id, so discard our staging file rather than
+            // leaking a temporary sibling.
+            remove_file_if_exists(staging, "remove payload staging after existing destination")
+        }
+        Err(err) => Err(CacheError::Io(format!(
+            "rename({} -> {}): {err}",
+            staging.display(),
+            path.display()
+        ))),
+    }
+}
+
+fn replace_index_with_staging(staging: &Path, path: &Path) -> Result<(), CacheError> {
+    match fs::rename(staging, path) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == ErrorKind::AlreadyExists && path.exists() => {
+            // Unix rename replaces an existing file, but Windows std::fs::rename
+            // reports AlreadyExists. The index is recoverable, so use a
+            // remove-then-rename fallback instead of leaving .index.staging
+            // behind and failing every explicit flush.
+            remove_file_if_exists(path, "remove existing index before replacement")?;
+            fs::rename(staging, path).map_err(|rename_err| {
+                CacheError::Io(format!(
+                    "rename({} -> {}) after replacing existing index: {rename_err}",
+                    staging.display(),
+                    path.display()
+                ))
+            })
+        }
+        Err(err) => Err(CacheError::Io(format!(
+            "rename({} -> {}): {err}",
+            staging.display(),
+            path.display()
+        ))),
+    }
+}
+
+fn remove_file_if_exists(path: &Path, context: &str) -> Result<(), CacheError> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(CacheError::Io(format!(
+            "{context} {}: {err}",
+            path.display()
+        ))),
+    }
 }
 
 /// Drop entries whose backing file is no longer present, and stat any
@@ -601,6 +647,33 @@ mod tests {
         assert_eq!(c2.len(), 1);
         let got = c2.get(&id).unwrap().unwrap();
         assert_eq!(got, b"durable");
+    }
+
+    #[test]
+    fn repeated_flush_replaces_existing_index_without_staging_leak() {
+        let dir = TempDir::new().expect("tempdir");
+        let mut cache = LocalCache::open(dir.path()).expect("open");
+        let first = cache.put(b"first".to_vec()).expect("put first");
+        cache.flush_index().expect("initial flush");
+        let index_path = dir.path().join(INDEX_FILE);
+        assert!(
+            index_path.is_file(),
+            "expected {} after initial flush",
+            index_path.display()
+        );
+
+        let second = cache.put(b"second".to_vec()).expect("put second");
+        cache
+            .flush_index()
+            .expect("second flush should replace the existing index");
+
+        let index = fs::read_to_string(&index_path).expect("read replaced index");
+        assert!(index.contains(&first.hex()));
+        assert!(index.contains(&second.hex()));
+        assert!(
+            !dir.path().join(".index.staging").exists(),
+            "successful replacement must not leak .index.staging"
+        );
     }
 
     #[test]
