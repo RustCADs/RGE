@@ -558,6 +558,21 @@ Until **at least one** of those fires, treat the reflection substrate as observe
 4. Cross-check the editor's call graph against the `CommandBus::submit` / `Action::apply` / `Action::revert` signatures to determine whether user-visible CAD mutations can flow through the existing bus.
 5. Test inventory across `editor-*` (`#[test]` count + integration vs unit breakdown + workflow coverage).
 
+### 2026-06-02 — File menu entries now registry-produced (#291 A1)
+
+**Forward-only follow-up (MENUREGISTRY-FILEBAR-A1-DOC-RECONCILE).** Supersedes the #287/#288 snapshot's "MenuRegistry::resolve data-driven dispatch remains deferred" / "hardcoded `file_menu_items()`" framing below. A1 landed on main at `79fa41b` via PR #291.
+
+**Now CLOSED — File menu item production through `MenuRegistry::resolve`.** `crates/editor-egui-host/src/lib.rs` now builds the File menu entries through the W08 `MenuRegistry`: `EguiHost::new` calls `build_file_menu_entries()`, which declares `editor.main_menu.file`, registers Open / Save / Save As New Project as `MenuEntry`s, resolves them with an empty `PredicateContext`, and caches the resolved `(label, Command)` pairs on `EguiHost`. `MenuEntry::new` defaults to `OrderHint::AtEnd`, so the resolved order and labels remain behavior-identical to the former list.
+
+**Still open — explicitly NOT closed here (narrowed):**
+- Generalized registry-driven command execution remains deferred: File clicks still use the existing host->shell FIFO and `editor-shell` routing from #288, not a registry/accelerator execution path.
+- Edit/View/Play menu breadth, accelerator-table execution/display/conflict population, plugin menu entries, dynamic predicates, and per-frame re-resolve remain unbuilt.
+- A last-directory-memory dialog, non-empty-folder confirmation, and the non-Open/Save audit gaps (drag-drop ingestion, `io-image` consumption, World-only Command-Bus `Action` context) remain unchanged.
+
+**Historical preservation.** The older 2026-06-01 and 2026-05-28 audit snapshots below are preserved as dated history; their "no functional `MenuRegistry::resolve`" lines are superseded forward by this subsection, not rewritten in place.
+
+**Scope:** docs-only forward reconcile of A1; no Rust source/test/Cargo change in this dispatch.
+
 ### 2026-06-02 — File menu bar landed FUNCTIONAL (#287 substrate + #288 wiring)
 
 **Forward-only follow-up (MENUBAR-RECONCILE-DRAINTEST).** Supersedes the "Menu-entry wiring for Save-As … no functional `MenuRegistry::resolve` … keyboard-only" still-open bullet in the 2026-06-01 subsection below — the File **menu bar** is now functional. (The `MenuRegistry::resolve` data-driven registry remains separately deferred; see "Still open" below.)
