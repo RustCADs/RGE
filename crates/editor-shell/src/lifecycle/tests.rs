@@ -2915,10 +2915,86 @@ mod menu_routing {
     }
 
     #[test]
+    fn menu_play_start_command_starts_pie() {
+        // Command::PlayStart drained from the menu handoff must reach
+        // handle_button(Play) — observed by the PlayState transitioning
+        // Editing -> Playing (the same PIE driver as the Space key).
+        let mut s = EditorShell::new();
+        assert_eq!(
+            s.play_state(),
+            PlayState::Editing,
+            "precondition: a fresh shell is in Editing"
+        );
+        s.menu_command_handoff = Some(handoff_with(&[Command::PlayStart]));
+
+        s.drain_and_route_menu_commands();
+
+        assert_eq!(
+            s.play_state(),
+            PlayState::Playing,
+            "Command::PlayStart routes to handle_button(Play) (PIE started)"
+        );
+    }
+
+    #[test]
+    fn menu_play_pause_step_stop_round_trip_via_pie() {
+        // The remaining three Play commands route to handle_button(Pause/Step/Stop):
+        // from Playing, PlayPause -> Paused, PlayStep stays Paused (ticks once under
+        // the pause gate), PlayStop -> Editing (snapshot restored).
+        let mut s = EditorShell::new();
+        s.menu_command_handoff = Some(handoff_with(&[Command::PlayStart]));
+        s.drain_and_route_menu_commands();
+        assert_eq!(s.play_state(), PlayState::Playing, "PlayStart -> Playing");
+
+        s.menu_command_handoff = Some(handoff_with(&[Command::PlayPause]));
+        s.drain_and_route_menu_commands();
+        assert_eq!(
+            s.play_state(),
+            PlayState::Paused,
+            "Command::PlayPause routes to handle_button(Pause)"
+        );
+
+        s.menu_command_handoff = Some(handoff_with(&[Command::PlayStep]));
+        s.drain_and_route_menu_commands();
+        assert_eq!(
+            s.play_state(),
+            PlayState::Paused,
+            "Command::PlayStep routes to handle_button(Step) (stays Paused)"
+        );
+
+        s.menu_command_handoff = Some(handoff_with(&[Command::PlayStop]));
+        s.drain_and_route_menu_commands();
+        assert_eq!(
+            s.play_state(),
+            PlayState::Editing,
+            "Command::PlayStop routes to handle_button(Stop) (restored to Editing)"
+        );
+    }
+
+    #[test]
+    fn menu_play_stop_while_editing_is_a_swallowed_noop() {
+        // The Play menu items are STATIC, so Stop can be clicked while Editing —
+        // handle_button(Stop) returns PlayStateError::NoSnapshot BEFORE mutating;
+        // route_play_button swallows it and the state stays Editing.
+        let mut s = EditorShell::new();
+        assert_eq!(s.play_state(), PlayState::Editing);
+        s.menu_command_handoff = Some(handoff_with(&[Command::PlayStop]));
+
+        s.drain_and_route_menu_commands();
+
+        assert_eq!(
+            s.play_state(),
+            PlayState::Editing,
+            "an invalid-state Play menu click is a swallowed no-op"
+        );
+    }
+
+    #[test]
     fn menu_unrouted_command_is_noop() {
-        // A Command outside the routed set (e.g. Cut — still deferred after A2,
-        // which routes File Open/Save/Save-As + Edit Undo/Redo) drains without
-        // firing any handler, panicking, or adopting state.
+        // A Command outside the routed set (e.g. Cut — still deferred after A3,
+        // which routes File Open/Save/Save-As + Edit Undo/Redo + Play
+        // Play/Pause/Stop/Step) drains without firing any handler, panicking, or
+        // adopting state.
         let mut s = EditorShell::new();
         s.menu_command_handoff = Some(handoff_with(&[Command::Cut]));
 
