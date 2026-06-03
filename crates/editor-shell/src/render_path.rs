@@ -47,6 +47,7 @@ use winit::window::WindowAttributes;
 
 use crate::lifecycle::EditorShell;
 use crate::play_state::PlayState;
+use crate::play_toolbar::ToolbarButtonId;
 use crate::render_input::RenderInput;
 
 /// Default render-path background color (R, G, B, A) used as the
@@ -360,7 +361,10 @@ impl EditorShell {
     ///
     /// MENUBAR-FILE-WIRING (Dispatch B) routes the File authoring-loop commands;
     /// A2 (MENUREGISTRY-EDITMENU) adds the Edit `Undo` / `Redo` commands,
-    /// behaviour-identical to the `Ctrl+Z` / `Ctrl+Y` bus path. Any other
+    /// behaviour-identical to the `Ctrl+Z` / `Ctrl+Y` bus path; A3
+    /// (MENUREGISTRY-PLAYMENU) adds the Play `PlayStart` / `PlayPause` /
+    /// `PlayStop` / `PlayStep` commands, routed to [`EditorShell::handle_button`]
+    /// — the same PIE driver as the Space / Escape playback keys. Any other
     /// `Command` is logged + ignored. The handlers own their PIE gating, so a
     /// menu Save during Play no-ops inside `handle_save_request` — no gate is
     /// needed here. No-op when render init has not populated the handoff
@@ -394,14 +398,42 @@ impl EditorShell {
                         "menu Redo dispatched but bus returned non-NothingToRedo error"
                     ),
                 },
+                // Play menu (A3) — route to the already-runtime-wired PIE driver
+                // `handle_button`, the same one Space / Escape use. The menu items
+                // are static, so one can be clicked in a state where its transition
+                // is a no-op (e.g. Stop while Editing); that is benign and swallowed
+                // (see `route_play_button`).
+                Command::PlayStart => self.route_play_button(ToolbarButtonId::Play),
+                Command::PlayPause => self.route_play_button(ToolbarButtonId::Pause),
+                Command::PlayStop => self.route_play_button(ToolbarButtonId::Stop),
+                Command::PlayStep => self.route_play_button(ToolbarButtonId::Step),
                 other => {
                     tracing::debug!(
                         target: "rge::editor-shell::menu",
                         command = %other.diagnostic_id(),
-                        "menu command not routed (File Open/Save/Save-As + Edit Undo/Redo only)"
+                        "menu command not routed (File Open/Save/Save-As + Edit Undo/Redo + Play Play/Pause/Stop/Step only)"
                     );
                 }
             }
+        }
+    }
+
+    /// Route a Play-menu click to the PIE driver [`EditorShell::handle_button`],
+    /// swallowing the benign invalid-state transition errors. The Play menu items
+    /// are STATIC (always present + clickable), so an item can be activated in a
+    /// [`PlayState`] where its transition is a no-op — e.g. Stop / Pause while
+    /// `Editing`, where `handle_button` returns `PlayStateError` BEFORE mutating
+    /// anything. That is normal user behaviour (not an error), so it is logged at
+    /// debug, not warn. Mirrors the swallow in `handle_playback_command` (Space /
+    /// Escape).
+    fn route_play_button(&mut self, button: ToolbarButtonId) {
+        if let Err(e) = self.handle_button(button) {
+            tracing::debug!(
+                target: "rge::editor-shell::menu",
+                error = ?e,
+                ?button,
+                "Play menu item clicked where the PIE transition is a no-op"
+            );
         }
     }
 
