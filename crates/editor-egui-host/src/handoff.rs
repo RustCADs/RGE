@@ -42,7 +42,7 @@
 use std::collections::VecDeque;
 use std::sync::Mutex;
 
-use rge_editor_state::{Handoff, InspectorSnapshot, SaveStatusSnapshot};
+use rge_editor_state::{Handoff, InspectorSnapshot, MenuStateSnapshot, SaveStatusSnapshot};
 use rge_editor_ui::menus::Command;
 
 /// Latest-only handoff carrying an [`InspectorSnapshot`] from the editor-shell
@@ -56,6 +56,13 @@ pub type InspectorHandoff = Handoff<InspectorSnapshot>;
 /// status bar. A type alias over the shared [`Handoff`]; see
 /// [`rge_editor_state::Handoff`] for the full latest-only contract.
 pub type SaveStatusHandoff = Handoff<SaveStatusSnapshot>;
+
+/// Latest-only handoff carrying a [`MenuStateSnapshot`] (which Play-mode menu
+/// items are enabled in the current `PlayState`) from the editor-shell
+/// publisher to the host's Play menu, which `add_enabled`s each item. A type
+/// alias over the shared [`Handoff`]; see [`rge_editor_state::Handoff`] for the
+/// full latest-only contract.
+pub type MenuStateHandoff = Handoff<MenuStateSnapshot>;
 
 /// Maximum number of pending menu [`Command`]s [`MenuCommandHandoff`] buffers
 /// before the shell drains them. A generous should-never-reach guard: the shell

@@ -32,6 +32,7 @@ pub mod face_selection;
 pub mod handoff;
 pub mod hover;
 pub mod inspector_snapshot;
+pub mod menu_state_snapshot;
 pub mod modal_state;
 pub mod save_status_snapshot;
 pub mod selection;
@@ -47,6 +48,9 @@ pub use hover::{Hover, PanelId};
 // Phase 9 — read-only observation aggregator (not a 6th coordination
 // category; see the module-level doc comment for the doctrine note).
 pub use inspector_snapshot::InspectorSnapshot;
+// Read-only Play-menu enablement observation aggregator (not a 6th coordination
+// category; see the module-level doctrine note).
+pub use menu_state_snapshot::MenuStateSnapshot;
 // Read-only save-state observation aggregator for the editor's bottom status
 // bar (not a 6th coordination category; see the module-level doctrine note).
 pub use save_status_snapshot::SaveStatusSnapshot;

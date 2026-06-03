@@ -74,6 +74,37 @@ impl PlayState {
     pub const fn is_pie_active(self) -> bool {
         matches!(self, Self::Playing | Self::Paused)
     }
+
+    /// Whether a `Play` press is valid from this state — `Editing` (start)
+    /// or `Paused` (resume); false only while already `Playing`. The Play
+    /// menu item greys out when this is false. The rule's authority is
+    /// [`Self::play`]; this is the query form, pinned equal to it by
+    /// `can_methods_match_transition_results`.
+    #[must_use]
+    pub const fn can_play(self) -> bool {
+        !matches!(self, Self::Playing)
+    }
+
+    /// Whether a `Pause` press is valid — only while PIE is active
+    /// (`Playing`, or `Paused` idempotently). Authority: [`Self::pause`].
+    #[must_use]
+    pub const fn can_pause(self) -> bool {
+        self.is_pie_active()
+    }
+
+    /// Whether a `Stop` press is valid — only while PIE is active (so there
+    /// is a snapshot to restore). Authority: [`Self::stop`].
+    #[must_use]
+    pub const fn can_stop(self) -> bool {
+        self.is_pie_active()
+    }
+
+    /// Whether a `Step` press is valid — only from `Paused`. Authority:
+    /// [`Self::step`].
+    #[must_use]
+    pub const fn can_step(self) -> bool {
+        matches!(self, Self::Paused)
+    }
 }
 
 impl fmt::Display for PlayState {
@@ -214,6 +245,38 @@ impl PlayState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn can_methods_match_transition_results() {
+        // The `can_*` queries are the Play-menu enablement authority; pin each
+        // to whether the canonical transition actually succeeds, so they cannot
+        // drift from `play` / `pause` / `stop` / `step`.
+        for state in [PlayState::Editing, PlayState::Playing, PlayState::Paused] {
+            let mut s = state;
+            assert_eq!(
+                state.can_play(),
+                s.play().is_ok(),
+                "can_play disagrees with play() in {state:?}"
+            );
+            let mut s = state;
+            assert_eq!(
+                state.can_pause(),
+                s.pause().is_ok(),
+                "can_pause disagrees with pause() in {state:?}"
+            );
+            let mut s = state;
+            assert_eq!(
+                state.can_stop(),
+                s.stop().is_ok(),
+                "can_stop disagrees with stop() in {state:?}"
+            );
+            assert_eq!(
+                state.can_step(),
+                state.step().is_ok(),
+                "can_step disagrees with step() in {state:?}"
+            );
+        }
+    }
 
     #[test]
     fn default_is_editing() {

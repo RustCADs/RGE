@@ -338,6 +338,7 @@ impl EditorShell {
             );
             self.inspector_handoff = Some(Arc::clone(host.inspector_handoff()));
             self.save_status_handoff = Some(Arc::clone(host.save_status_handoff()));
+            self.menu_state_handoff = Some(Arc::clone(host.menu_state_handoff()));
             self.menu_command_handoff = Some(Arc::clone(host.menu_command_handoff()));
             self.egui_host = Some(host);
         }
@@ -579,6 +580,14 @@ impl EditorShell {
             let snapshot = self.save_status_snapshot();
             handoff.publish(Arc::new(snapshot));
         }
+        // PLAYMENU-DYNAMIC-ENABLE — sibling publish of the Play-item enablement
+        // snapshot through the held `Arc<MenuStateHandoff>`, so the host greys out
+        // invalid Play items this frame. Same `&self`-only borrow, disjoint from
+        // the host's `&mut self.egui_host` render borrow below.
+        if let Some(handoff) = self.menu_state_handoff.as_ref() {
+            let snapshot = self.menu_state_snapshot();
+            handoff.publish(Arc::new(snapshot));
+        }
 
         // Phase F.2 — optional egui pass into the same encoder.
         // `LoadOp::Load` preserves the cuboid pixels; egui paints on
@@ -722,6 +731,14 @@ impl EditorShell {
         // has not run (pre-resumed shells, headless tests).
         if let Some(handoff) = self.save_status_handoff.as_ref() {
             let snapshot = self.save_status_snapshot();
+            handoff.publish(Arc::new(snapshot));
+        }
+        // PLAYMENU-DYNAMIC-ENABLE — sibling publish of the Play-item enablement
+        // snapshot through the held `Arc<MenuStateHandoff>`, so the host greys out
+        // invalid Play items this frame. Same `&self`-only borrow, disjoint from
+        // the host's `&mut self.egui_host` render borrow below.
+        if let Some(handoff) = self.menu_state_handoff.as_ref() {
+            let snapshot = self.menu_state_snapshot();
             handoff.publish(Arc::new(snapshot));
         }
 

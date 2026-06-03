@@ -114,7 +114,7 @@ use winit::window::Window;
 pub mod handoff;
 pub mod tabs;
 
-pub use handoff::{InspectorHandoff, MenuCommandHandoff, SaveStatusHandoff};
+pub use handoff::{InspectorHandoff, MenuCommandHandoff, MenuStateHandoff, SaveStatusHandoff};
 pub use tabs::{EditorTabViewer, InspectorTabBody, TabBody, ViewportRectSink};
 
 // ---------------------------------------------------------------------------
@@ -265,6 +265,22 @@ fn build_main_menu_entries() -> (
     )
 }
 
+/// Map a Play-menu [`Command`] to its enabled flag from the per-frame
+/// [`rge_editor_state::MenuStateSnapshot`] (published by editor-shell from the
+/// canonical `PlayState`). The host re-encodes NO `PlayState` validity — it only
+/// routes the already-computed booleans. Non-Play commands never appear in the
+/// Play menu; they default to enabled (the editor-shell router benign-ignores any
+/// stray command anyway).
+fn play_item_enabled(cmd: &Command, menu_state: &rge_editor_state::MenuStateSnapshot) -> bool {
+    match cmd {
+        Command::PlayStart => menu_state.play_can_start,
+        Command::PlayPause => menu_state.play_can_pause,
+        Command::PlayStop => menu_state.play_can_stop,
+        Command::PlayStep => menu_state.play_can_step,
+        _ => true,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // EguiHost
 // ---------------------------------------------------------------------------
@@ -338,6 +354,12 @@ pub struct EguiHost {
     /// flag) each frame; the host's `render` acquires it to draw the bottom
     /// status bar. Sibling to `inspector_handoff` — same latest-only shape.
     save_status_handoff: Arc<SaveStatusHandoff>,
+
+    /// `Arc<MenuStateHandoff>` retained by the host so editor-shell can publish
+    /// a fresh Play-item enablement snapshot each frame; the host's `render`
+    /// acquires it to `add_enabled` each Play menu item. Sibling to
+    /// `save_status_handoff` — same latest-only shape.
+    menu_state_handoff: Arc<MenuStateHandoff>,
 
     /// `Arc<MenuCommandHandoff>` retained by the host so the editor-shell
     /// consumer can drain the menu-dispatched [`Command`]s the File + Edit + Play
@@ -480,6 +502,7 @@ impl EguiHost {
         let inspector_handoff = Arc::new(InspectorHandoff::new());
         let save_status_handoff = Arc::new(SaveStatusHandoff::new());
         let menu_command_handoff = Arc::new(MenuCommandHandoff::new());
+        let menu_state_handoff = Arc::new(MenuStateHandoff::new());
         let viewport_tab = TabBody::Viewport;
         let inspector_tab =
             TabBody::Inspector(InspectorTabBody::new(Arc::clone(&inspector_handoff)));
@@ -524,6 +547,7 @@ impl EguiHost {
             inspector_handoff,
             save_status_handoff,
             menu_command_handoff,
+            menu_state_handoff,
             viewport_tab_rect_sink,
             file_menu_entries,
             edit_menu_entries,
@@ -632,6 +656,18 @@ impl EguiHost {
     #[must_use]
     pub fn menu_command_handoff(&self) -> &Arc<MenuCommandHandoff> {
         &self.menu_command_handoff
+    }
+
+    /// Borrow the shared menu-state handoff (host→shell latest-only snapshot of
+    /// Play-item enablement). editor-shell clones this `Arc` and publishes a
+    /// fresh [`rge_editor_state::MenuStateSnapshot`] each frame from the live
+    /// `PlayState`; [`Self::render`] acquires it to `add_enabled` the Play items.
+    ///
+    /// Clone the `Arc` (`Arc::clone(host.menu_state_handoff())`) to hold an owned
+    /// handle across borrows of the host.
+    #[must_use]
+    pub fn menu_state_handoff(&self) -> &Arc<MenuStateHandoff> {
+        &self.menu_state_handoff
     }
 
     /// Borrow the host's dock state. Exposed primarily for tests that
@@ -785,6 +821,14 @@ impl EguiHost {
             .acquire()
             .map(|arc| (*arc).clone())
             .unwrap_or_default();
+        // Acquire the latest menu-state snapshot (Play-item enablement) too, same
+        // pre-`run_ui` split-borrow. Empty slot → all enabled (don't grey anything
+        // until editor-shell publishes the real per-`PlayState` snapshot).
+        let menu_state = self
+            .menu_state_handoff
+            .acquire()
+            .map(|arc| *arc)
+            .unwrap_or_else(rge_editor_state::MenuStateSnapshot::all_enabled);
         // Clone the menu-command FIFO `Arc` BEFORE the `run_ui` borrow (mirrors
         // the `save_status` / `viewport_sink` split-borrows) so the closure owns
         // its handle. The File + Edit + Play + View menu bars push onto it; the editor-shell
@@ -826,7 +870,15 @@ impl EguiHost {
                     });
                     ui.menu_button("Play", |ui| {
                         for (label, cmd) in play_entries {
-                            if ui.button(label.as_str()).clicked() {
+                            // Grey out items whose PIE transition is a no-op in the
+                            // current PlayState. `play_item_enabled` only routes the
+                            // booleans editor-shell computed from the canonical
+                            // `PlayState` (no validity rule re-encoded in the host).
+                            let enabled = play_item_enabled(cmd, &menu_state);
+                            if ui
+                                .add_enabled(enabled, egui::Button::new(label.as_str()))
+                                .clicked()
+                            {
                                 menu_commands.push(cmd.clone());
                                 ui.close();
                             }
