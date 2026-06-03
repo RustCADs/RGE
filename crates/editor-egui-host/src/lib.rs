@@ -287,10 +287,11 @@ fn play_item_enabled(cmd: &Command, menu_state: &rge_editor_state::MenuStateSnap
 
 /// egui + egui_dock host. Owns the three core egui subsystems, the
 /// most-recently-observed surface dimensions, the editor's dock state,
-/// two latest-only snapshot handoffs that connect the editor-shell
+/// three latest-only snapshot handoffs that connect the editor-shell
 /// publisher to the host (the inspector handoff, consumed by the in-host
-/// [`InspectorTabBody`], and the save-status handoff, consumed by the
-/// bottom status bar in [`Self::render`]), and a [`MenuCommandHandoff`] —
+/// [`InspectorTabBody`]; the save-status handoff, consumed by the bottom
+/// status bar in [`Self::render`]; and the menu-state handoff, consumed by
+/// the Play menu's `add_enabled`), and a [`MenuCommandHandoff`] —
 /// a host→shell FIFO queue the File + Edit + Play + View menu bars enqueue [`Command`]s onto.
 ///
 /// # Trait bounds
@@ -363,7 +364,7 @@ pub struct EguiHost {
 
     /// `Arc<MenuCommandHandoff>` retained by the host so the editor-shell
     /// consumer can drain the menu-dispatched [`Command`]s the File + Edit + Play
-    /// + View menu bars enqueue (via [`Self::menu_command_handoff`]). Unlike the two handoffs
+    /// + View menu bars enqueue (via [`Self::menu_command_handoff`]). Unlike the three handoffs
     /// above this is a host→shell **FIFO command queue**, not a latest-only
     /// snapshot slot. The editor-shell drains + routes it
     /// (`EditorShell::drain_and_route_menu_commands`) at the top of each frame.

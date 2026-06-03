@@ -676,7 +676,7 @@ pub struct EditorShell {
     // ---- Menu command FIFO (MENUBAR-FILE-WIRING) ----------------------------
     //
     // Cloned `Arc` to the host's [`MenuCommandHandoff`] — a host→shell FIFO, NOT
-    // a latest-only snapshot like the two handoffs above. Set in
+    // a latest-only snapshot like the three handoffs above. Set in
     // [`crate::render_path::EditorShell::init_render_state`] alongside them;
     // `None` for shells that never trigger render init. Drained at the TOP of
     // each `render_frame` (before this frame's render borrows) by

@@ -1,10 +1,11 @@
-//! Editor-egui-host handoffs — [`InspectorHandoff`] and [`SaveStatusHandoff`]
-//! (the two latest-only snapshot handoffs the host READS from the editor-shell
-//! publisher) plus [`MenuCommandHandoff`] (a host→shell FIFO queue the host
-//! WRITES menu-dispatched [`rge_editor_ui::menus::Command`]s into, for the
-//! editor-shell consumer to drain — the reverse direction).
+//! Editor-egui-host handoffs — [`InspectorHandoff`], [`SaveStatusHandoff`], and
+//! [`MenuStateHandoff`] (the three latest-only snapshot handoffs the host READS
+//! from the editor-shell publisher) plus [`MenuCommandHandoff`] (a host→shell
+//! FIFO queue the host WRITES menu-dispatched
+//! [`rge_editor_ui::menus::Command`]s into, for the editor-shell consumer to
+//! drain — the reverse direction).
 //!
-//! Both are **type aliases** over the workspace's shared
+//! All three are **type aliases** over the workspace's shared
 //! [`rge_editor_state::Handoff`]:
 //!
 //! - [`InspectorHandoff`] = `Handoff<InspectorSnapshot>` — carries an
@@ -13,6 +14,9 @@
 //! - [`SaveStatusHandoff`] = `Handoff<SaveStatusSnapshot>` — carries a
 //!   [`rge_editor_state::SaveStatusSnapshot`] (open save source file name +
 //!   dirty flag) to the host's bottom status bar.
+//! - [`MenuStateHandoff`] = `Handoff<MenuStateSnapshot>` — carries a
+//!   [`rge_editor_state::MenuStateSnapshot`] (which Play-mode menu items are
+//!   enabled in the current `PlayState`) to the host's Play menu.
 //!
 //! # Why aliases over a shared generic (not three hand-written copies)
 //!
