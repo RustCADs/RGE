@@ -352,7 +352,7 @@ pub struct EguiHost {
 
     /// `Arc<MenuCommandHandoff>` retained by the host so the editor-shell
     /// consumer can drain the menu-dispatched [`Command`]s the File + Edit + Play
-    /// menu bars enqueue (via [`Self::menu_command_handoff`]). Unlike the two handoffs
+    /// + View menu bars enqueue (via [`Self::menu_command_handoff`]). Unlike the two handoffs
     /// above this is a host→shell **FIFO command queue**, not a latest-only
     /// snapshot slot. The editor-shell drains + routes it
     /// (`EditorShell::drain_and_route_menu_commands`) at the top of each frame.
@@ -387,7 +387,7 @@ pub struct EguiHost {
 
     /// The Play menu's resolved `(label, `[`Command`]`)` entries (Play / Pause /
     /// Stop / Step), produced once at construction by [`build_main_menu_entries`]
-    /// (one registry resolves all three points). [`Self::render`]'s Play menu bar iterates
+    /// (one registry resolves all four points). [`Self::render`]'s Play menu bar iterates
     /// this; static, so it never changes after construction. The commands route to
     /// `EditorShell::handle_button` (PIE), not a new action.
     play_menu_entries: Vec<(String, Command)>,
@@ -632,7 +632,7 @@ impl EguiHost {
 
     /// Borrow the shared menu-command handoff (host→shell FIFO).
     ///
-    /// The File + Edit + Play menu bars drawn by [`Self::render`] enqueue a
+    /// The File + Edit + Play + View menu bars drawn by [`Self::render`] enqueue a
     /// [`rge_editor_ui::menus::Command`] when an item is activated; the
     /// editor-shell consumer clones this `Arc` and drains the queue at the top
     /// of each frame (`EditorShell::drain_and_route_menu_commands`), routing
@@ -798,7 +798,7 @@ impl EguiHost {
             .unwrap_or_default();
         // Clone the menu-command FIFO `Arc` BEFORE the `run_ui` borrow (mirrors
         // the `save_status` / `viewport_sink` split-borrows) so the closure owns
-        // its handle. The File + Edit + Play menu bars push onto it; the editor-shell
+        // its handle. The File + Edit + Play + View menu bars push onto it; the editor-shell
         // drains + routes it at the top of render_frame.
         let menu_commands = Arc::clone(&self.menu_command_handoff);
         // Borrow the registry-resolved File + Edit + Play + View entries (disjoint
