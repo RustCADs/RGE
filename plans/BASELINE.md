@@ -558,6 +558,29 @@ Until **at least one** of those fires, treat the reflection substrate as observe
 4. Cross-check the editor's call graph against the `CommandBus::submit` / `Action::apply` / `Action::revert` signatures to determine whether user-visible CAD mutations can flow through the existing bus.
 5. Test inventory across `editor-*` (`#[test]` count + integration vs unit breakdown + workflow coverage).
 
+### 2026-06-04 — File/Edit menu accelerators shown; menu construction extracted to a submodule (#304 + #305)
+
+**Forward-only follow-up (MENU-SHORTCUT-DOC-RECONCILE).** Narrows the prior subsections' "accelerator-table execution/display/conflict population … unbuilt" line: per-item accelerator DISPLAY shipped for File/Edit. Records the two merged PRs that close the menu-deepening thread.
+
+**Now shipped — File/Edit accelerator display (#304, `284998e`, MENU-SHORTCUT-DISPLAY).** File + Edit menu items render their real keyboard accelerator next to the label via egui `shortcut_text`:
+- `crates/editor-egui-host` attaches `MenuEntry::with_shortcut(Shortcut::new(..))` to the 3 File + 2 Edit entries (Open Ctrl+O / Save Ctrl+S / Save-As Ctrl+Shift+S / Undo Ctrl+Z / Redo Ctrl+Y); the projection widened `(label, Command)` → `(label, Option<accelerator-display>, Command)`, sourced straight from each resolved `MenuEntry.shortcut` via `Shortcut::display`. A `menu_item` render helper builds each `egui::Button` + optional `shortcut_text`.
+- Display-only: clicks still dispatch through the host→shell FIFO; no command-execution / keystroke-routing / crate-edge change. Play/View project `None`.
+
+Authority: the shown values mirror the live, executing editor-shell routing (`EditorKeyCommand::from_key_press` + the `Ctrl+O` `handle_open_request` arm), pinned by host tests; the host cannot import editor-shell (reverse edge), so `MenuEntry.shortcut` (editor-ui) is the designated accelerator home and the deferred W08 EXECUTION work unifies the two via the resolved `AcceleratorTable`.
+
+**File/Edit only — Play/View deferred.** Play's only shortcut data is the play-toolbar's ADVISORY `F5/Esc` hints, which don't match the real Space/Escape PIE binds; surfacing them would open the advisory-vs-real accelerator/execution conflict this beat avoids. View ▸ Reset Camera has no keystroke binding.
+
+**Now retired — the split-cap exemption (#305, `892a0ad`, EGUIHOST-MENU-EXTRACTION).** #304's additions re-crossed the §1.3 Rule-3 1000-line cap on `editor-egui-host/src/lib.rs`, so #304 re-added the `// SPLIT-EXEMPTION:` annotation (the same one #301 had retired). #305 then extracted the cohesive menu-construction block (the four extension-point consts + `build_main_menu_entries` + `play_item_enabled` + `menu_item`) VERBATIM into a new `menu.rs` submodule — behaviour-identical (render path + every test assertion byte-unchanged) — dropping lib.rs 1062 → 836 lines and RETIRING the annotation (0 markers crate-wide). Mirrors EGUIHOST-TEST-EXTRACTION (#301), which split the inline tests out as its own dispatch.
+
+**Still open — explicitly NOT closed here:**
+- accelerator-table EXECUTION + conflict population (this beat ships DISPLAY only, and only for File/Edit; Play/View accelerator display is deferred with the W08 execution work).
+- the W08 registry-driven dynamic predicates + per-frame re-resolve; dynamic toggle LABELS (Play⇄Pause, camera-state-aware View).
+- plugin menu entries + generalized registry/accelerator-driven command execution (clicks still flow through the host→shell FIFO).
+
+**Historical preservation.** The PLAYMENU-DYNAMIC / A4 / A3 / A2 / A1 subsections below and all earlier dated entries are preserved byte-identical; their "accelerator-table execution/display/conflict … unbuilt" lines are narrowed forward by this subsection (File/Edit display shipped), not rewritten in place. (The A4 subsection's flagged EGUIHOST-TEST-EXTRACTION follow-up landed as #301; the exemption it + #304 carried is now fully retired by #305.)
+
+**Scope:** docs only (`Status.md` + `HANDOFF.md` + `plans/BASELINE.md` + `change.md`); no Rust source-logic / test / Cargo change (the menu / accelerator rustdoc was made current inside #304 + #305 themselves).
+
 ### 2026-06-03 — Play-menu items now dynamically enabled per live PlayState (#302)
 
 **Forward-only follow-up (PLAYMENU-DYNAMIC-DOC-RECONCILE).** Narrows the A4 subsection below, whose "dynamic predicates, and per-frame re-resolve … remain unbuilt" line is now partly superseded: per-frame Play-item ENABLEMENT shipped. #302 (`9960b30`, PLAYMENU-DYNAMIC-ENABLE) is the first menu-deepening beat past breadth.
