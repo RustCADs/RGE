@@ -77,8 +77,9 @@ const MENU_COMMAND_QUEUE_CAP: usize = 64;
 
 /// Host→shell FIFO channel for menu-dispatched [`Command`]s.
 ///
-/// Unlike [`InspectorHandoff`] / [`SaveStatusHandoff`] (latest-only
-/// [`Handoff`]`<T>` slots the host READS), menu clicks are **events**: each is a
+/// Unlike [`InspectorHandoff`] / [`SaveStatusHandoff`] / [`MenuStateHandoff`]
+/// (latest-only [`Handoff`]`<T>` slots the host READS), menu clicks are
+/// **events**: each is a
 /// distinct user intent that must NOT overwrite an earlier one. So this is a
 /// deliberately different shape — a bounded FIFO `VecDeque<Command>` behind a
 /// single [`Mutex`] (both [`Self::push`] and [`Self::drain`] take the same
