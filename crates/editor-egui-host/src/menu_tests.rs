@@ -6,7 +6,7 @@
 //!
 //! Extracted verbatim from the inline `#[cfg(test)] mod menu_tests` in
 //! `lib.rs` (EGUIHOST-TEST-EXTRACTION) so `lib.rs` drops back under the
-//! §1.3 Rule 3 1000-line split cap and retires its `// SPLIT-EXEMPTION:`
+//! §1.3 Rule 3 1000-line split cap and retires its prior line-cap split
 //! annotation. Behaviour-identical — same module path (`super` is the crate
 //! root either way), same tests.
 
