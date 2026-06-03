@@ -20,8 +20,8 @@
 //!
 //! The crate also hosts a few **dep-neutral shared types** that are explicitly
 //! NOT coordination categories — the read-only observation aggregators
-//! ([`InspectorSnapshot`] / [`SaveStatusSnapshot`]) and the shared latest-only
-//! [`Handoff`] primitive. They live here because both `editor-shell` and
+//! ([`InspectorSnapshot`] / [`SaveStatusSnapshot`] / [`MenuStateSnapshot`]) and
+//! the shared latest-only [`Handoff`] primitive. They live here because both `editor-shell` and
 //! `editor-egui-host` depend on `editor-state` and neither may depend on the
 //! other; housing the shared type here avoids a dependency cycle. They do not
 //! count against the §0.6 five-category freeze.

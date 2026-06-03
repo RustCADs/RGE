@@ -88,9 +88,11 @@
 //!   the constructor consumes are produced by editor-shell's `resumed`
 //!   callback but passed in as borrowed primitives).
 //! - `rge-editor-state` — for [`rge_editor_state::InspectorSnapshot`]
-//!   inside [`handoff::InspectorHandoff`] and the tab body, and
+//!   inside [`handoff::InspectorHandoff`] and the tab body,
 //!   [`rge_editor_state::SaveStatusSnapshot`] inside
-//!   [`handoff::SaveStatusHandoff`].
+//!   [`handoff::SaveStatusHandoff`], and
+//!   [`rge_editor_state::MenuStateSnapshot`] inside
+//!   [`handoff::MenuStateHandoff`].
 //! - `rge-editor-ui` — for [`rge_editor_ui::widgets::inspector::ui`]
 //!   which the [`tabs::EditorTabViewer::ui`] dispatch calls when an
 //!   Inspector tab renders, and [`rge_editor_ui::widgets::save_status::ui`]
