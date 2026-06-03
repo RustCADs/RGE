@@ -2,10 +2,10 @@
 
 | Companion to | PLAN.md §1.3 (Rule 3 — line cap, no utils) + §1.6.4 (one-import-path-per-format) + §1.8 (forbidden-dep DAG) + §1.13 (failure-class taxonomy) + §1.14 (graph-foundation substrate) + §1.15 (editor-state coordination-not-authority) + §6.16 (Command Bus); IMPLEMENTATION.md Phase 0.2 (architecture-lints DONE) |
 |---|---|
-| Status | Active v1; the 9 enforcement lints all PASS (per Status.md 2026-05-09 architecture lint matrix) + the supplementary `snapshot-participate` (warning-level, never fails CI); 28 entries in `exemptions.toml` (all failure-class rollout-debt; no graph-foundation or reserved entries); 112 tests across `tools/architecture-lints/{src,tests}/` (43 inline + 69 fixture-based integration); CI-wired via `.github/workflows/architecture.yml`; the workspace's only architectural-correctness gate today |
+| Status | Active v1; the 9 enforcement lints all PASS (per Status.md 2026-05-09 architecture lint matrix) + the supplementary `snapshot-participate` (warning-level, never fails CI); 28 entries in `exemptions.toml` (all failure-class rollout-debt; no graph-foundation or reserved entries); 121 tests across `tools/architecture-lints/{src,tests}/` (43 inline + 78 fixture-based integration); CI-wired via `.github/workflows/architecture.yml`; the workspace's only architectural-correctness gate today |
 | Audience | Subsystem authors landing first real implementation (must not break a lint); reviewers verifying which rule a violation maps to; orchestrator authors adding a new lint; rollout-debt tracker authors clearing exemptions |
 | Sibling doc | `GRAPH_FOUNDATION.md` — substrate behind the graph-foundation lint Check 2; `RECOVERY_MODEL.md` — the failure-class lint's enforcement target; `EXECUTION_DOMAINS.md` — kernel-isolation rule's domain context; `EDITOR_STATE_MODEL.md` — editor-state-ownership rule's owner |
-| Reference impls | `tools/architecture-lints/src/main.rs` (108L; CLI dispatch) · `tools/architecture-lints/src/common.rs` (250L; `Violation` / `LintReport` / `Exemptions` / cargo-metadata helpers) · 10 lint implementation modules (9 enforcement + the supplementary `snapshot-participate`) · 10 fixture-based integration test files at `tools/architecture-lints/tests/` · `tools/architecture-lints/exemptions.toml` (28 entries — all failure-class rollout-debt; no graph-foundation or reserved) · `.github/workflows/architecture.yml` (CI invocation) |
+| Reference impls | `tools/architecture-lints/src/main.rs` (121L; CLI dispatch) · `tools/architecture-lints/src/common.rs` (250L; `Violation` / `LintReport` / `Exemptions` / cargo-metadata helpers) · 10 lint implementation modules (9 enforcement + the supplementary `snapshot-participate`) · 10 fixture-based integration test files at `tools/architecture-lints/tests/` · `tools/architecture-lints/exemptions.toml` (28 entries — all failure-class rollout-debt; no graph-foundation or reserved) · `.github/workflows/architecture.yml` (CI invocation) |
 
 > Convention defined by `PLUGIN_HOST_PATTERNS.md` §header. This doc is the meta-reference for the architecture-enforcement suite — 9 enforcement lints plus the supplementary warning-level `snapshot-participate`. Each lint's specific rationale is in its module-doc; this doc covers the suite-level shape, the exemptions-toml registry, the CI integration, and lint-author guidance for adding a new lint.
 
@@ -17,7 +17,7 @@ PLAN's architectural rules are spread across §1.3, §1.6.4, §1.8, §1.13, §1.
 
 - **One CLI binary, 9 enforcement lints + 1 supplementary, single PASS/FAIL gate.** `cargo run -p rge-tool-architecture-lints -- all` runs every lint and exits non-zero if any *enforcement* lint failed (the supplementary `snapshot-participate` always exits 0). CI's `.github/workflows/architecture.yml` wires this exactly.
 - **One exemptions registry, code-review-trailed.** `tools/architecture-lints/exemptions.toml` is the only place to suppress a lint against a specific file path; adding an entry requires explicit reason field + follow-up plan. No inline `#[allow(...)]` annotations scattered across the workspace.
-- **Per-lint fixture-based integration tests.** Every lint has its own `tests/<lint>_test.rs` exercising synthetic fixtures against the lint's algorithm; `tests/fixtures/forbidden_dep/` holds workspace-shaped fixture trees. Test count today: 107 across all lints.
+- **Per-lint fixture-based integration tests.** Every lint has its own `tests/<lint>_test.rs` exercising synthetic fixtures against the lint's algorithm; `tests/fixtures/forbidden_dep/` holds workspace-shaped fixture trees. Integration-test count today: 78 across all lints.
 
 ## 2. The 10 lints — what each enforces
 
@@ -63,7 +63,7 @@ Two checks per `graph_foundation.rs` lines 1-24:
 
 `exemptions.toml` currently carries **no** `graph-foundation` exemption (all 28 entries are `failure-class` rollout-debt). A prior false-positive exemption for `crates/editor-ui/src/layout/node.rs` — editor-ui's `LayoutNodeId` is its own UI-tree-node identifier, semantically unrelated to graph-foundation's `NodeId` — is no longer present in the registry.
 
-### `editor-state-ownership` (`editor_state_ownership.rs`, 353L, 0 inline tests; 7 integration tests)
+### `editor-state-ownership` (`editor_state_ownership.rs`, 500L, 0 inline tests; 16 integration tests)
 
 Two-part per the module-doc lines 1-22:
 
@@ -93,7 +93,7 @@ The lint that closes the audit-1 audit-debt registry per `RECOVERY_MODEL.md` §5
 
 Closed set: `recoverable` / `snapshot-recoverable` / `plugin-fatal` / `session-fatal` / `kernel-fatal` (case-sensitive). Multi-value `//! Failure class: recoverable, snapshot-recoverable` is supported.
 
-### `snapshot-participate` (`snapshot_participate.rs`, 378L, 5 inline tests; 5 integration tests) — supplementary / warning-level
+### `snapshot-participate` (`snapshot_participate.rs`, 377L, 5 inline tests; 5 integration tests) — supplementary / warning-level
 
 NOT an enforcement lint. For every Tier-2 crate in the closed `STATEFUL_TIER2_CRATES` list (`cad-core`, `cad-projection`, `physics` + the forward-compat `particles` / `sculpt`), checks whether its `src/` tree contains an `impl SnapshotParticipate` (string match — the trait name is unique to this codebase, so no `syn` walk is needed). Emits an `info:` line per crate (impl present → stdout; missing → stderr) plus a one-line coverage summary, then reports PASS **regardless** — it NEVER pushes a `Violation`, so its exit code is always 0 and it cannot fail the `all` aggregate. Scaffolds the PLAN §13.2 v1.0 gate ("all stateful Tier-2 has `SnapshotParticipate`") as coverage tracking without blocking inter-Phase landings; a future dispatch flips it to error-level by pushing a `Violation` for the missing-impl case (per the `snapshot_participate.rs` module-doc "Why warning-level only").
 
@@ -130,7 +130,7 @@ The exemption removal is part of the same dispatch as the implementation; the li
 
 ## 5. Test fixtures pattern
 
-Every lint has unit-fixture tests + workspace-regression tests; total **112 tests** across `tools/architecture-lints/{src,tests}/`:
+Every lint has unit-fixture tests + workspace-regression tests; total **121 tests** across `tools/architecture-lints/{src,tests}/`:
 
 ### Inline tests in `src/` (43 total)
 
@@ -139,12 +139,12 @@ Every lint has unit-fixture tests + workspace-regression tests; total **112 test
 - `failure_class.rs`: 5 tests (parse-extra-whitespace / wrong-case-keyword-not-parsed / multi-value-line / closed-set / lint-name-stable).
 - `snapshot_participate.rs`: 5 tests (bare-name-prefix-strip / list-contains-known-impls / list-excludes-audited-removals / list-sorted / nonexistent-dir-false).
 
-### Integration tests in `tests/` (69 total; one file per lint + shared fixtures)
+### Integration tests in `tests/` (78 total; one file per lint + shared fixtures)
 
-- `command_bus_test.rs` (7), `editor_state_ownership_test.rs` (7), `failure_class_test.rs` (7), `forbidden_dep_test.rs` (6), `graph_foundation_test.rs` (9), `kernel_isolation_test.rs` (8), `no_utils_test.rs` (7), `projection_modules_test.rs` (8), `snapshot_participate_test.rs` (5), `split_exemption_test.rs` (5).
+- `command_bus_test.rs` (7), `editor_state_ownership_test.rs` (16), `failure_class_test.rs` (7), `forbidden_dep_test.rs` (6), `graph_foundation_test.rs` (9), `kernel_isolation_test.rs` (8), `no_utils_test.rs` (7), `projection_modules_test.rs` (8), `snapshot_participate_test.rs` (5), `split_exemption_test.rs` (5).
 - `tests/fixtures/forbidden_dep/` — workspace-shaped fixture tree exercising the dep-graph traversal against synthetic Tier-1 / Tier-2 crates.
 
-The literal `#[test]` count is **112** today — 43 inline (`src/`) + 69 integration (`tests/`) — after the supplementary `snapshot-participate` lint added 5 inline + 5 integration tests. (Status.md's architecture-lint test tally is counted separately and may lag this figure until its next refresh.)
+The literal `#[test]` count is **121** today — 43 inline (`src/`) + 78 integration (`tests/`) — the supplementary `snapshot-participate` lint contributed 5 inline + 5 integration, and `editor-state-ownership`'s integration suite has since grown to 16 (from 7). (Status.md's architecture-lint test tally is counted separately and may lag this figure until its next refresh.)
 
 The fixture pattern: write a synthetic `.rs` file containing the rule-violating shape, parse it into the lint's algorithm, assert the algorithm reports the expected `Violation` (file path, line, message). Each lint test exercises the positive-case (rule violated → violation reported) AND the negative-case (rule satisfied → no violation reported); the `forbidden_dep` lint additionally exercises `tests/fixtures/forbidden_dep/` synthetic workspace trees against `cargo_metadata::MetadataCommand`.
 
@@ -225,7 +225,7 @@ The shared-helpers pattern in `common.rs` (lines 1-250) is the substrate every l
 
 ## 11. Source / spec inconsistencies
 
-> **Note (authoring-time reconciliation).** The bullets below reconcile the original commissioning brief against source-truth *as this doc was first authored*. The supplementary `snapshot-participate` lint and its tests post-date that reconciliation — see §1 / §2 / §5 for the current **10-lint** (9 enforcement + 1 supplementary) and **107-test** figures.
+> **Note (authoring-time reconciliation).** The bullets below reconcile the original commissioning brief against source-truth *as this doc was first authored*. The supplementary `snapshot-participate` lint and its tests post-date that reconciliation — see §1 / §2 / §5 for the current **10-lint** (9 enforcement + 1 supplementary) and **121-test** figures.
 
 - **Brief stated "9 lint impls" + "exemptions.toml" + "1 substantive + 58 rollout-debt remaining"**; source-truth via `grep -c '\[\[exemption\]\]'` on the exemptions TOML file at that audit: **60** total entries (1 graph-foundation FP + 58 failure-class rollout-debt + 1 reserved). The brief's "1 substantive + 58" lined up with the 1 graph-foundation false-positive + 58 failure-class rollout-debt; the 1 reserved was implementation-detail capacity. (Dated finding — the registry has **since been reduced to 28 entries, all `failure-class`**: the graph-foundation false-positive and the reserved slot are gone and 30 more failure-class crates cleared as they got first real implementations. The current authoritative count is in §1 and §4; use anchored `grep -c '^\[\[exemption\]\]'` — the unanchored form over-counts by matching the schema comment.)
 - **Brief stated "every lint has unit-fixture tests + workspace-regression tests; total 97 tests in tools/architecture-lints/"**; source-truth via `grep -c '#\[test\]'`: 33 inline tests across `src/` + 64 integration tests across `tests/` = 97 total. Status.md line 51 reports `rge-tool-architecture-lints | 69` — the discrepancy between 97 and 69 is *non-test* tests (the 33 inline tests are inside `mod tests` blocks but several use `#[allow(clippy::unwrap_used)]` shapes that the test-counter doesn't always pick up cleanly). The 97 figure is the literal `#[test]` count; the doc reports both for honesty.
@@ -256,12 +256,12 @@ The shared-helpers pattern in `common.rs` (lines 1-250) is the substrate every l
 - **`tools/architecture-lints/src/split_exemption.rs`** — 1000-line cap + `// SPLIT-EXEMPTION:` annotation requirement (168L, 6 inline tests).
 - **`tools/architecture-lints/src/no_utils.rs`** — utils/helpers filename rejection (46L; smallest lint).
 - **`tools/architecture-lints/src/graph_foundation.rs`** — Check 1 forbidden-name redefinition + Check 2 adjacency-map reinvention (316L).
-- **`tools/architecture-lints/src/editor_state_ownership.rs`** — Part A type-ownership + Part B coordination-not-authority (353L).
+- **`tools/architecture-lints/src/editor_state_ownership.rs`** — Part A type-ownership + Part B coordination-not-authority (500L).
 - **`tools/architecture-lints/src/command_bus.rs`** — `crates/**` mutation-API import restriction (318L).
 - **`tools/architecture-lints/src/projection_modules.rs`** — cad-projection structural-↛-runtime/editor split (308L).
 - **`tools/architecture-lints/src/kernel_isolation.rs`** — one-import-path-per-format (160L; misleadingly-named).
 - **`tools/architecture-lints/src/failure_class.rs`** — `//! Failure class: <kind>` declaration enforcement (239L, 5 inline tests).
-- **`tools/architecture-lints/src/snapshot_participate.rs`** — supplementary warning-level §13.2 `SnapshotParticipate` coverage scaffold (378L, 5 inline tests; never fails CI).
+- **`tools/architecture-lints/src/snapshot_participate.rs`** — supplementary warning-level §13.2 `SnapshotParticipate` coverage scaffold (377L, 5 inline tests; never fails CI).
 - **`tools/architecture-lints/exemptions.toml`** — the 28-entry exemption registry (all failure-class rollout-debt; no graph-foundation or reserved entries).
 - **`tools/architecture-lints/tests/`** — 10 per-lint integration test files + `fixtures/forbidden_dep/` synthetic workspace trees.
 - **`.github/workflows/architecture.yml`** — CI invocation of `cargo run -p rge-tool-architecture-lints -- all`.
