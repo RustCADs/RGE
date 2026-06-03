@@ -42,7 +42,7 @@ pub use face_selection::{FaceSelection, FaceSelectionSet};
 // Shared latest-only snapshot handoff primitive (dep-neutral infrastructure,
 // not a 6th coordination category; see the module-level doc comment). The
 // editor-shell `RenderHandoff` and editor-egui-host `InspectorHandoff` /
-// `SaveStatusHandoff` are type aliases over this.
+// `SaveStatusHandoff` / `MenuStateHandoff` are type aliases over this.
 pub use handoff::Handoff;
 pub use hover::{Hover, PanelId};
 // Phase 9 — read-only observation aggregator (not a 6th coordination
