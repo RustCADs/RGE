@@ -6,12 +6,13 @@
 //! each resolved [`Command`] round-trips through
 //! the [`super::MenuCommandHandoff`] FIFO.
 //!
-//! Extracted verbatim from the inline `#[cfg(test)] mod menu_tests` in
-//! `lib.rs` (EGUIHOST-TEST-EXTRACTION) — at the time, dropping `lib.rs` back
-//! under the §1.3 Rule 3 1000-line split cap. (Later feature growth re-crossed
-//! the cap; `lib.rs` now carries a split-cap exemption — see its header.)
-//! Behaviour-identical — same module path (`super` is the crate root either way),
-//! same tests.
+//! Originally extracted verbatim from the inline `#[cfg(test)] mod menu_tests`
+//! in `lib.rs` (EGUIHOST-TEST-EXTRACTION) — at the time a behaviour-identical
+//! move (same module path; `super` is the crate root either way) that dropped
+//! `lib.rs` back under the §1.3 Rule 3 1000-line split cap. (Later feature
+//! growth re-crossed the cap; `lib.rs` now carries a split-cap exemption — see
+//! its header.) MENU-SHORTCUT-DISPLAY subsequently widened these tests to pin
+//! the File/Edit accelerator display + the Play/View deferral.
 
 use rge_editor_ui::menus::Command;
 
