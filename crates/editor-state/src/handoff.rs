@@ -13,7 +13,8 @@
 //! coordination category (the §0.6 freeze gates those at 5 — Selection, Hover,
 //! ActiveTool, ModalState, DragDrop — and this is not one of them). It lives in
 //! `editor-state` for the **same dep-neutrality reason** as the observation
-//! aggregators [`crate::InspectorSnapshot`] / [`crate::SaveStatusSnapshot`]:
+//! aggregators [`crate::InspectorSnapshot`] / [`crate::SaveStatusSnapshot`] /
+//! [`crate::MenuStateSnapshot`]:
 //! both `editor-shell` and `editor-egui-host` already depend on `editor-state`,
 //! and neither may depend on the other (that would cycle), so a type both need
 //! to share is housed here. The `editor-state-ownership` lint does not list

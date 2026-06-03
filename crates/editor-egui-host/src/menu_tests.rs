@@ -128,3 +128,48 @@ fn view_menu_entries_round_trip_through_the_handoff() {
         "each resolved View item enqueues its Command; they drain FIFO"
     );
 }
+
+#[test]
+fn play_item_enabled_routes_each_command_to_its_own_flag() {
+    use rge_editor_state::MenuStateSnapshot;
+
+    use super::play_item_enabled;
+
+    // Each snapshot enables exactly ONE field; assert only the matching command
+    // is enabled — pins the host routing 1:1 (catches any transposed field).
+    let only_start = MenuStateSnapshot {
+        play_can_start: true,
+        ..MenuStateSnapshot::default()
+    };
+    assert!(play_item_enabled(&Command::PlayStart, &only_start));
+    assert!(!play_item_enabled(&Command::PlayPause, &only_start));
+    assert!(!play_item_enabled(&Command::PlayStop, &only_start));
+    assert!(!play_item_enabled(&Command::PlayStep, &only_start));
+
+    let only_pause = MenuStateSnapshot {
+        play_can_pause: true,
+        ..MenuStateSnapshot::default()
+    };
+    assert!(play_item_enabled(&Command::PlayPause, &only_pause));
+    assert!(!play_item_enabled(&Command::PlayStart, &only_pause));
+
+    let only_stop = MenuStateSnapshot {
+        play_can_stop: true,
+        ..MenuStateSnapshot::default()
+    };
+    assert!(play_item_enabled(&Command::PlayStop, &only_stop));
+    assert!(!play_item_enabled(&Command::PlayStart, &only_stop));
+
+    let only_step = MenuStateSnapshot {
+        play_can_step: true,
+        ..MenuStateSnapshot::default()
+    };
+    assert!(play_item_enabled(&Command::PlayStep, &only_step));
+    assert!(!play_item_enabled(&Command::PlayStart, &only_step));
+
+    // Non-Play commands default to enabled (they never appear in the Play menu).
+    assert!(play_item_enabled(
+        &Command::OpenFile,
+        &MenuStateSnapshot::default()
+    ));
+}

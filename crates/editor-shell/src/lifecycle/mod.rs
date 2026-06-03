@@ -183,7 +183,9 @@ use rge_brep_render::RenderMesh;
 use rge_cad_core::CadGraph;
 use rge_cad_projection::{BRepHandle, CadProjection};
 use rge_editor_actions::CommandBus;
-use rge_editor_egui_host::{EguiHost, InspectorHandoff, MenuCommandHandoff, SaveStatusHandoff};
+use rge_editor_egui_host::{
+    EguiHost, InspectorHandoff, MenuCommandHandoff, MenuStateHandoff, SaveStatusHandoff,
+};
 use rge_gfx::{
     Camera as GfxCamera, DirectionalLight, GfxContext, IndexBuffer, LitMesh, LitMeshPipeline,
     Material, SurfaceContext,
@@ -661,10 +663,20 @@ pub struct EditorShell {
     // publish borrow, independent of the `&mut self.egui_host` render borrow.
     pub(crate) save_status_handoff: Option<Arc<SaveStatusHandoff>>,
 
+    // ---- Menu-state snapshot (PLAYMENU-DYNAMIC-ENABLE) ----------------------
+    //
+    // Cloned `Arc` to the host's [`MenuStateHandoff`] — a latest-only snapshot
+    // sibling to `save_status_handoff`. Set in `init_render_state`; `None` for
+    // shells that never trigger render init. The same per-frame publish path
+    // publishes a fresh [`rge_editor_state::MenuStateSnapshot`] (Play-item
+    // enablement derived from the live `PlayState`) BEFORE the egui pass, so the
+    // host's Play menu greys out invalid items this frame.
+    pub(crate) menu_state_handoff: Option<Arc<MenuStateHandoff>>,
+
     // ---- Menu command FIFO (MENUBAR-FILE-WIRING) ----------------------------
     //
     // Cloned `Arc` to the host's [`MenuCommandHandoff`] — a host→shell FIFO, NOT
-    // a latest-only snapshot like the two handoffs above. Set in
+    // a latest-only snapshot like the three handoffs above. Set in
     // [`crate::render_path::EditorShell::init_render_state`] alongside them;
     // `None` for shells that never trigger render init. Drained at the TOP of
     // each `render_frame` (before this frame's render borrows) by
@@ -730,6 +742,7 @@ impl EditorShell {
             egui_host: None,
             inspector_handoff: None,
             save_status_handoff: None,
+            menu_state_handoff: None,
             menu_command_handoff: None,
             prebuilt_render_meshes: Vec::new(),
             prebuilt_render_base_colors: Vec::new(),
@@ -898,6 +911,7 @@ impl EditorShell {
             egui_host: None,
             inspector_handoff: None,
             save_status_handoff: None,
+            menu_state_handoff: None,
             menu_command_handoff: None,
             prebuilt_render_meshes: Vec::new(),
             prebuilt_render_base_colors: Vec::new(),
@@ -1157,6 +1171,7 @@ impl EditorShell {
             egui_host: None,
             inspector_handoff: None,
             save_status_handoff: None,
+            menu_state_handoff: None,
             menu_command_handoff: None,
             prebuilt_render_meshes: meshes,
             prebuilt_render_base_colors: base_colors,
@@ -1509,6 +1524,22 @@ impl EditorShell {
                 .and_then(SaveSource::display_name)
                 .map(std::string::ToString::to_string),
             is_dirty: self.command_bus().is_dirty(),
+        }
+    }
+
+    /// The Play-menu enablement snapshot for this frame — which Play-mode menu
+    /// items are valid in the current `PlayState`. Pure read, zero side effects;
+    /// mirrors [`Self::save_status_snapshot`]. Each flag comes straight from the
+    /// canonical `PlayState::can_*` query (the host re-encodes no validity rule).
+    /// Produced fresh per frame and published through `menu_state_handoff` BEFORE
+    /// the egui pass.
+    #[must_use]
+    pub fn menu_state_snapshot(&self) -> rge_editor_state::MenuStateSnapshot {
+        rge_editor_state::MenuStateSnapshot {
+            play_can_start: self.state.can_play(),
+            play_can_pause: self.state.can_pause(),
+            play_can_stop: self.state.can_stop(),
+            play_can_step: self.state.can_step(),
         }
     }
 

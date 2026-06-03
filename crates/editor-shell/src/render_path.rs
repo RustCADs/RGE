@@ -208,7 +208,7 @@ impl EditorShell {
     /// 1. `winit::Window` → `Arc<Window>`
     /// 2. `GfxContext::new_headless()` (instance / adapter / device / queue)
     /// 3. `SurfaceContext::new(&ctx, Arc<Window>)` (configure + surface)
-    /// 4. `EguiHost::new(...)` + `InspectorHandoff` + `SaveStatusHandoff` clones
+    /// 4. `EguiHost::new(...)` + `InspectorHandoff` + `SaveStatusHandoff` + `MenuStateHandoff` clones
     ///
     /// **Phase 2 (gated on `has_cad_scene || has_prebuilt_mesh`)** —
     /// delegates to [`Self::init_render_state_post_surface`]:
@@ -235,8 +235,8 @@ impl EditorShell {
         // Phase 1 runs UNCONDITIONALLY when production winit `resumed`
         // invokes this method. It constructs the winit window,
         // [`GfxContext`], [`SurfaceContext`], [`EguiHost`], and the
-        // [`InspectorHandoff`] + [`SaveStatusHandoff`] clones so a
-        // world-only `--scene` launch (no CAD scene, no prebuilt render
+        // [`InspectorHandoff`] + [`SaveStatusHandoff`] + [`MenuStateHandoff`]
+        // clones so a world-only `--scene` launch (no CAD scene, no prebuilt render
         // mesh) still produces a visible editor window with the dock +
         // Inspector tab + bottom save-status bar chrome painted via the
         // egui-only branch in [`Self::render_frame`].
@@ -313,15 +313,18 @@ impl EditorShell {
         // (`render_path::build_lit_mesh_compiled_frame_graph` uses
         // `sample_count = 1`).
         //
-        // After the host is constructed, clone its two handoffs into
-        // `self.inspector_handoff` + `self.save_status_handoff` (Dispatch C
-        // for the inspector; EDITOR-SAVE-STATUS-INDICATOR for the save-status
-        // bar) so the per-frame publish path (in [`Self::render_frame`] below)
-        // can call `handoff.publish(Arc::new(self.inspector_snapshot()))` and
-        // `handoff.publish(Arc::new(self.save_status_snapshot()))` without
+        // After the host is constructed, clone its three latest-only handoffs
+        // into `self.inspector_handoff` + `self.save_status_handoff` +
+        // `self.menu_state_handoff` (Dispatch C for the inspector;
+        // EDITOR-SAVE-STATUS-INDICATOR for the save-status bar;
+        // PLAYMENU-DYNAMIC-ENABLE for the menu-state) so the per-frame publish
+        // path (in [`Self::render_frame`] below) can call
+        // `handoff.publish(Arc::new(self.inspector_snapshot()))`,
+        // `handoff.publish(Arc::new(self.save_status_snapshot()))`, and
+        // `handoff.publish(Arc::new(self.menu_state_snapshot()))` without
         // re-borrowing `self.egui_host`. Each `self.*_handoff` points at the
-        // same slot as the host's consumer (the Inspector tab body / the
-        // bottom status bar) — the publish/acquire pairs are the live wires.
+        // same slot as the host's consumer (the Inspector tab body / the bottom
+        // status bar / the Play menu) — the publish/acquire pairs are the live wires.
         if let (Some(gfx_ctx), Some(surface_ctx), Some(window)) = (
             self.gfx_ctx.as_ref(),
             self.surface_ctx.as_ref(),
@@ -338,6 +341,7 @@ impl EditorShell {
             );
             self.inspector_handoff = Some(Arc::clone(host.inspector_handoff()));
             self.save_status_handoff = Some(Arc::clone(host.save_status_handoff()));
+            self.menu_state_handoff = Some(Arc::clone(host.menu_state_handoff()));
             self.menu_command_handoff = Some(Arc::clone(host.menu_command_handoff()));
             self.egui_host = Some(host);
         }
@@ -579,6 +583,14 @@ impl EditorShell {
             let snapshot = self.save_status_snapshot();
             handoff.publish(Arc::new(snapshot));
         }
+        // PLAYMENU-DYNAMIC-ENABLE — sibling publish of the Play-item enablement
+        // snapshot through the held `Arc<MenuStateHandoff>`, so the host greys out
+        // invalid Play items this frame. Same `&self`-only borrow, disjoint from
+        // the host's `&mut self.egui_host` render borrow below.
+        if let Some(handoff) = self.menu_state_handoff.as_ref() {
+            let snapshot = self.menu_state_snapshot();
+            handoff.publish(Arc::new(snapshot));
+        }
 
         // Phase F.2 — optional egui pass into the same encoder.
         // `LoadOp::Load` preserves the cuboid pixels; egui paints on
@@ -722,6 +734,14 @@ impl EditorShell {
         // has not run (pre-resumed shells, headless tests).
         if let Some(handoff) = self.save_status_handoff.as_ref() {
             let snapshot = self.save_status_snapshot();
+            handoff.publish(Arc::new(snapshot));
+        }
+        // PLAYMENU-DYNAMIC-ENABLE — sibling publish of the Play-item enablement
+        // snapshot through the held `Arc<MenuStateHandoff>`, so the host greys out
+        // invalid Play items this frame. Same `&self`-only borrow, disjoint from
+        // the host's `&mut self.egui_host` render borrow below.
+        if let Some(handoff) = self.menu_state_handoff.as_ref() {
+            let snapshot = self.menu_state_snapshot();
             handoff.publish(Arc::new(snapshot));
         }
 

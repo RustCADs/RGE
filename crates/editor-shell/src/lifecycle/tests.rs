@@ -57,6 +57,37 @@ fn fresh_shell_is_editing() {
 }
 
 #[test]
+fn menu_state_snapshot_tracks_play_state() {
+    // The Play-menu enablement snapshot mirrors the canonical PlayState::can_*
+    // for the shell's current state (the host greys items out from this). Each
+    // state has a distinct enablement pattern, so this also pins the 1:1 mapping.
+    let mut s = EditorShell::new();
+
+    // Editing: only Play (start) is valid.
+    let snap = s.menu_state_snapshot();
+    assert!(snap.play_can_start);
+    assert!(!snap.play_can_pause);
+    assert!(!snap.play_can_stop);
+    assert!(!snap.play_can_step);
+
+    // Playing: Pause + Stop valid; Play (already playing) + Step invalid.
+    s.handle_button(ToolbarButtonId::Play).unwrap();
+    let snap = s.menu_state_snapshot();
+    assert!(!snap.play_can_start);
+    assert!(snap.play_can_pause);
+    assert!(snap.play_can_stop);
+    assert!(!snap.play_can_step);
+
+    // Paused: all four valid (Play = resume, Pause idempotent, Stop, Step).
+    s.handle_button(ToolbarButtonId::Pause).unwrap();
+    let snap = s.menu_state_snapshot();
+    assert!(snap.play_can_start);
+    assert!(snap.play_can_pause);
+    assert!(snap.play_can_stop);
+    assert!(snap.play_can_step);
+}
+
+#[test]
 fn play_button_captures_snapshot() {
     let mut s = EditorShell::new();
     build_scene(&mut s, 5);
