@@ -53,26 +53,22 @@ use crate::time_scale::TimeScale;
 // EditorKeyCommand
 // ---------------------------------------------------------------------------
 
-/// Editor-side keyboard command bound to the Command Bus.
+/// Editor-side keyboard command with no canonical-menu home.
 ///
-/// The set is intentionally minimal — only the three undo/redo/save bindings
-/// the Phase 9 keyboard → CommandBus integration dispatch ships. Future
-/// editor keybinds (Play/Stop, selection clear, tool switch) extend this enum
-/// rather than growing parallel command channels.
+/// Post-W08.3 the File/Edit accelerators (`Ctrl+O` / `Ctrl+S` / `Ctrl+Shift+S` /
+/// `Ctrl+Z` / `Ctrl+Y`) are resolved through the canonical menu
+/// (`default_editor_menu` → `ResolveResult::command_for_shortcut` →
+/// [`EditorShell::route_menu_command`]); W08.4 retired their `EditorKeyCommand`
+/// mirror so those keystroke→command literals live ONLY in the menu. What remains
+/// here is the execution-only time-scale set (`Ctrl+2` / `Ctrl+0` / `Ctrl+4`) —
+/// keybinds the menu intentionally does NOT carry, so they are not duplicated.
+/// Future menu-less editor keybinds extend this enum rather than growing parallel
+/// command channels.
 ///
 /// Mapping from physical keys is performed by [`Self::from_key_press`]; the
-/// dispatch into the bus by [`EditorShell::handle_key_command`].
+/// dispatch into the slider path by [`EditorShell::handle_key_command`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EditorKeyCommand {
-    /// `Ctrl+Z` — revert the most recent action on the Command Bus.
-    Undo,
-    /// `Ctrl+Y` — re-apply the next action on the Command Bus.
-    Redo,
-    /// `Ctrl+S` — Save: write the live `World` to disk (the open `.rge-scene`
-    /// or `.rge-project`) via [`EditorShell::handle_save_request`], then mark
-    /// the Command-Bus saved point on success (SCENE-SAVE-WIRING). With no save
-    /// source open yet it falls back to a Save-As dialog.
-    Save,
     /// `Ctrl+2` — set the [`TimeScale`] resource to 2.0 (double speed) via
     /// the existing [`EditorShell::set_time_scale`] → [`SetTimeScale`] →
     /// [`rge_editor_actions::CommandBus::submit`] path. Reuses the
@@ -93,12 +89,6 @@ pub enum EditorKeyCommand {
     /// repeated Ctrl+4 while already at [`TimeScale::MAX`] grows neither the
     /// bus stack, the dirty flag, nor the editor-shell audit ledger.
     SetTimeScaleMaxFastForward,
-    /// `Ctrl+Shift+S` — Save-As to a NEW `.rge-project` tree via
-    /// [`EditorShell::handle_save_as_new_project_request`]: prompt for a target
-    /// directory, create a fresh project tree there, adopt it as the
-    /// `SaveSource::Project` save source, and mark saved on success. Distinct
-    /// from [`Self::Save`] (`Ctrl+S`), which writes the already-open source.
-    SaveAsProject,
 }
 
 impl EditorKeyCommand {
@@ -107,42 +97,31 @@ impl EditorKeyCommand {
     /// any other key combination so the keyboard branch in
     /// `EditorShell::window_event` can ignore unbound keys cheaply.
     ///
-    /// Bind-set today (mirrors common editor conventions):
+    /// Bind-set today — the execution-only time-scale binds. The File/Edit
+    /// accelerators (`Ctrl+O` / `Ctrl+S` / `Ctrl+Shift+S` / `Ctrl+Z` / `Ctrl+Y`)
+    /// are resolved through the canonical menu, NOT here, since the W08.3 cutover
+    /// + the W08.4 retirement:
     ///
     /// | Combination | Command |
     /// |---|---|
-    /// | `Ctrl+Z` (no Shift) | [`EditorKeyCommand::Undo`] |
-    /// | `Ctrl+Y` (no Shift) | [`EditorKeyCommand::Redo`] |
-    /// | `Ctrl+S` (no Shift) | [`EditorKeyCommand::Save`] |
-    /// | `Ctrl+Shift+S` | [`EditorKeyCommand::SaveAsProject`] |
+    /// | `Ctrl+2` (no Shift) | [`EditorKeyCommand::SetTimeScaleDoubleSpeed`] |
+    /// | `Ctrl+0` (no Shift) | [`EditorKeyCommand::ResetTimeScaleDefault`] |
+    /// | `Ctrl+4` (no Shift) | [`EditorKeyCommand::SetTimeScaleMaxFastForward`] |
     ///
-    /// `Ctrl+Shift+Z` is **not** mapped today (the standard "redo" alias is
-    /// part of a wider input-binding configurability layer that is out of
-    /// scope for this dispatch). The `Ctrl+Shift` branch is checked **before**
-    /// the no-Shift set, so further Shift bindings slot in additively without
-    /// behavioural collision with the Ctrl-without-Shift binds above.
-    ///
-    /// The `alt` modifier is intentionally ignored — Alt may be combined
-    /// with Ctrl for tool-specific actions (e.g. drag-modifier) that don't
-    /// route through the Command Bus. If future bus-bound commands need
-    /// Alt-disambiguation, extend this signature additively.
+    /// No `Ctrl+Shift` binding exists today (Save-As retired to the menu). The
+    /// `alt` modifier is intentionally ignored — Alt may be combined with Ctrl
+    /// for tool-specific actions (e.g. drag-modifier) that don't route through
+    /// the Command Bus. If future bus-bound commands need Alt-disambiguation,
+    /// extend this signature additively.
     #[must_use]
     pub fn from_key_press(key: KeyCode, ctrl: bool, shift: bool) -> Option<Self> {
-        // Ctrl+Shift bindings, checked first so the no-Shift set below stays
-        // exactly Ctrl-without-Shift. Today: Ctrl+Shift+S -> Save-As (new project).
-        if ctrl && shift {
-            return match key {
-                KeyCode::KeyS => Some(Self::SaveAsProject),
-                _ => None,
-            };
-        }
+        // Ctrl-without-Shift digit binds only; the File/Edit accelerators
+        // (Ctrl+O/S/Shift+S/Z/Y) route through the canonical menu (W08.3) and
+        // W08.4 retired their EditorKeyCommand mirror.
         if !ctrl || shift {
             return None;
         }
         Some(match key {
-            KeyCode::KeyZ => Self::Undo,
-            KeyCode::KeyY => Self::Redo,
-            KeyCode::KeyS => Self::Save,
             KeyCode::Digit2 => Self::SetTimeScaleDoubleSpeed,
             KeyCode::Digit0 => Self::ResetTimeScaleDefault,
             KeyCode::Digit4 => Self::SetTimeScaleMaxFastForward,
@@ -335,34 +314,19 @@ impl EditorShell {
         &self.command_bus
     }
 
-    /// Dispatch a single editor key command. Public so headless tests can
-    /// drive the bus without synthesizing winit `KeyEvent`s; production
-    /// usage routes through the `WindowEvent::KeyboardInput` branch in
-    /// `Self::window_event`.
+    /// Dispatch a single editor key command — the execution-only time-scale binds
+    /// (`Ctrl+2` / `Ctrl+0` / `Ctrl+4`). Public so headless tests can drive the
+    /// slider path without synthesizing winit `KeyEvent`s; production usage routes
+    /// through the `WindowEvent::KeyboardInput` branch in `Self::window_event`.
+    /// Each arm delegates to [`Self::set_time_scale`], whose no-op short-circuit
+    /// means a bind fired at the already-current value grows neither the bus stack
+    /// nor the dirty flag.
     ///
-    /// Swallows `BusError::NothingToUndo` / `NothingToRedo` on empty
-    /// stack (per the user-facing contract: Ctrl+Z on a fresh editor must
-    /// be a no-op, not a diagnostic spam). Other errors are traced.
+    /// The File/Edit accelerators (Open / Save / Save-As / Undo / Redo) are
+    /// dispatched by [`Self::route_menu_command`], not here, since the W08.3
+    /// cutover + the W08.4 retirement of their `EditorKeyCommand` mirror.
     pub fn handle_key_command(&mut self, command: EditorKeyCommand) {
         match command {
-            EditorKeyCommand::Undo => match self.undo_command() {
-                Ok(()) | Err(BusError::NothingToUndo) => {}
-                Err(e) => tracing::warn!(
-                    target: "rge::editor-shell::lifecycle",
-                    error = ?e,
-                    "Ctrl+Z dispatched but bus returned non-NothingToUndo error"
-                ),
-            },
-            EditorKeyCommand::Redo => match self.redo_command() {
-                Ok(()) | Err(BusError::NothingToRedo) => {}
-                Err(e) => tracing::warn!(
-                    target: "rge::editor-shell::lifecycle",
-                    error = ?e,
-                    "Ctrl+Y dispatched but bus returned non-NothingToRedo error"
-                ),
-            },
-            EditorKeyCommand::Save => self.handle_save_request(),
-            EditorKeyCommand::SaveAsProject => self.handle_save_as_new_project_request(),
             EditorKeyCommand::SetTimeScaleDoubleSpeed => self.set_time_scale(2.0),
             EditorKeyCommand::ResetTimeScaleDefault => self.set_time_scale(TimeScale::DEFAULT),
             EditorKeyCommand::SetTimeScaleMaxFastForward => self.set_time_scale(TimeScale::MAX),
