@@ -74,15 +74,20 @@
 //!     [`egui_dock::DockArea`], so the status bar sits below the dock; the
 //!     `render` signature is unchanged.
 //! - **MENU-BAR ARC** (#287/#288 substrate→wiring, A1–A4 registry menus, #302
-//!   dynamic Play enablement, #304 accelerator display, #305 `menu` extraction)
-//!   — the top menu bar (File / Edit / Play / View), built on the W08
-//!   `MenuRegistry` + a host→shell command FIFO. The construction lives in the
-//!   private `menu` submodule (`menu::build_main_menu_entries`, extracted from
-//!   this file by EGUIHOST-MENU-EXTRACTION):
-//!   - One `MenuRegistry` resolves all four menus to `(label, accelerator,
-//!     Command)` triples, cached on [`EguiHost`] + painted each frame; activating
-//!     an item enqueues a `Command` onto [`handoff::MenuCommandHandoff`] (a
-//!     host→shell FIFO that editor-shell drains + routes).
+//!   dynamic Play enablement, #304 accelerator display, #305 `menu` extraction,
+//!   #308 canonical-source move) — the top menu bar (File / Edit / Play / View),
+//!   built on the W08 `MenuRegistry` + a host→shell command FIFO. The canonical
+//!   menu DEFINITION (extension points + entries + File/Edit accelerators) lives
+//!   in `rge_editor_ui::menus::default_menu` (W08-CANONICAL-MENU-SOURCE), so
+//!   editor-shell can resolve the same bindings for accelerator execution without
+//!   a reverse crate edge; this crate's private `menu` submodule only PROJECTS it
+//!   for painting (`menu::build_main_menu_entries`, the body extracted from this
+//!   file by EGUIHOST-MENU-EXTRACTION):
+//!   - `menu::build_main_menu_entries` resolves `default_editor_menu()` once and
+//!     projects all four menus to `(label, accelerator, Command)` triples, cached
+//!     on [`EguiHost`] + painted each frame; activating an item enqueues a
+//!     `Command` onto [`handoff::MenuCommandHandoff`] (a host→shell FIFO that
+//!     editor-shell drains + routes).
 //!   - Play items grey out per the live `PlayState` via
 //!     [`handoff::MenuStateHandoff`] (the third latest-only snapshot handoff) +
 //!     `menu::play_item_enabled` (PLAYMENU-DYNAMIC-ENABLE).

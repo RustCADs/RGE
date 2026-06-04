@@ -198,6 +198,7 @@ impl MenuRegistry {
     pub fn resolve(&self, ctx: &PredicateContext) -> ResolveResult {
         let mut by_point: HashMap<ExtensionPoint, Vec<ResolvedEntry>> = HashMap::new();
         let mut accel = AcceleratorTable::new();
+        let mut shortcut_commands: HashMap<Shortcut, Command> = HashMap::new();
 
         for point in &self.point_order {
             let slot = self.points.get(point).expect(
@@ -208,6 +209,14 @@ impl MenuRegistry {
             for r in &resolved {
                 if let Some(s) = &r.entry.shortcut {
                     accel.register(s.clone(), r.entry.id.clone());
+                    // First registration wins a shortcut — iterated in the same
+                    // order (point declaration × registration) the accelerator
+                    // table uses, so `command_for_shortcut` agrees with the
+                    // table's winner WITHOUT re-scanning entry ids (which are
+                    // unique only within a point, never globally).
+                    shortcut_commands
+                        .entry(s.clone())
+                        .or_insert_with(|| r.entry.command.clone());
                 }
             }
             by_point.insert(point.clone(), resolved);
@@ -217,6 +226,7 @@ impl MenuRegistry {
             by_point,
             accelerator_table: accel,
             conflicts,
+            shortcut_commands,
         }
     }
 }
@@ -238,6 +248,14 @@ pub struct ResolveResult {
     /// Every conflict detected during this resolve. Empty when no
     /// shortcut is bound twice.
     pub conflicts: Vec<ShortcutConflict>,
+    /// O(1) shortcut → winning [`Command`] index, built in resolve order
+    /// (point declaration × registration; first registration wins). Backs
+    /// [`Self::command_for_shortcut`] so it never re-scans entry ids — which are
+    /// unique only WITHIN an extension point, not globally, so a
+    /// shortcut → bare-id → entry scan could otherwise match a different point's
+    /// same-id entry. Private: the public accessor is
+    /// [`Self::command_for_shortcut`].
+    shortcut_commands: HashMap<Shortcut, Command>,
 }
 
 impl ResolveResult {
@@ -250,13 +268,15 @@ impl ResolveResult {
 
     /// Resolve a keystroke to the [`Command`] its bound entry dispatches, if any.
     ///
-    /// Bridges the O(1) [`AcceleratorTable`] (shortcut → winning entry id) with
-    /// the per-point resolved entries (entry id → command), so a host can route a
-    /// keystroke straight to a command without re-deriving the binding. The
-    /// "winner" for a conflicted shortcut is the first-registered entry, matching
+    /// O(1) lookup into the resolved shortcut → command index. The "winner" for a
+    /// conflicted shortcut is the first-registered entry, matching
     /// [`AcceleratorTable::resolve`]. Returns `None` when no visible entry binds
     /// `shortcut` (a hidden / predicate-suppressed entry never claims a keystroke,
-    /// since `resolve` excludes it from the accelerator table).
+    /// since `resolve` excludes it). Keyed by the full [`Shortcut`], so it is
+    /// correct even when entry ids repeat across extension points — ids are unique
+    /// only within a point, so resolving via the bare-id accelerator table and
+    /// scanning the resolved entries could otherwise return a different point's
+    /// same-id command.
     ///
     /// This is the substrate the editor-shell accelerator-execution path consumes:
     /// `keystroke → Shortcut → command_for_shortcut → Command → existing menu
@@ -264,12 +284,7 @@ impl ResolveResult {
     /// resolves to here.
     #[must_use]
     pub fn command_for_shortcut(&self, shortcut: &Shortcut) -> Option<&Command> {
-        let id = self.accelerator_table.resolve(shortcut)?;
-        self.by_point
-            .values()
-            .flatten()
-            .find(|r| &r.entry.id == id)
-            .map(|r| &r.entry.command)
+        self.shortcut_commands.get(shortcut)
     }
 }
 
@@ -621,6 +636,44 @@ mod tests {
             res.command_for_shortcut(&s_unbound),
             None,
             "an unbound shortcut resolves to no command"
+        );
+    }
+
+    #[test]
+    fn command_for_shortcut_disambiguates_duplicate_ids_across_points() {
+        // The same EntryId ("shared") in two different extension points, each
+        // bound to a DIFFERENT shortcut + command. Entry ids are unique only
+        // WITHIN a point, so resolving via the bare-id accelerator table and
+        // scanning the resolved entries could match the wrong point's same-id
+        // entry; `command_for_shortcut` must return the command of the entry that
+        // actually owns each keystroke.
+        let mut r = MenuRegistry::new();
+        let p1 = ExtensionPoint::new("p1");
+        let p2 = ExtensionPoint::new("p2");
+        r.declare_extension_point(p1.clone()).unwrap();
+        r.declare_extension_point(p2.clone()).unwrap();
+        let s_save = Shortcut::new(Modifiers::CTRL, Key::Char('S'));
+        let s_delete = Shortcut::new(Modifiers::CTRL, Key::Char('D'));
+        r.register_entry(
+            &p1,
+            MenuEntry::new("shared", "Save", Command::Save).with_shortcut(s_save.clone()),
+        )
+        .unwrap();
+        r.register_entry(
+            &p2,
+            MenuEntry::new("shared", "Delete", Command::Delete).with_shortcut(s_delete.clone()),
+        )
+        .unwrap();
+        let res = r.resolve(&PredicateContext::default());
+        assert_eq!(
+            res.command_for_shortcut(&s_save),
+            Some(&Command::Save),
+            "Ctrl+S resolves to the p1 'shared' entry's Save, not p2's Delete"
+        );
+        assert_eq!(
+            res.command_for_shortcut(&s_delete),
+            Some(&Command::Delete),
+            "Ctrl+D resolves to the p2 'shared' entry's Delete, not p1's Save"
         );
     }
 }
