@@ -1,8 +1,11 @@
-//! In-app "Open" — Ctrl+O handler + open-dialog / scene-load traits.
+//! In-app "Open" — `Open` command handler + open-dialog / scene-load traits.
 //!
-//! Companion to `asset_reload.rs` (the R-key reload axis). This file
-//! holds the **fourth keyboard axis**: `Ctrl+O` → prompt the user via a
-//! native file dialog, then dispatch on the picked path's kind:
+//! Companion to `asset_reload.rs` (the plain-`R` reload handler). This file holds
+//! the `Open` handler ([`EditorShell::handle_open_request`]): the File ▸ Open menu
+//! item and `Ctrl+O` both reach it through the canonical menu
+//! (`command_for_shortcut` → `Command::OpenFile` → `route_menu_command`, since the
+//! W08.3 cutover) → prompt the user via a native file dialog, then dispatch on the
+//! picked path's kind:
 //! - a `.glb` is imported and swapped into the GPU-side mesh / material
 //!   vecs via [`crate::render_path::EditorShell::reload_render_assets`]
 //!   — the same atomic-swap machinery the R-key path uses;
@@ -181,10 +184,12 @@ fn candidate_is_glb(path: &std::path::Path) -> bool {
 }
 
 impl EditorShell {
-    /// `Ctrl+O` handler — fires from the `WindowEvent::KeyboardInput`
-    /// branch in [`Self::window_event`]. Prompts via the
-    /// [`GlbOpenDialog`] stashed by [`Self::with_glb_open_dialog`], then
-    /// dispatches on the picked path's kind:
+    /// `Open` handler — reached through the canonical menu command sink
+    /// [`EditorShell::route_menu_command`]: from the `WindowEvent::KeyboardInput`
+    /// branch in [`Self::window_event`] when the user presses `Ctrl+O`
+    /// (`command_for_shortcut` → `Command::OpenFile`, since the W08.3 cutover) and
+    /// from the File ▸ Open menu item. Prompts via the [`GlbOpenDialog`] stashed by
+    /// [`Self::with_glb_open_dialog`], then dispatches on the picked path's kind:
     ///
     /// - `.rge-scene` / `.rge-project` → load via the [`SceneOpenHook`]
     ///   stashed by [`Self::with_scene_open_hook`] and swap the live

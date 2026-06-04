@@ -1,7 +1,7 @@
 //! Asset hot-reload — R-key handler + reload-hook trait.
 //!
 //! Companion to `commands.rs` (CommandBus-bound) and `playback.rs`
-//! (state-machine-bound). This file holds the third keyboard axis:
+//! (state-machine-bound). This file holds the plain-`R` keyboard handler:
 //! plain `R` → re-import the editor's `--glb` source from disk and
 //! swap the GPU-side mesh / material vecs via
 //! [`crate::render_path::EditorShell::reload_render_assets`].

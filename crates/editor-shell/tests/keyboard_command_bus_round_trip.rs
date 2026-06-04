@@ -39,6 +39,7 @@
 
 use rge_editor_actions::action::{Action, ActionId, ActionResult};
 use rge_editor_shell::{EditorKeyCommand, EditorShell, SceneSaveDialog, SceneSaveHook};
+use rge_editor_ui::menus::Command;
 use rge_kernel_ecs::{Component, EntityId, World as KernelWorld};
 
 // ---------------------------------------------------------------------------
@@ -463,5 +464,85 @@ fn three_round_trips_preserve_audit_ledger_cursor_invariant() {
         shell.command_bus().stack().len(),
         1,
         "three round-trips must not alter the stack length"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// W08.3 — route_menu_command is the shared command sink for BOTH the host→shell
+// menu FIFO and the keyboard accelerator path. The W08.3 cutover resolves a
+// keystroke to its menu `Command` (keycode_to_shortcut -> command_for_shortcut)
+// and dispatches it here, so these prove the sink is behaviour-identical to the
+// retained `handle_key_command` for the shared binds — i.e. routing Ctrl+Z /
+// Ctrl+Y / Ctrl+S through the canonical menu preserves their behaviour.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn route_menu_command_undo_reverts_like_ctrl_z() {
+    let (mut shell, entity) = shell_with_seeded_increment();
+    assert_eq!(read_counter(&shell, entity), 1);
+
+    shell.route_menu_command(Command::Undo);
+
+    assert_eq!(
+        read_counter(&shell, entity),
+        0,
+        "Command::Undo via route_menu_command must revert Counter 1 -> 0 (same as Ctrl+Z)"
+    );
+}
+
+#[test]
+fn route_menu_command_redo_reapplies_like_ctrl_y() {
+    let (mut shell, entity) = shell_with_seeded_increment();
+    shell.route_menu_command(Command::Undo);
+    assert_eq!(read_counter(&shell, entity), 0);
+
+    shell.route_menu_command(Command::Redo);
+
+    assert_eq!(
+        read_counter(&shell, entity),
+        1,
+        "Command::Redo via route_menu_command must re-apply Counter 0 -> 1 (same as Ctrl+Y)"
+    );
+}
+
+#[test]
+fn route_menu_command_undo_on_empty_stack_is_noop_not_panic() {
+    // The empty-stack swallow (`BusError::NothingToUndo`) must hold on the shared
+    // sink too — a keyboard or menu Undo on a fresh editor is a silent no-op.
+    let mut shell = EditorShell::new();
+    assert_eq!(shell.command_bus().stack().len(), 0);
+
+    shell.route_menu_command(Command::Undo);
+
+    assert_eq!(
+        shell.command_bus().stack().len(),
+        0,
+        "Command::Undo on an empty stack must leave the stack untouched"
+    );
+}
+
+#[test]
+fn route_menu_command_save_saves_and_clears_dirty_like_ctrl_s() {
+    // Ctrl+S resolves to Command::Save; route_menu_command must drive the same
+    // Save (write through the hook, then mark the bus saved) as
+    // handle_key_command(Save) — the writer fires and dirty clears.
+    let (mut shell, _entity) = shell_with_seeded_increment();
+    let called = std::rc::Rc::new(std::cell::Cell::new(false));
+    shell = shell
+        .with_scene_save_dialog(Box::new(MockSaveDialog))
+        .with_scene_save_hook(Box::new(MockSaveHook {
+            called: std::rc::Rc::clone(&called),
+        }));
+    assert!(shell.command_bus().is_dirty());
+
+    shell.route_menu_command(Command::Save);
+
+    assert!(
+        called.get(),
+        "Command::Save via route_menu_command must invoke the save writer hook"
+    );
+    assert!(
+        !shell.command_bus().is_dirty(),
+        "a successful Save must clear dirty by marking the cursor saved"
     );
 }

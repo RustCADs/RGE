@@ -186,6 +186,7 @@ use rge_editor_actions::CommandBus;
 use rge_editor_egui_host::{
     EguiHost, InspectorHandoff, MenuCommandHandoff, MenuStateHandoff, SaveStatusHandoff,
 };
+use rge_editor_ui::menus::{default_editor_menu, PredicateContext};
 use rge_gfx::{
     Camera as GfxCamera, DirectionalLight, GfxContext, IndexBuffer, LitMesh, LitMeshPipeline,
     Material, SurfaceContext,
@@ -2226,40 +2227,50 @@ impl ApplicationHandler<()> for EditorShell {
                     if let Some(InputEvent::KeyDown(key)) = translate_keyboard(&event) {
                         let ctrl = self.modifiers.control_key();
                         let shift = self.modifiers.shift_key();
-                        if let Some(cmd) = EditorKeyCommand::from_key_press(key, ctrl, shift) {
+                        // W08.3 cutover — the canonical menu (`default_editor_menu`)
+                        // is the single source of truth for accelerator → command.
+                        // Resolve the keystroke to a `Shortcut` and, if the menu
+                        // binds it, route the SAME `Command` the menu bar routes
+                        // through the shared `route_menu_command` sink. This collapses
+                        // the former `EditorKeyCommand` Save / Save-As / Undo / Redo
+                        // arm and the inline `Ctrl+O` arm into one menu-sourced path;
+                        // the parity guard (`lifecycle::accelerator`) keeps
+                        // `from_key_press` and the menu in lockstep. Resolve is
+                        // on-demand: the shortcut→command index is static (every
+                        // `default_editor_menu` entry is unconditional) and keydowns
+                        // are human-frequency, so caching buys nothing.
+                        let menu_command =
+                            keycode_to_shortcut(key, ctrl, shift).and_then(|shortcut| {
+                                default_editor_menu()
+                                    .resolve(&PredicateContext::default())
+                                    .command_for_shortcut(&shortcut)
+                                    .cloned()
+                            });
+                        if let Some(command) = menu_command {
+                            // File / Edit accelerators: Ctrl+O / Ctrl+S /
+                            // Ctrl+Shift+S / Ctrl+Z / Ctrl+Y. `Ctrl+O` is now precise
+                            // (the old inline arm fired on Ctrl+Shift+O too; the menu
+                            // binds CTRL-only, so Ctrl+Shift+O is a no-op).
+                            self.route_menu_command(command);
+                        } else if let Some(cmd) = EditorKeyCommand::from_key_press(key, ctrl, shift)
+                        {
+                            // Execution-only time-scale binds (Ctrl+2 / Ctrl+0 /
+                            // Ctrl+4) — no menu home, so they still route through
+                            // `EditorKeyCommand`. Its Save / Save-As / Undo / Redo
+                            // variants are shadowed at the keyboard by the menu path
+                            // above (and remain the parity anchor + the public
+                            // `handle_key_command` test seam) until W08.4 retires them.
                             self.handle_key_command(cmd);
                         } else if let Some(cmd) =
                             EditorPlaybackCommand::from_key_press(key, self.modifiers)
                         {
+                            // Plain Space / Escape → PIE state machine (unchanged).
                             self.handle_playback_command(cmd);
-                        } else if key == KeyCode::KeyO && ctrl {
-                            // Ctrl+O — in-app "Open". The fourth
-                            // keyboard axis after `EditorKeyCommand`
-                            // (other Ctrl-bound, CommandBus),
-                            // `EditorPlaybackCommand` (plain
-                            // Space/Escape, PIE), and plain `R` (asset
-                            // reload). `KeyO` is unclaimed by the
-                            // Ctrl-bound `EditorKeyCommand` table, so it
-                            // falls through to here. Open prompts the
-                            // attached [`GlbOpenDialog`], then dispatches
-                            // on the picked path: a `.glb` is imported and
-                            // swapped into render assets, a `.rge-scene` /
-                            // `.rge-project` is loaded and swapped in as a
-                            // new world; every guard (Editing-only,
-                            // dialog/loader/scene-hook present, cancel,
-                            // load/swap failure) logs and no-ops inside
-                            // the handler.
-                            self.handle_open_request();
                         } else if key == KeyCode::KeyR && self.modifiers.is_empty() {
-                            // Plain `R` (no modifiers) — asset hot-reload.
-                            // The handler is the third keyboard axis after
-                            // `EditorKeyCommand` (Ctrl-bound, CommandBus) and
-                            // `EditorPlaybackCommand` (plain Space/Escape,
-                            // PIE state machine). Reload only fires in
-                            // `PlayState::Editing` and only when a source
-                            // path + hook have been attached via
-                            // [`Self::attach_glb_reload_source`]; every other
-                            // condition warn-logs and no-ops.
+                            // Plain `R` (no modifiers) — asset hot-reload (unchanged).
+                            // Fires only in `PlayState::Editing` with a source path +
+                            // hook attached via [`Self::attach_glb_reload_source`];
+                            // every other condition warn-logs and no-ops.
                             self.handle_asset_reload();
                         }
                     }
