@@ -2233,8 +2233,9 @@ impl ApplicationHandler<()> for EditorShell {
                         // through the shared `route_menu_command` sink. This collapses
                         // the former `EditorKeyCommand` Save / Save-As / Undo / Redo
                         // arm and the inline `Ctrl+O` arm into one menu-sourced path;
-                        // the parity guard (`lifecycle::accelerator`) keeps
-                        // `from_key_press` and the menu in lockstep. Resolve is
+                        // the parity guard (`lifecycle::accelerator`) pins that the
+                        // menu binds these five accelerators while `from_key_press`
+                        // returns None for them (no shadow remains). Resolve is
                         // on-demand: the shortcut→command index is static (every
                         // `default_editor_menu` entry is unconditional) and keydowns
                         // are human-frequency, so caching buys nothing.

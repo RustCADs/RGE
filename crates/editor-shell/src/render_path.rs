@@ -381,9 +381,10 @@ impl EditorShell {
     /// - the editor-shell keyboard accelerator path (W08.3): `window_event`
     ///   resolves a keystroke to its bound `Command` via `keycode_to_shortcut` +
     ///   [`ResolveResult::command_for_shortcut`](rge_editor_ui::menus::ResolveResult::command_for_shortcut),
-    ///   then routes it here. The parity guard (`lifecycle::accelerator`) locks the
-    ///   keyboard map to the same menu, so a keystroke and its menu item dispatch
-    ///   the identical `Command`.
+    ///   then routes it here. A keystroke and its menu item therefore dispatch the
+    ///   identical `Command` (both resolve through the same canonical menu); the
+    ///   parity guard (`lifecycle::accelerator`) pins that `from_key_press` no
+    ///   longer shadows these five File/Edit binds.
     ///
     /// MENUBAR-FILE-WIRING (Dispatch B) routes the File authoring-loop commands;
     /// A2 (MENUREGISTRY-EDITMENU) adds the Edit `Undo` / `Redo` commands — the bus
