@@ -29,6 +29,7 @@
 //! - [`command`] — the [`Command`] enum (core variants + plugin escape hatch).
 //! - [`predicate`] — visibility / enablement tests.
 //! - [`registry`] — top-level [`MenuRegistry`] facade.
+//! - [`default_menu`] — the editor's canonical File/Edit/Play/View definition.
 //!
 //! ## Local stubs (see plan: stub if W05/W06/W19 not merged)
 //!
@@ -42,6 +43,7 @@
 //! every entry that already references the symbol.
 
 pub mod command;
+pub mod default_menu;
 pub mod entry;
 pub mod extension_point;
 pub mod order_hint;
@@ -50,6 +52,9 @@ pub mod registry;
 pub mod shortcut;
 
 pub use command::Command;
+pub use default_menu::{
+    default_editor_menu, edit_menu_point, file_menu_point, play_menu_point, view_menu_point,
+};
 pub use entry::{EntryId, MenuEntry, Section};
 pub use extension_point::ExtensionPoint;
 pub use order_hint::OrderHint;
