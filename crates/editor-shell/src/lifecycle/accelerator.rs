@@ -9,12 +9,13 @@
 //!
 //! W08.2 lands the translation + a PARITY guard. The `#[cfg(test)]` tests assert
 //! that `EditorKeyCommand::from_key_press` and the menu's `command_for_shortcut`
-//! agree on the five shared accelerators (Open / Save / Save-As / Undo / Redo),
-//! and pin the two intentional asymmetries — `Ctrl+O` routes via the inline
-//! `window_event` arm (not `EditorKeyCommand`), and the `Ctrl+2/0/4` time-scale
-//! binds are execution-only with no menu home. The live keystroke path is
-//! UNCHANGED: `from_key_press` is still the executor; W08.3 routes keystrokes
-//! through this bridge + `command_for_shortcut`.
+//! agree on the four `EditorKeyCommand`-routed shared accelerators (Save /
+//! Save-As / Undo / Redo), and pin the two intentional asymmetries — `Ctrl+O`
+//! has no `EditorKeyCommand` bind (`from_key_press` → None): it routes via the
+//! inline `window_event` arm while the menu maps it to `OpenFile`; and the
+//! `Ctrl+2/0/4` time-scale binds are execution-only with no menu home. The live
+//! keystroke path is UNCHANGED: `from_key_press` is still the executor; W08.3
+//! routes keystrokes through this bridge + `command_for_shortcut`.
 
 use rge_editor_ui::menus::{Key, Modifiers, Shortcut};
 use rge_input::KeyCode;
@@ -189,11 +190,13 @@ mod tests {
 
     #[test]
     fn keyboard_map_and_menu_agree_on_shared_accelerators() {
-        // The five shared accelerators have BOTH an executable editor-shell
-        // binding and a canonical-menu binding. This test pins that they resolve
-        // to the SAME logical command so the two maps cannot silently diverge.
-        // W08.2 only adds the guard; `from_key_press` is still the live executor
-        // (the cutover is W08.3).
+        // Four accelerators are routed by EditorKeyCommand AND bound in the
+        // canonical menu. This test pins that they resolve to the SAME logical
+        // command so the two maps cannot silently diverge. Ctrl+O is a fifth
+        // shared bind but is pinned separately below as an intentional asymmetry
+        // (inline `window_event` arm, no EditorKeyCommand). W08.2 only adds the
+        // guard; `from_key_press` is still the live executor (the cutover is
+        // W08.3).
         let menu = default_editor_menu().resolve(&PredicateContext::default());
 
         // The four binds EditorKeyCommand routes (Ctrl+S / Ctrl+Shift+S / Ctrl+Z /
