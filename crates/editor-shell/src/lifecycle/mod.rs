@@ -184,9 +184,9 @@ use rge_cad_core::CadGraph;
 use rge_cad_projection::{BRepHandle, CadProjection};
 use rge_editor_actions::CommandBus;
 use rge_editor_egui_host::{
-    EguiHost, InspectorHandoff, MenuCommandHandoff, MenuStateHandoff, SaveStatusHandoff,
+    EguiHost, InspectorHandoff, MenuCommandHandoff, PredicateContextHandoff, SaveStatusHandoff,
 };
-use rge_editor_ui::menus::{default_editor_menu, PredicateContext};
+use rge_editor_ui::menus::default_editor_menu;
 use rge_gfx::{
     Camera as GfxCamera, DirectionalLight, GfxContext, IndexBuffer, LitMesh, LitMeshPipeline,
     Material, SurfaceContext,
@@ -666,15 +666,15 @@ pub struct EditorShell {
     // publish borrow, independent of the `&mut self.egui_host` render borrow.
     pub(crate) save_status_handoff: Option<Arc<SaveStatusHandoff>>,
 
-    // ---- Menu-state snapshot (PLAYMENU-DYNAMIC-ENABLE) ----------------------
+    // ---- Live predicate context (MENU-DYNAMIC-RESOLVE) ----------------------
     //
-    // Cloned `Arc` to the host's [`MenuStateHandoff`] — a latest-only snapshot
+    // Cloned `Arc` to the host's [`PredicateContextHandoff`] — a latest-only slot
     // sibling to `save_status_handoff`. Set in `init_render_state`; `None` for
     // shells that never trigger render init. The same per-frame publish path
-    // publishes a fresh [`rge_editor_state::MenuStateSnapshot`] (Play-item
-    // enablement derived from the live `PlayState`) BEFORE the egui pass, so the
-    // host's Play menu greys out invalid items this frame.
-    pub(crate) menu_state_handoff: Option<Arc<MenuStateHandoff>>,
+    // publishes a fresh [`Self::predicate_context`] (live PlayState / can_* /
+    // is_editing / selection) BEFORE the egui pass, so the host re-resolves the
+    // menu and greys disabled items this frame.
+    pub(crate) predicate_context_handoff: Option<Arc<PredicateContextHandoff>>,
 
     // ---- Menu command FIFO (MENUBAR-FILE-WIRING) ----------------------------
     //
@@ -745,7 +745,7 @@ impl EditorShell {
             egui_host: None,
             inspector_handoff: None,
             save_status_handoff: None,
-            menu_state_handoff: None,
+            predicate_context_handoff: None,
             menu_command_handoff: None,
             prebuilt_render_meshes: Vec::new(),
             prebuilt_render_base_colors: Vec::new(),
@@ -914,7 +914,7 @@ impl EditorShell {
             egui_host: None,
             inspector_handoff: None,
             save_status_handoff: None,
-            menu_state_handoff: None,
+            predicate_context_handoff: None,
             menu_command_handoff: None,
             prebuilt_render_meshes: Vec::new(),
             prebuilt_render_base_colors: Vec::new(),
@@ -1174,7 +1174,7 @@ impl EditorShell {
             egui_host: None,
             inspector_handoff: None,
             save_status_handoff: None,
-            menu_state_handoff: None,
+            predicate_context_handoff: None,
             menu_command_handoff: None,
             prebuilt_render_meshes: meshes,
             prebuilt_render_base_colors: base_colors,
@@ -1530,20 +1530,31 @@ impl EditorShell {
         }
     }
 
-    /// The Play-menu enablement snapshot for this frame — which Play-mode menu
-    /// items are valid in the current `PlayState`. Pure read, zero side effects;
-    /// mirrors [`Self::save_status_snapshot`]. Each flag comes straight from the
-    /// canonical `PlayState::can_*` query (the host re-encodes no validity rule).
-    /// Produced fresh per frame and published through `menu_state_handoff` BEFORE
-    /// the egui pass.
+    /// The live [`PredicateContext`](rge_editor_ui::menus::PredicateContext) for
+    /// this frame — drives the canonical menu registry's enablement (and
+    /// visibility) predicates when the host re-resolves the menu. Pure read, zero
+    /// side effects; mirrors [`Self::save_status_snapshot`]. `can_*` come straight
+    /// from the canonical `PlayState::can_*` queries (the host/menu re-encodes no
+    /// validity rule); `is_editing` is the non-PIE (Editing) state — gates the File
+    /// Save/Open/Save-As items; `has_selection` reflects the entity selection;
+    /// `focused_tab` is unset (the host owns tab focus, not the shell). Produced
+    /// fresh per frame and published through `predicate_context_handoff` BEFORE the
+    /// egui pass.
     #[must_use]
-    pub fn menu_state_snapshot(&self) -> rge_editor_state::MenuStateSnapshot {
-        rge_editor_state::MenuStateSnapshot {
-            play_can_start: self.state.can_play(),
-            play_can_pause: self.state.can_pause(),
-            play_can_stop: self.state.can_stop(),
-            play_can_step: self.state.can_step(),
-        }
+    #[allow(clippy::field_reassign_with_default)]
+    pub fn predicate_context(&self) -> rge_editor_ui::menus::PredicateContext {
+        // `PredicateContext` is `#[non_exhaustive]` (owned by editor-ui), so it
+        // cannot be built with a struct literal from this crate — start from
+        // `default()` and set the pub fields.
+        let mut ctx = rge_editor_ui::menus::PredicateContext::default();
+        ctx.play_state = self.state.label().to_ascii_lowercase();
+        ctx.has_selection = self.coord.selection.len() > 0;
+        ctx.can_play = self.state.can_play();
+        ctx.can_pause = self.state.can_pause();
+        ctx.can_stop = self.state.can_stop();
+        ctx.can_step = self.state.can_step();
+        ctx.is_editing = !self.state.is_pie_active();
+        ctx
     }
 
     /// Borrow the audit ledger (read-only; tests assert event sequence).
@@ -2236,14 +2247,17 @@ impl ApplicationHandler<()> for EditorShell {
                         // the parity guard (`lifecycle::accelerator`) pins that the
                         // menu binds these five accelerators while `from_key_press`
                         // returns None for them (no shadow remains). Resolve is
-                        // on-demand: the shortcut→command index is static (every
-                        // `default_editor_menu` entry is unconditional) and keydowns
-                        // are human-frequency, so caching buys nothing.
+                        // on-demand against the LIVE `predicate_context()` (keydowns
+                        // are human-frequency, so caching buys nothing), via
+                        // `enabled_command_for_shortcut` so a DISABLED accelerator
+                        // (e.g. Ctrl+S while a play session is active and Save is
+                        // greyed) does NOT fire — matching the menu's greying.
+                        let ctx = self.predicate_context();
                         let menu_command =
                             keycode_to_shortcut(key, ctrl, shift).and_then(|shortcut| {
                                 default_editor_menu()
-                                    .resolve(&PredicateContext::default())
-                                    .command_for_shortcut(&shortcut)
+                                    .resolve(&ctx)
+                                    .enabled_command_for_shortcut(&shortcut)
                                     .cloned()
                             });
                         if let Some(command) = menu_command {

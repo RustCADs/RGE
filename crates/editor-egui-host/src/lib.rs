@@ -81,16 +81,18 @@
 //!   in `rge_editor_ui::menus::default_menu` (W08-CANONICAL-MENU-SOURCE), so
 //!   editor-shell can resolve the same bindings for accelerator execution without
 //!   a reverse crate edge; this crate's private `menu` submodule only PROJECTS it
-//!   for painting (`menu::build_main_menu_entries`, the body extracted from this
+//!   for painting (`menu::project_main_menu`, the body extracted from this
 //!   file by EGUIHOST-MENU-EXTRACTION):
-//!   - `menu::build_main_menu_entries` resolves `default_editor_menu()` once and
-//!     projects all four menus to `(label, accelerator, Command)` triples, cached
-//!     on [`EguiHost`] + painted each frame; activating an item enqueues a
-//!     `Command` onto [`handoff::MenuCommandHandoff`] (a host→shell FIFO that
+//!   - the host caches the canonical `default_editor_menu()` `MenuRegistry` and
+//!     `menu::project_main_menu` RE-RESOLVES it each frame against the live
+//!     `PredicateContext` editor-shell publishes, projecting all four menus to
+//!     `(label, accelerator, Command, enabled)` tuples; activating an item enqueues
+//!     a `Command` onto [`handoff::MenuCommandHandoff`] (a host→shell FIFO that
 //!     editor-shell drains + routes).
-//!   - Play items grey out per the live `PlayState` via
-//!     [`handoff::MenuStateHandoff`] (the third latest-only snapshot handoff) +
-//!     `menu::play_item_enabled` (PLAYMENU-DYNAMIC-ENABLE).
+//!   - Every item greys out per its resolved `ResolvedEntry.enabled` — File/Edit
+//!     outside Editing, Play items per the live `PlayState` — the one canonical
+//!     registry enablement path (the bespoke `MenuStateSnapshot` /
+//!     `play_item_enabled` channel was retired by MENU-DYNAMIC-RESOLVE).
 //!   - File / Edit items render their real keyboard accelerator (`Ctrl+O` /
 //!     `Ctrl+S` / `Ctrl+Shift+S` / `Ctrl+Z` / `Ctrl+Y`) via egui `shortcut_text`,
 //!     sourced from the `rge_editor_ui::menus::Shortcut` substrate on
@@ -113,9 +115,8 @@
 //! - `rge-editor-state` — for [`rge_editor_state::InspectorSnapshot`]
 //!   inside [`handoff::InspectorHandoff`] and the tab body,
 //!   [`rge_editor_state::SaveStatusSnapshot`] inside
-//!   [`handoff::SaveStatusHandoff`], and
-//!   [`rge_editor_state::MenuStateSnapshot`] inside
-//!   [`handoff::MenuStateHandoff`].
+//!   [`handoff::SaveStatusHandoff`], and the shared [`rge_editor_state::Handoff`]
+//!   generic underlying [`handoff::PredicateContextHandoff`].
 //! - `rge-editor-ui` — for [`rge_editor_ui::widgets::inspector::ui`]
 //!   which the [`tabs::EditorTabViewer::ui`] dispatch calls when an
 //!   Inspector tab renders, and [`rge_editor_ui::widgets::save_status::ui`]
@@ -132,7 +133,7 @@ use std::sync::Arc;
 // `egui_winit::EventResponse` for the input adapter return type.
 pub use egui::ViewportId;
 pub use egui_winit::EventResponse;
-use rge_editor_ui::menus::Command;
+use rge_editor_ui::menus::{default_editor_menu, MenuRegistry};
 use winit::event::WindowEvent;
 use winit::window::Window;
 
@@ -140,8 +141,10 @@ pub mod handoff;
 mod menu;
 pub mod tabs;
 
-pub use handoff::{InspectorHandoff, MenuCommandHandoff, MenuStateHandoff, SaveStatusHandoff};
-use menu::{build_main_menu_entries, menu_item, play_item_enabled};
+pub use handoff::{
+    InspectorHandoff, MenuCommandHandoff, PredicateContextHandoff, SaveStatusHandoff,
+};
+use menu::{menu_item, project_main_menu};
 pub use tabs::{EditorTabViewer, InspectorTabBody, TabBody, ViewportRectSink};
 
 // ---------------------------------------------------------------------------
@@ -240,11 +243,12 @@ pub struct EguiHost {
     /// status bar. Sibling to `inspector_handoff` — same latest-only shape.
     save_status_handoff: Arc<SaveStatusHandoff>,
 
-    /// `Arc<MenuStateHandoff>` retained by the host so editor-shell can publish
-    /// a fresh Play-item enablement snapshot each frame; the host's `render`
-    /// acquires it to `add_enabled` each Play menu item. Sibling to
-    /// `save_status_handoff` — same latest-only shape.
-    menu_state_handoff: Arc<MenuStateHandoff>,
+    /// `Arc<PredicateContextHandoff>` retained by the host so editor-shell can
+    /// publish its live [`PredicateContext`] each frame; the host's `render`
+    /// acquires it, re-resolves the menu, and `add_enabled`s each item from the
+    /// resolved `ResolvedEntry.enabled`. Sibling to `save_status_handoff` — same
+    /// latest-only shape.
+    predicate_context_handoff: Arc<PredicateContextHandoff>,
 
     /// `Arc<MenuCommandHandoff>` retained by the host so the editor-shell
     /// consumer can drain the menu-dispatched [`Command`]s the File + Edit + Play
@@ -268,40 +272,14 @@ pub struct EguiHost {
     /// successful frame the slot has a value.
     viewport_tab_rect_sink: Arc<ViewportRectSink>,
 
-    /// The File menu's resolved `(label, accelerator display, `[`Command`]`)`
-    /// entries, produced once at construction by [`build_main_menu_entries`] —
-    /// the [`MenuRegistry`](rge_editor_ui::menus::MenuRegistry) resolve output projected for painting. The middle
-    /// element is the entry's accelerator hint (e.g. `Some("Ctrl+S")`), rendered
-    /// as egui `shortcut_text`; display-only, never dispatched. [`Self::render`]'s
-    /// File menu bar iterates this each frame; the menu is static so it never
-    /// changes after construction (per-frame re-resolve is deferred to a future
-    /// dispatch).
-    file_menu_entries: Vec<(String, Option<String>, Command)>,
-
-    /// The Edit menu's resolved `(label, accelerator display, `[`Command`]`)`
-    /// entries (Undo / Redo), produced once at construction by
-    /// [`build_main_menu_entries`] alongside the File entries. [`Self::render`]'s
-    /// Edit menu bar iterates this; static, so it never changes after construction.
-    edit_menu_entries: Vec<(String, Option<String>, Command)>,
-
-    /// The Play menu's resolved `(label, accelerator display, `[`Command`]`)`
-    /// entries (Play / Pause / Stop / Step), produced once at construction by
-    /// [`build_main_menu_entries`] (one registry resolves all four points). The
-    /// accelerator element is `None` for every Play item — Play's real keys are
-    /// the plain Space/Escape PIE binds, whose menu display is deferred with the
-    /// W08 accelerator-execution work. [`Self::render`]'s Play menu bar iterates
-    /// this; static, so it never changes after construction. The commands route to
-    /// `EditorShell::handle_button` (PIE), not a new action.
-    play_menu_entries: Vec<(String, Option<String>, Command)>,
-
-    /// The View menu's resolved `(label, accelerator display, `[`Command`]`)`
-    /// entries (Reset Camera), produced once at construction by
-    /// [`build_main_menu_entries`] (one registry resolves all four points). The
-    /// accelerator element is `None` (Reset Camera has no keystroke binding).
-    /// [`Self::render`]'s View menu bar iterates this; static, so it never changes
-    /// after construction. The command routes to the new infallible
-    /// `EditorShell::reset_camera` (reframe the live scene), NOT the PIE driver.
-    view_menu_entries: Vec<(String, Option<String>, Command)>,
+    /// The canonical editor [`MenuRegistry`] (built once at construction from
+    /// `default_editor_menu`). [`Self::render`] re-resolves it EACH FRAME against
+    /// the live [`PredicateContext`] (acquired from `predicate_context_handoff`)
+    /// and projects the four points (File / Edit / Play / View) via
+    /// [`project_main_menu`] — so menu enablement (greying) tracks the live
+    /// `PlayState` / editing state. The menus' content + order (and the File/Edit
+    /// accelerator display) are owned by `default_editor_menu` in `editor-ui`.
+    menu_registry: MenuRegistry,
 }
 
 impl EguiHost {
@@ -394,7 +372,7 @@ impl EguiHost {
         let inspector_handoff = Arc::new(InspectorHandoff::new());
         let save_status_handoff = Arc::new(SaveStatusHandoff::new());
         let menu_command_handoff = Arc::new(MenuCommandHandoff::new());
-        let menu_state_handoff = Arc::new(MenuStateHandoff::new());
+        let predicate_context_handoff = Arc::new(PredicateContextHandoff::new());
         let viewport_tab = TabBody::Viewport;
         let inspector_tab =
             TabBody::Inspector(InspectorTabBody::new(Arc::clone(&inspector_handoff)));
@@ -423,11 +401,10 @@ impl EguiHost {
             "EguiHost constructed"
         );
 
-        // A1/A2/A3/A4 — produce the File + Edit + Play + View menu entries once
-        // from the data-driven `MenuRegistry` (one registry, all four extension
-        // points, resolved once).
-        let (file_menu_entries, edit_menu_entries, play_menu_entries, view_menu_entries) =
-            build_main_menu_entries();
+        // Build the canonical `MenuRegistry` ONCE (all four extension points +
+        // entries). `render` re-resolves it each frame against the live
+        // `PredicateContext` so menu enablement tracks the live state.
+        let menu_registry = default_editor_menu();
 
         Self {
             context,
@@ -439,12 +416,9 @@ impl EguiHost {
             inspector_handoff,
             save_status_handoff,
             menu_command_handoff,
-            menu_state_handoff,
+            predicate_context_handoff,
             viewport_tab_rect_sink,
-            file_menu_entries,
-            edit_menu_entries,
-            play_menu_entries,
-            view_menu_entries,
+            menu_registry,
         }
     }
 
@@ -550,16 +524,17 @@ impl EguiHost {
         &self.menu_command_handoff
     }
 
-    /// Borrow the shared menu-state handoff (host→shell latest-only snapshot of
-    /// Play-item enablement). editor-shell clones this `Arc` and publishes a
-    /// fresh [`rge_editor_state::MenuStateSnapshot`] each frame from the live
-    /// `PlayState`; [`Self::render`] acquires it to `add_enabled` the Play items.
+    /// Borrow the shared predicate-context handoff (host→shell latest-only slot of
+    /// the editor's live [`PredicateContext`]). editor-shell clones this `Arc` and
+    /// publishes a fresh context each frame from the live `PlayState` / selection;
+    /// [`Self::render`] acquires it, re-resolves the menu, and `add_enabled`s each
+    /// item from the resolved enablement.
     ///
-    /// Clone the `Arc` (`Arc::clone(host.menu_state_handoff())`) to hold an owned
-    /// handle across borrows of the host.
+    /// Clone the `Arc` (`Arc::clone(host.predicate_context_handoff())`) to hold an
+    /// owned handle across borrows of the host.
     #[must_use]
-    pub fn menu_state_handoff(&self) -> &Arc<MenuStateHandoff> {
-        &self.menu_state_handoff
+    pub fn predicate_context_handoff(&self) -> &Arc<PredicateContextHandoff> {
+        &self.predicate_context_handoff
     }
 
     /// Borrow the host's dock state. Exposed primarily for tests that
@@ -713,27 +688,25 @@ impl EguiHost {
             .acquire()
             .map(|arc| (*arc).clone())
             .unwrap_or_default();
-        // Acquire the latest menu-state snapshot (Play-item enablement) too, same
-        // pre-`run_ui` split-borrow. Empty slot → all enabled (don't grey anything
-        // until editor-shell publishes the real per-`PlayState` snapshot).
-        let menu_state = self
-            .menu_state_handoff
-            .acquire()
-            .map(|arc| *arc)
-            .unwrap_or_else(rge_editor_state::MenuStateSnapshot::all_enabled);
         // Clone the menu-command FIFO `Arc` BEFORE the `run_ui` borrow (mirrors
         // the `save_status` / `viewport_sink` split-borrows) so the closure owns
-        // its handle. The File + Edit + Play + View menu bars push onto it; the editor-shell
-        // drains + routes it at the top of render_frame.
+        // its handle. The File + Edit + Play + View menu bars push onto it; the
+        // editor-shell drains + routes it at the top of render_frame.
         let menu_commands = Arc::clone(&self.menu_command_handoff);
-        // Borrow the registry-resolved File + Edit + Play + View entries (disjoint
-        // fields) before the `run_ui` closure so the closure captures THESE
-        // field-borrows, not all of `self` (which `&mut self.dock_state` already
-        // borrows mutably).
-        let file_entries = &self.file_menu_entries;
-        let edit_entries = &self.edit_menu_entries;
-        let play_entries = &self.play_menu_entries;
-        let view_entries = &self.view_menu_entries;
+        // Re-resolve the menu against the LIVE `PredicateContext` (published by
+        // editor-shell each frame BEFORE this render) and project the four points
+        // to OWNED `(label, accel, command, enabled)` tuples before the `run_ui` /
+        // `&mut self.dock_state` borrows — so the closure owns them and menu
+        // enablement (greying) tracks the live `PlayState` / editing state. The
+        // slot is always fresh (publish precedes acquire each frame); the `default`
+        // fallback is purely defensive.
+        let ctx = self
+            .predicate_context_handoff
+            .acquire()
+            .map(|arc| (*arc).clone())
+            .unwrap_or_default();
+        let (file_entries, edit_entries, play_entries, view_entries) =
+            project_main_menu(&self.menu_registry, &ctx);
         let dock_state = &mut self.dock_state;
         let full_output = self.context.run_ui(raw_input, |root_ui| {
             // Top menu bar — File ▸ Open / Save / Save As New Project, Edit ▸
@@ -744,32 +717,34 @@ impl EguiHost {
             // editor-shell drain routes it (File wiring + A2 Edit + A3 Play + A4 View).
             egui::Panel::top("rge_menu_bar").show_inside(root_ui, |ui| {
                 egui::MenuBar::new().ui(ui, |ui| {
+                    // Every item's `enabled` is the resolved `ResolvedEntry.enabled`
+                    // from `project_main_menu` (the canonical registry enablement
+                    // path) — File/Edit grey out outside Editing, Play items per the
+                    // live PlayState. The host re-encodes no validity rule.
                     ui.menu_button("File", |ui| {
-                        for (label, shortcut, cmd) in file_entries {
-                            if menu_item(ui, true, label.as_str(), shortcut.as_deref()).clicked() {
+                        for (label, shortcut, cmd, enabled) in &file_entries {
+                            if menu_item(ui, *enabled, label.as_str(), shortcut.as_deref())
+                                .clicked()
+                            {
                                 menu_commands.push(cmd.clone());
                                 ui.close();
                             }
                         }
                     });
                     ui.menu_button("Edit", |ui| {
-                        for (label, shortcut, cmd) in edit_entries {
-                            if menu_item(ui, true, label.as_str(), shortcut.as_deref()).clicked() {
+                        for (label, shortcut, cmd, enabled) in &edit_entries {
+                            if menu_item(ui, *enabled, label.as_str(), shortcut.as_deref())
+                                .clicked()
+                            {
                                 menu_commands.push(cmd.clone());
                                 ui.close();
                             }
                         }
                     });
                     ui.menu_button("Play", |ui| {
-                        for (label, shortcut, cmd) in play_entries {
-                            // Grey out items whose PIE transition is a no-op in the
-                            // current PlayState. `play_item_enabled` only routes the
-                            // booleans editor-shell computed from the canonical
-                            // `PlayState` (no validity rule re-encoded in the host).
-                            // `shortcut` is `None` for every Play item today (see the
-                            // `play_menu_entries` field doc).
-                            let enabled = play_item_enabled(cmd, &menu_state);
-                            if menu_item(ui, enabled, label.as_str(), shortcut.as_deref()).clicked()
+                        for (label, shortcut, cmd, enabled) in &play_entries {
+                            if menu_item(ui, *enabled, label.as_str(), shortcut.as_deref())
+                                .clicked()
                             {
                                 menu_commands.push(cmd.clone());
                                 ui.close();
@@ -777,8 +752,10 @@ impl EguiHost {
                         }
                     });
                     ui.menu_button("View", |ui| {
-                        for (label, shortcut, cmd) in view_entries {
-                            if menu_item(ui, true, label.as_str(), shortcut.as_deref()).clicked() {
+                        for (label, shortcut, cmd, enabled) in &view_entries {
+                            if menu_item(ui, *enabled, label.as_str(), shortcut.as_deref())
+                                .clicked()
+                            {
                                 menu_commands.push(cmd.clone());
                                 ui.close();
                             }

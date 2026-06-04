@@ -1,6 +1,6 @@
 //! Editor-egui-host handoffs — [`InspectorHandoff`], [`SaveStatusHandoff`], and
-//! [`MenuStateHandoff`] (the three latest-only snapshot handoffs the host READS
-//! from the editor-shell publisher) plus [`MenuCommandHandoff`] (a host→shell
+//! [`PredicateContextHandoff`] (the three latest-only snapshot handoffs the host
+//! READS from the editor-shell publisher) plus [`MenuCommandHandoff`] (a host→shell
 //! FIFO queue the host WRITES menu-dispatched
 //! [`rge_editor_ui::menus::Command`]s into, for the editor-shell consumer to
 //! drain — the reverse direction).
@@ -14,9 +14,10 @@
 //! - [`SaveStatusHandoff`] = `Handoff<SaveStatusSnapshot>` — carries a
 //!   [`rge_editor_state::SaveStatusSnapshot`] (open save source file name +
 //!   dirty flag) to the host's bottom status bar.
-//! - [`MenuStateHandoff`] = `Handoff<MenuStateSnapshot>` — carries a
-//!   [`rge_editor_state::MenuStateSnapshot`] (which Play-mode menu items are
-//!   enabled in the current `PlayState`) to the host's Play menu.
+//! - [`PredicateContextHandoff`] = `Handoff<PredicateContext>` — carries the
+//!   editor-shell's live [`rge_editor_ui::menus::PredicateContext`] (play-state /
+//!   `can_*` / `is_editing` / selection) to the host, which RE-RESOLVES the menu
+//!   each frame so disabled items grey out.
 //!
 //! # Why aliases over a shared generic (not three hand-written copies)
 //!
@@ -46,8 +47,8 @@
 use std::collections::VecDeque;
 use std::sync::Mutex;
 
-use rge_editor_state::{Handoff, InspectorSnapshot, MenuStateSnapshot, SaveStatusSnapshot};
-use rge_editor_ui::menus::Command;
+use rge_editor_state::{Handoff, InspectorSnapshot, SaveStatusSnapshot};
+use rge_editor_ui::menus::{Command, PredicateContext};
 
 /// Latest-only handoff carrying an [`InspectorSnapshot`] from the editor-shell
 /// publisher to the host's [`crate::InspectorTabBody`]. A type alias over the
@@ -61,12 +62,13 @@ pub type InspectorHandoff = Handoff<InspectorSnapshot>;
 /// [`rge_editor_state::Handoff`] for the full latest-only contract.
 pub type SaveStatusHandoff = Handoff<SaveStatusSnapshot>;
 
-/// Latest-only handoff carrying a [`MenuStateSnapshot`] (which Play-mode menu
-/// items are enabled in the current `PlayState`) from the editor-shell
-/// publisher to the host's Play menu, which `add_enabled`s each item. A type
-/// alias over the shared [`Handoff`]; see [`rge_editor_state::Handoff`] for the
-/// full latest-only contract.
-pub type MenuStateHandoff = Handoff<MenuStateSnapshot>;
+/// Latest-only handoff carrying the editor-shell's live [`PredicateContext`]
+/// (play-state / `can_*` / `is_editing` / selection) from the editor-shell
+/// publisher to the host. The host RE-RESOLVES the canonical menu against it each
+/// frame and `add_enabled`s each item from the resolved
+/// [`rge_editor_ui::menus::ResolvedEntry::enabled`]. A type alias over the shared
+/// [`Handoff`]; see [`rge_editor_state::Handoff`] for the full latest-only contract.
+pub type PredicateContextHandoff = Handoff<PredicateContext>;
 
 /// Maximum number of pending menu [`Command`]s [`MenuCommandHandoff`] buffers
 /// before the shell drains them. A generous should-never-reach guard: the shell
@@ -77,7 +79,7 @@ const MENU_COMMAND_QUEUE_CAP: usize = 64;
 
 /// Host→shell FIFO channel for menu-dispatched [`Command`]s.
 ///
-/// Unlike [`InspectorHandoff`] / [`SaveStatusHandoff`] / [`MenuStateHandoff`]
+/// Unlike [`InspectorHandoff`] / [`SaveStatusHandoff`] / [`PredicateContextHandoff`]
 /// (latest-only [`Handoff`]`<T>` slots the host READS), menu clicks are
 /// **events**: each is a
 /// distinct user intent that must NOT overwrite an earlier one. So this is a

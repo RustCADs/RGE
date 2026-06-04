@@ -57,34 +57,41 @@ fn fresh_shell_is_editing() {
 }
 
 #[test]
-fn menu_state_snapshot_tracks_play_state() {
-    // The Play-menu enablement snapshot mirrors the canonical PlayState::can_*
-    // for the shell's current state (the host greys items out from this). Each
-    // state has a distinct enablement pattern, so this also pins the 1:1 mapping.
+fn predicate_context_tracks_play_state() {
+    // The live PredicateContext mirrors the canonical PlayState::can_* for the
+    // shell's current state (the host re-resolves the menu + greys items from it).
+    // Each state has a distinct enablement pattern, pinning the 1:1 mapping; the
+    // File items gate on `is_editing`.
     let mut s = EditorShell::new();
 
-    // Editing: only Play (start) is valid.
-    let snap = s.menu_state_snapshot();
-    assert!(snap.play_can_start);
-    assert!(!snap.play_can_pause);
-    assert!(!snap.play_can_stop);
-    assert!(!snap.play_can_step);
+    // Editing: only Play (start) is valid; File items enabled (is_editing).
+    let ctx = s.predicate_context();
+    assert!(ctx.can_play);
+    assert!(!ctx.can_pause);
+    assert!(!ctx.can_stop);
+    assert!(!ctx.can_step);
+    assert!(ctx.is_editing);
+    assert_eq!(ctx.play_state, "editing");
 
-    // Playing: Pause + Stop valid; Play (already playing) + Step invalid.
+    // Playing: Pause + Stop valid; Play + Step invalid; File items disabled.
     s.handle_button(ToolbarButtonId::Play).unwrap();
-    let snap = s.menu_state_snapshot();
-    assert!(!snap.play_can_start);
-    assert!(snap.play_can_pause);
-    assert!(snap.play_can_stop);
-    assert!(!snap.play_can_step);
+    let ctx = s.predicate_context();
+    assert!(!ctx.can_play);
+    assert!(ctx.can_pause);
+    assert!(ctx.can_stop);
+    assert!(!ctx.can_step);
+    assert!(!ctx.is_editing);
+    assert_eq!(ctx.play_state, "playing");
 
-    // Paused: all four valid (Play = resume, Pause idempotent, Stop, Step).
+    // Paused: all four play transitions valid; still not editing (PIE active).
     s.handle_button(ToolbarButtonId::Pause).unwrap();
-    let snap = s.menu_state_snapshot();
-    assert!(snap.play_can_start);
-    assert!(snap.play_can_pause);
-    assert!(snap.play_can_stop);
-    assert!(snap.play_can_step);
+    let ctx = s.predicate_context();
+    assert!(ctx.can_play);
+    assert!(ctx.can_pause);
+    assert!(ctx.can_stop);
+    assert!(ctx.can_step);
+    assert!(!ctx.is_editing);
+    assert_eq!(ctx.play_state, "paused");
 }
 
 #[test]
