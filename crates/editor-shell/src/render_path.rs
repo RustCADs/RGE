@@ -355,13 +355,35 @@ impl EditorShell {
     }
 
     /// Drain the host→shell menu-command FIFO ([`rge_editor_egui_host::MenuCommandHandoff`])
-    /// and route each [`Command`] **one-way** to its existing handler. Called at
-    /// the TOP of [`Self::render_frame`] (the sole redraw entry), processing the
-    /// commands the File bar enqueued during the PREVIOUS frame's egui pass —
-    /// before this frame's surface / window / encoder borrows are taken, so the
-    /// `&mut self` handler calls don't contend with a live `&self` borrow. The
-    /// host's continuous `request_redraw` ensures a command enqueued one frame is
-    /// processed at the top of the next.
+    /// and route each [`Command`] **one-way** through [`Self::route_menu_command`].
+    /// Called at the TOP of [`Self::render_frame`] (the sole redraw entry),
+    /// processing the commands the File bar enqueued during the PREVIOUS frame's
+    /// egui pass — before this frame's surface / window / encoder borrows are
+    /// taken, so the `&mut self` handler calls don't contend with a live `&self`
+    /// borrow. The host's continuous `request_redraw` ensures a command enqueued
+    /// one frame is processed at the top of the next. No-op when render init has
+    /// not populated the handoff (`menu_command_handoff == None`).
+    pub(crate) fn drain_and_route_menu_commands(&mut self) {
+        let Some(handoff) = self.menu_command_handoff.clone() else {
+            return;
+        };
+        for cmd in handoff.drain() {
+            self.route_menu_command(cmd);
+        }
+    }
+
+    /// Route a single resolved [`Command`] **one-way** to its existing handler —
+    /// the command sink shared by BOTH command sources, which is what makes the
+    /// canonical menu (`rge_editor_ui::menus::default_menu`) the single source of
+    /// truth for what each accelerator does:
+    ///
+    /// - the host→shell menu FIFO ([`Self::drain_and_route_menu_commands`]), and
+    /// - the editor-shell keyboard accelerator path (W08.3): `window_event`
+    ///   resolves a keystroke to its bound `Command` via `keycode_to_shortcut` +
+    ///   [`ResolveResult::command_for_shortcut`](rge_editor_ui::menus::ResolveResult::command_for_shortcut),
+    ///   then routes it here. The parity guard (`lifecycle::accelerator`) locks the
+    ///   keyboard map to the same menu, so a keystroke and its menu item dispatch
+    ///   the identical `Command`.
     ///
     /// MENUBAR-FILE-WIRING (Dispatch B) routes the File authoring-loop commands;
     /// A2 (MENUREGISTRY-EDITMENU) adds the Edit `Undo` / `Redo` commands,
@@ -372,59 +394,56 @@ impl EditorShell {
     /// (VIEWMENU-RESETCAMERA) adds the View `ResetCamera` command, routed to the
     /// new infallible [`EditorShell::reset_camera`] (reframe the live scene). Any
     /// other `Command` is logged + ignored. The handlers own their PIE gating, so a
-    /// menu Save during Play no-ops inside `handle_save_request` — no gate is
-    /// needed here. No-op when render init has not populated the handoff
-    /// (`menu_command_handoff == None`).
-    pub(crate) fn drain_and_route_menu_commands(&mut self) {
-        let Some(handoff) = self.menu_command_handoff.clone() else {
-            return;
-        };
-        for cmd in handoff.drain() {
-            match cmd {
-                Command::OpenFile => self.handle_open_request(),
-                Command::Save => self.handle_save_request(),
-                Command::SaveAs => self.handle_save_as_new_project_request(),
-                // Edit menu (A2) — behaviour-identical to Ctrl+Z / Ctrl+Y: route
-                // to the same bus undo/redo and swallow the empty-stack errors
-                // exactly as `handle_key_command` does, so a menu Undo on a fresh
-                // editor is a no-op rather than diagnostic spam.
-                Command::Undo => match self.undo_command() {
-                    Ok(()) | Err(BusError::NothingToUndo) => {}
-                    Err(e) => tracing::warn!(
-                        target: "rge::editor-shell::menu",
-                        error = ?e,
-                        "menu Undo dispatched but bus returned non-NothingToUndo error"
-                    ),
-                },
-                Command::Redo => match self.redo_command() {
-                    Ok(()) | Err(BusError::NothingToRedo) => {}
-                    Err(e) => tracing::warn!(
-                        target: "rge::editor-shell::menu",
-                        error = ?e,
-                        "menu Redo dispatched but bus returned non-NothingToRedo error"
-                    ),
-                },
-                // Play menu (A3) — route to the already-runtime-wired PIE driver
-                // `handle_button`, the same one Space / Escape use. The menu items
-                // are static, so one can be clicked in a state where its transition
-                // is a no-op (e.g. Stop while Editing); that is benign and swallowed
-                // (see `route_play_button`).
-                Command::PlayStart => self.route_play_button(ToolbarButtonId::Play),
-                Command::PlayPause => self.route_play_button(ToolbarButtonId::Pause),
-                Command::PlayStop => self.route_play_button(ToolbarButtonId::Stop),
-                Command::PlayStep => self.route_play_button(ToolbarButtonId::Step),
-                // View menu (A4) — Reset Camera reframes the editor camera to the
-                // live scene's AABB union. `reset_camera` is infallible (it falls
-                // back to the default pose when nothing is frameable), so unlike the
-                // Play items there is no error to swallow.
-                Command::ResetCamera => self.reset_camera(),
-                other => {
-                    tracing::debug!(
-                        target: "rge::editor-shell::menu",
-                        command = %other.diagnostic_id(),
-                        "menu command not routed (File Open/Save/Save-As + Edit Undo/Redo + Play Play/Pause/Stop/Step + View Reset Camera only)"
-                    );
-                }
+    /// menu (or keyboard) Save during Play no-ops inside `handle_save_request` — no
+    /// gate is needed here.
+    ///
+    /// `pub` so headless tests can drive a `Command` without synthesizing a winit
+    /// `KeyEvent` or a menu click (mirrors [`EditorShell::handle_key_command`]).
+    pub fn route_menu_command(&mut self, command: Command) {
+        match command {
+            Command::OpenFile => self.handle_open_request(),
+            Command::Save => self.handle_save_request(),
+            Command::SaveAs => self.handle_save_as_new_project_request(),
+            // Edit menu (A2) — behaviour-identical to Ctrl+Z / Ctrl+Y: route
+            // to the same bus undo/redo and swallow the empty-stack errors
+            // exactly as `handle_key_command` does, so a menu Undo on a fresh
+            // editor is a no-op rather than diagnostic spam.
+            Command::Undo => match self.undo_command() {
+                Ok(()) | Err(BusError::NothingToUndo) => {}
+                Err(e) => tracing::warn!(
+                    target: "rge::editor-shell::menu",
+                    error = ?e,
+                    "menu Undo dispatched but bus returned non-NothingToUndo error"
+                ),
+            },
+            Command::Redo => match self.redo_command() {
+                Ok(()) | Err(BusError::NothingToRedo) => {}
+                Err(e) => tracing::warn!(
+                    target: "rge::editor-shell::menu",
+                    error = ?e,
+                    "menu Redo dispatched but bus returned non-NothingToRedo error"
+                ),
+            },
+            // Play menu (A3) — route to the already-runtime-wired PIE driver
+            // `handle_button`, the same one Space / Escape use. The menu items
+            // are static, so one can be clicked in a state where its transition
+            // is a no-op (e.g. Stop while Editing); that is benign and swallowed
+            // (see `route_play_button`).
+            Command::PlayStart => self.route_play_button(ToolbarButtonId::Play),
+            Command::PlayPause => self.route_play_button(ToolbarButtonId::Pause),
+            Command::PlayStop => self.route_play_button(ToolbarButtonId::Stop),
+            Command::PlayStep => self.route_play_button(ToolbarButtonId::Step),
+            // View menu (A4) — Reset Camera reframes the editor camera to the
+            // live scene's AABB union. `reset_camera` is infallible (it falls
+            // back to the default pose when nothing is frameable), so unlike the
+            // Play items there is no error to swallow.
+            Command::ResetCamera => self.reset_camera(),
+            other => {
+                tracing::debug!(
+                    target: "rge::editor-shell::menu",
+                    command = %other.diagnostic_id(),
+                    "menu command not routed (File Open/Save/Save-As + Edit Undo/Redo + Play Play/Pause/Stop/Step + View Reset Camera only)"
+                );
             }
         }
     }

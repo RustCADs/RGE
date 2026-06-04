@@ -7,15 +7,21 @@
 //! here because `editor-ui` cannot depend on `rge-input` (`forbidden-dep` rule 4),
 //! so editor-shell — which depends on both — owns the bridge.
 //!
-//! W08.2 lands the translation + a PARITY guard. The `#[cfg(test)]` tests assert
-//! that `EditorKeyCommand::from_key_press` and the menu's `command_for_shortcut`
-//! agree on the four `EditorKeyCommand`-routed shared accelerators (Save /
-//! Save-As / Undo / Redo), and pin the two intentional asymmetries — `Ctrl+O`
-//! has no `EditorKeyCommand` bind (`from_key_press` → None): it routes via the
-//! inline `window_event` arm while the menu maps it to `OpenFile`; and the
-//! `Ctrl+2/0/4` time-scale binds are execution-only with no menu home. The live
-//! keystroke path is UNCHANGED: `from_key_press` is still the executor; W08.3
-//! routes keystrokes through this bridge + `command_for_shortcut`.
+//! W08.2 added the translation + a PARITY guard; **W08.3 made it the live path** —
+//! `window_event` now resolves each un-consumed keystroke to a `Shortcut` via
+//! [`keycode_to_shortcut`] and dispatches the menu's bound `Command`
+//! (`command_for_shortcut` → `EditorShell::route_menu_command`), the same sink the
+//! menu bar drains into. `EditorKeyCommand::from_key_press` is no longer the
+//! executor for the shared binds; it is retained as (a) the parity ANCHOR this
+//! module's guard checks against the menu, and (b) the live executor for the
+//! execution-only time-scale binds (`Ctrl+2/0/4`), which have no menu home.
+//!
+//! The `#[cfg(test)]` tests assert `from_key_press` and `command_for_shortcut`
+//! agree on the four shared `EditorKeyCommand` binds (Save / Save-As / Undo /
+//! Redo) and pin the asymmetries: `Ctrl+O` has no `EditorKeyCommand` bind
+//! (`from_key_press` → None) yet the menu binds it to `OpenFile`, so the cutover
+//! routes it — precisely (the old Shift-sloppy inline arm is gone, making
+//! `Ctrl+Shift+O` a no-op); the time-scale binds stay execution-only.
 
 use rge_editor_ui::menus::{Key, Modifiers, Shortcut};
 use rge_input::KeyCode;
@@ -32,8 +38,10 @@ use rge_input::KeyCode;
 /// surface is Ctrl/Shift only, mirroring `EditorKeyCommand::from_key_press`;
 /// extend the signature additively if a bus-bound Alt/Super accelerator lands.
 ///
-/// W08.2 ships this translation + a parity guard but does NOT route through it;
-/// `EditorKeyCommand::from_key_press` remains the live executor until W08.3.
+/// W08.3 routes the live keyboard path through this translation +
+/// `command_for_shortcut`: `window_event` resolves a keystroke here, looks up the
+/// menu's bound `Command`, and dispatches it via `EditorShell::route_menu_command`
+/// — the same sink the menu bar uses.
 #[must_use]
 pub fn keycode_to_shortcut(key: KeyCode, ctrl: bool, shift: bool) -> Option<Shortcut> {
     let mut modifiers = Modifiers::empty();
@@ -190,13 +198,13 @@ mod tests {
 
     #[test]
     fn keyboard_map_and_menu_agree_on_shared_accelerators() {
-        // Four accelerators are routed by EditorKeyCommand AND bound in the
-        // canonical menu. This test pins that they resolve to the SAME logical
-        // command so the two maps cannot silently diverge. Ctrl+O is a fifth
-        // shared bind but is pinned separately below as an intentional asymmetry
-        // (inline `window_event` arm, no EditorKeyCommand). W08.2 only adds the
-        // guard; `from_key_press` is still the live executor (the cutover is
-        // W08.3).
+        // Four accelerators are bound in the canonical menu AND mirrored by the
+        // retained EditorKeyCommand table. This test pins that they resolve to the
+        // SAME logical command so the live menu path and the parity anchor cannot
+        // silently diverge. Ctrl+O is a fifth shared bind, pinned separately below
+        // as an intentional asymmetry (no EditorKeyCommand bind; the menu binds it).
+        // Post-W08.3 the menu path is the live executor; `from_key_press` is the
+        // anchor + the time-scale executor.
         let menu = default_editor_menu().resolve(&PredicateContext::default());
 
         // The four binds EditorKeyCommand routes (Ctrl+S / Ctrl+Shift+S / Ctrl+Z /
@@ -248,15 +256,15 @@ mod tests {
             );
         }
 
-        // Open (Ctrl+O) is a shared bind, but editor-shell routes it via the
-        // inline `window_event` arm (`handle_open_request`), NOT EditorKeyCommand,
-        // so `from_key_press` returns None while the menu binds Ctrl+O -> OpenFile.
-        // W08.3's cutover collapses the inline arm into the command_for_shortcut
-        // path.
+        // Open (Ctrl+O) is a shared bind with no EditorKeyCommand entry, so
+        // `from_key_press` returns None while the menu binds Ctrl+O -> OpenFile.
+        // Post-W08.3 the cutover routes Ctrl+O through the menu path
+        // (`command_for_shortcut` -> OpenFile); the old inline `window_event` arm
+        // is gone.
         assert_eq!(
             EditorKeyCommand::from_key_press(KeyCode::KeyO, true, false),
             None,
-            "Open is the inline window_event arm, not an EditorKeyCommand"
+            "Open has no EditorKeyCommand bind — it routes via the menu path"
         );
         let ctrl_o = keycode_to_shortcut(KeyCode::KeyO, true, false).unwrap();
         assert_eq!(
@@ -288,5 +296,29 @@ mod tests {
                 "time-scale binds are execution-only — no menu home"
             );
         }
+    }
+
+    #[test]
+    fn menu_path_makes_ctrl_o_precise_about_shift() {
+        // W08.3 routes Ctrl+O through the canonical menu (which binds the precise
+        // CTRL-only accelerator), replacing the old inline `window_event` arm that
+        // fired on `key == KeyO && ctrl` — ignoring Shift. Pin the refinement:
+        // Ctrl+O resolves to OpenFile, but Ctrl+Shift+O resolves to nothing, so the
+        // cutover makes Ctrl+Shift+O a no-op rather than a phantom Open.
+        let menu = default_editor_menu().resolve(&PredicateContext::default());
+
+        let ctrl_o = keycode_to_shortcut(KeyCode::KeyO, true, false).unwrap();
+        assert_eq!(
+            menu.command_for_shortcut(&ctrl_o),
+            Some(&Command::OpenFile),
+            "Ctrl+O routes to Open via the menu path"
+        );
+
+        let ctrl_shift_o = keycode_to_shortcut(KeyCode::KeyO, true, true).unwrap();
+        assert_eq!(
+            menu.command_for_shortcut(&ctrl_shift_o),
+            None,
+            "Ctrl+Shift+O is a no-op post-W08.3 — the menu binds CTRL-only Ctrl+O"
+        );
     }
 }
