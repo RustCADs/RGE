@@ -4,8 +4,9 @@
 //! the editor-shell side of the Tier-2 boundary:
 //!
 //! - [`EditorKeyCommand`] — the closed enum of bus-bound keyboard commands
-//!   (`Ctrl+Z` / `Ctrl+Y` / `Ctrl+S`) plus its physical-key → command
-//!   mapping table.
+//!   (the `Ctrl+2` / `Ctrl+0` / `Ctrl+4` time-scale binds; the File/Edit
+//!   accelerators are resolved through the canonical menu since the W08 thread)
+//!   plus its physical-key → command mapping table.
 //! - [`SetTimeScale`] — the first non-test [`rge_editor_actions::Action`]
 //!   impl in the workspace. Routes the time-scale slider mutation through
 //!   the bus so undo/redo work on it.
@@ -265,8 +266,8 @@ impl Action for SetTimeScale {
 impl EditorShell {
     /// Submit an [`Action`] through the Command Bus. Returns the bus's
     /// error verbatim (so callers can distinguish coalesce / ledger /
-    /// apply failures); the keyboard handler wraps this and swallows
-    /// `NothingToUndo`/`NothingToRedo` on `Self::handle_key_command`.
+    /// apply failures); [`EditorShell::route_menu_command`] wraps the undo/redo
+    /// calls and swallows `NothingToUndo` / `NothingToRedo`.
     ///
     /// # Errors
     ///
@@ -280,8 +281,8 @@ impl EditorShell {
     /// # Errors
     ///
     /// Propagates [`BusError`] from [`rge_editor_actions::CommandBus::undo`].
-    /// `NothingToUndo` is returned (not panicked); the keyboard handler
-    /// ignores it.
+    /// `NothingToUndo` is returned (not panicked); the `Command::Undo` arm of
+    /// [`EditorShell::route_menu_command`] ignores it.
     pub fn undo_command(&mut self) -> Result<(), BusError> {
         self.command_bus.undo(self.world.kernel_mut())
     }
@@ -291,8 +292,8 @@ impl EditorShell {
     /// # Errors
     ///
     /// Propagates [`BusError`] from [`rge_editor_actions::CommandBus::redo`].
-    /// `NothingToRedo` is returned (not panicked); the keyboard handler
-    /// ignores it.
+    /// `NothingToRedo` is returned (not panicked); the `Command::Redo` arm of
+    /// [`EditorShell::route_menu_command`] ignores it.
     pub fn redo_command(&mut self) -> Result<(), BusError> {
         self.command_bus.redo(self.world.kernel_mut())
     }
