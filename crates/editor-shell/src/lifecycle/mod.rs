@@ -213,6 +213,7 @@ use crate::world::World;
 /// `PROGRESS_FRAME_INTERVAL` — once per ~second at 60Hz.
 const PROGRESS_FRAME_INTERVAL: u64 = 60;
 
+pub mod accelerator;
 pub mod asset_reload;
 pub mod commands;
 pub mod open_request;
@@ -221,6 +222,7 @@ pub mod save_request;
 pub mod save_source;
 pub mod window_title;
 
+pub use accelerator::keycode_to_shortcut;
 pub use asset_reload::AssetReloadHook;
 pub use commands::{EditorKeyCommand, SetTimeScale};
 pub use open_request::{GlbOpenDialog, SceneOpenHook};
