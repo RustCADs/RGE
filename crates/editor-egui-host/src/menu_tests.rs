@@ -1,5 +1,5 @@
-//! Unit tests for the host's static main-menu wiring: that
-//! [`crate::menu::build_main_menu_entries`] resolves each extension point
+//! Unit tests for the host's main-menu wiring: that
+//! [`crate::menu::project_main_menu`] resolves each extension point
 //! (File / Edit / Play / View) to the expected
 //! `(label, accelerator display, `[`Command`]`)` list in order, that File/Edit
 //! items carry their real accelerator hint while Play/View carry none, and that
@@ -14,14 +14,34 @@
 //! moved the menu-construction code these tests target into the `menu` submodule
 //! (hence the `crate::menu::` paths below), keeping `lib.rs` under the cap.
 
-use rge_editor_ui::menus::Command;
+use rge_editor_ui::menus::{default_editor_menu, Command, PredicateContext};
 
 use super::MenuCommandHandoff;
-use crate::menu::build_main_menu_entries;
+use crate::menu::project_main_menu;
+
+/// Project the canonical menu's four points to `(label, accel, command)` triples,
+/// dropping the resolved `enabled` flag — these tests pin labels / commands /
+/// accelerator display / order, which are context-independent. Resolved against an
+/// empty context; enablement is covered by `enablement_tracks_context`.
+#[allow(clippy::type_complexity)]
+fn menu_entries() -> (
+    Vec<(String, Option<String>, Command)>,
+    Vec<(String, Option<String>, Command)>,
+    Vec<(String, Option<String>, Command)>,
+    Vec<(String, Option<String>, Command)>,
+) {
+    let strip = |v: Vec<(String, Option<String>, Command, bool)>| {
+        v.into_iter()
+            .map(|(l, a, c, _)| (l, a, c))
+            .collect::<Vec<_>>()
+    };
+    let (f, e, p, vw) = project_main_menu(&default_editor_menu(), &PredicateContext::default());
+    (strip(f), strip(e), strip(p), strip(vw))
+}
 
 #[test]
 fn file_menu_registry_resolves_the_authoring_loop_commands() {
-    let (file, _edit, _play, _view) = build_main_menu_entries();
+    let (file, _edit, _play, _view) = menu_entries();
     assert_eq!(
         file,
         vec![
@@ -44,7 +64,7 @@ fn file_menu_registry_resolves_the_authoring_loop_commands() {
 
 #[test]
 fn edit_menu_registry_resolves_undo_redo_in_order() {
-    let (_file, edit, _play, _view) = build_main_menu_entries();
+    let (_file, edit, _play, _view) = menu_entries();
     assert_eq!(
         edit,
         vec![
@@ -58,7 +78,7 @@ fn edit_menu_registry_resolves_undo_redo_in_order() {
 
 #[test]
 fn file_menu_entries_round_trip_through_the_handoff_in_order() {
-    let (file, _edit, _play, _view) = build_main_menu_entries();
+    let (file, _edit, _play, _view) = menu_entries();
     let handoff = MenuCommandHandoff::new();
     for (_, _, cmd) in file {
         handoff.push(cmd);
@@ -72,7 +92,7 @@ fn file_menu_entries_round_trip_through_the_handoff_in_order() {
 
 #[test]
 fn edit_menu_entries_round_trip_through_the_handoff_in_order() {
-    let (_file, edit, _play, _view) = build_main_menu_entries();
+    let (_file, edit, _play, _view) = menu_entries();
     let handoff = MenuCommandHandoff::new();
     for (_, _, cmd) in edit {
         handoff.push(cmd);
@@ -86,7 +106,7 @@ fn edit_menu_entries_round_trip_through_the_handoff_in_order() {
 
 #[test]
 fn play_menu_registry_resolves_play_pause_stop_step_in_order() {
-    let (_file, _edit, play, _view) = build_main_menu_entries();
+    let (_file, _edit, play, _view) = menu_entries();
     assert_eq!(
         play,
         vec![
@@ -103,7 +123,7 @@ fn play_menu_registry_resolves_play_pause_stop_step_in_order() {
 
 #[test]
 fn play_menu_entries_round_trip_through_the_handoff_in_order() {
-    let (_file, _edit, play, _view) = build_main_menu_entries();
+    let (_file, _edit, play, _view) = menu_entries();
     let handoff = MenuCommandHandoff::new();
     for (_, _, cmd) in play {
         handoff.push(cmd);
@@ -122,7 +142,7 @@ fn play_menu_entries_round_trip_through_the_handoff_in_order() {
 
 #[test]
 fn view_menu_registry_resolves_reset_camera() {
-    let (_file, _edit, _play, view) = build_main_menu_entries();
+    let (_file, _edit, _play, view) = menu_entries();
     assert_eq!(
         view,
         vec![("Reset Camera".to_owned(), None, Command::ResetCamera)],
@@ -133,7 +153,7 @@ fn view_menu_registry_resolves_reset_camera() {
 
 #[test]
 fn view_menu_entries_round_trip_through_the_handoff() {
-    let (_file, _edit, _play, view) = build_main_menu_entries();
+    let (_file, _edit, _play, view) = menu_entries();
     let handoff = MenuCommandHandoff::new();
     for (_, _, cmd) in view {
         handoff.push(cmd);
@@ -146,48 +166,49 @@ fn view_menu_entries_round_trip_through_the_handoff() {
 }
 
 #[test]
-fn play_item_enabled_routes_each_command_to_its_own_flag() {
-    use rge_editor_state::MenuStateSnapshot;
-
-    use crate::menu::play_item_enabled;
-
-    // Each snapshot enables exactly ONE field; assert only the matching command
-    // is enabled — pins the host routing 1:1 (catches any transposed field).
-    let only_start = MenuStateSnapshot {
-        play_can_start: true,
-        ..MenuStateSnapshot::default()
+#[allow(clippy::field_reassign_with_default)]
+fn enablement_tracks_context() {
+    // Greying flows from the resolved `ResolvedEntry.enabled` (the 4th projected
+    // element) — the canonical registry path that replaced the bespoke
+    // MenuStateSnapshot / play_item_enabled channel. Each context yields a
+    // distinct enablement pattern. (PredicateContext is #[non_exhaustive], so it
+    // is built via default() + field assignment, not a struct literal.)
+    let enabled_of = |entries: &[(String, Option<String>, Command, bool)], cmd: &Command| -> bool {
+        entries
+            .iter()
+            .find(|(_, _, c, _)| c == cmd)
+            .map(|(_, _, _, e)| *e)
+            .expect("command present (enablement never filters)")
     };
-    assert!(play_item_enabled(&Command::PlayStart, &only_start));
-    assert!(!play_item_enabled(&Command::PlayPause, &only_start));
-    assert!(!play_item_enabled(&Command::PlayStop, &only_start));
-    assert!(!play_item_enabled(&Command::PlayStep, &only_start));
 
-    let only_pause = MenuStateSnapshot {
-        play_can_pause: true,
-        ..MenuStateSnapshot::default()
-    };
-    assert!(play_item_enabled(&Command::PlayPause, &only_pause));
-    assert!(!play_item_enabled(&Command::PlayStart, &only_pause));
+    // Editing: File items + Play (start) enabled; pause/stop/step disabled.
+    let mut editing = PredicateContext::default();
+    editing.is_editing = true;
+    editing.can_play = true;
+    let (file, _edit, play, _view) = project_main_menu(&default_editor_menu(), &editing);
+    assert!(enabled_of(&file, &Command::Save));
+    assert!(enabled_of(&file, &Command::OpenFile));
+    assert!(enabled_of(&play, &Command::PlayStart));
+    assert!(!enabled_of(&play, &Command::PlayPause));
+    assert!(!enabled_of(&play, &Command::PlayStep));
 
-    let only_stop = MenuStateSnapshot {
-        play_can_stop: true,
-        ..MenuStateSnapshot::default()
-    };
-    assert!(play_item_enabled(&Command::PlayStop, &only_stop));
-    assert!(!play_item_enabled(&Command::PlayStart, &only_stop));
-
-    let only_step = MenuStateSnapshot {
-        play_can_step: true,
-        ..MenuStateSnapshot::default()
-    };
-    assert!(play_item_enabled(&Command::PlayStep, &only_step));
-    assert!(!play_item_enabled(&Command::PlayStart, &only_step));
-
-    // Non-Play commands default to enabled (they never appear in the Play menu).
-    assert!(play_item_enabled(
-        &Command::OpenFile,
-        &MenuStateSnapshot::default()
-    ));
+    // Playing: File items DISABLED (greyed, still present); pause/stop enabled.
+    let mut playing = PredicateContext::default();
+    playing.can_pause = true;
+    playing.can_stop = true;
+    let (file, _edit, play, _view) = project_main_menu(&default_editor_menu(), &playing);
+    assert!(
+        !enabled_of(&file, &Command::Save),
+        "Save greyed while playing"
+    );
+    assert_eq!(
+        file.len(),
+        3,
+        "disabled File items stay present (3), not hidden"
+    );
+    assert!(enabled_of(&play, &Command::PlayPause));
+    assert!(enabled_of(&play, &Command::PlayStop));
+    assert!(!enabled_of(&play, &Command::PlayStart));
 }
 
 #[test]
@@ -199,7 +220,7 @@ fn file_and_edit_items_carry_their_real_accelerator_display_play_view_deferred()
     // thread made the menu the single source of truth); Play + View carry NO
     // accelerator display (Play's real keys are the plain Space/Escape PIE binds;
     // Reset Camera has no binding). Pinning the exact strings here guards both.
-    let (file, edit, play, view) = build_main_menu_entries();
+    let (file, edit, play, view) = menu_entries();
     let accel = |entries: &[(String, Option<String>, Command)]| -> Vec<Option<String>> {
         entries.iter().map(|(_, s, _)| s.clone()).collect()
     };
