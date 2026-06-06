@@ -277,8 +277,9 @@ pub struct EguiHost {
     /// the live [`PredicateContext`] (acquired from `predicate_context_handoff`)
     /// and projects the four points (File / Edit / Play / View) via
     /// [`project_main_menu`] — so menu enablement (greying) tracks the live
-    /// `PlayState` / editing state. The menus' content + order (and the File/Edit
-    /// accelerator display) are owned by `default_editor_menu` in `editor-ui`.
+    /// `PlayState` / editing state. The menus' content + order, File/Edit
+    /// accelerator display, and passive Play shortcut hints are owned by
+    /// `default_editor_menu` in `editor-ui`.
     menu_registry: MenuRegistry,
 }
 

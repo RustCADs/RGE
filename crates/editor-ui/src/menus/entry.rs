@@ -108,7 +108,7 @@ impl From<String> for Section {
 ///
 /// Carries all metadata needed by both the resolver (id, section,
 /// `order_hint`, `predicate`, `visible`) and the renderer (label, icon,
-/// shortcut, command, optional style override). The shape is closed by
+/// shortcut, passive shortcut hint, command, optional style override). The shape is closed by
 /// design — extension is via [`Command::Plugin`] inside the command,
 /// not by adding fields.
 #[derive(Debug, Clone)]
@@ -123,6 +123,11 @@ pub struct MenuEntry {
     /// [`AcceleratorTable`](crate::menus::AcceleratorTable) across all
     /// entries and reports conflicts (see `MenuRegistry::resolve`).
     pub shortcut: Option<Shortcut>,
+    /// Optional display-only shortcut hint. Unlike [`Self::shortcut`], this is
+    /// not registered in the accelerator table and never participates in
+    /// keyboard execution. Use it only for bindings owned by a separate input
+    /// path, such as Play's plain-key Space/Escape playback controls.
+    pub shortcut_hint: Option<Shortcut>,
     /// What clicking this entry dispatches.
     pub command: Command,
     /// Section bucket inside the parent extension point.
@@ -160,6 +165,7 @@ impl MenuEntry {
             label: label.into(),
             icon: IconHandle::none(),
             shortcut: None,
+            shortcut_hint: None,
             command,
             section: Section::default(),
             order_hint: OrderHint::AtEnd,
@@ -181,6 +187,16 @@ impl MenuEntry {
     #[must_use]
     pub fn with_shortcut(mut self, shortcut: Shortcut) -> Self {
         self.shortcut = Some(shortcut);
+        self
+    }
+
+    /// Builder-style: set a display-only shortcut hint.
+    ///
+    /// This does not bind a keyboard accelerator; [`MenuRegistry::resolve`] only
+    /// registers [`Self::shortcut`] in the accelerator table.
+    #[must_use]
+    pub fn with_shortcut_hint(mut self, shortcut_hint: Shortcut) -> Self {
+        self.shortcut_hint = Some(shortcut_hint);
         self
     }
 
@@ -256,6 +272,7 @@ mod tests {
         assert_eq!(e.label, "Open...");
         assert_eq!(e.icon, IconHandle::none());
         assert!(e.shortcut.is_none());
+        assert!(e.shortcut_hint.is_none());
         assert!(e.section.is_default());
         assert_eq!(e.order_hint, OrderHint::AtEnd);
         assert!(e.visible);

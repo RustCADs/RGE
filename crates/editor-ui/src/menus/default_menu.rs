@@ -3,12 +3,13 @@
 //! [`default_editor_menu`] builds the [`MenuRegistry`] for the editor's four
 //! main-menu surfaces — **File / Edit / Play / View** — as host-agnostic data:
 //! the single source of truth for each menu's content, order, [`Command`], and
-//! (for File/Edit) keyboard accelerator. It lives in `editor-ui` rather than the
-//! egui host so BOTH consumers build from one definition without a reverse crate
-//! edge:
+//! (for File/Edit) keyboard accelerator. Play carries display-only shortcut
+//! hints for its separate plain-key playback path. It lives in `editor-ui` rather
+//! than the egui host so BOTH consumers build from one definition without a
+//! reverse crate edge:
 //!
 //! - **`editor-egui-host`** resolves it and projects each point to the
-//!   `(label, accelerator display, `[`Command`]`)` triples its menu bar paints.
+//!   `(label, shortcut display, `[`Command`]`)` triples its menu bar paints.
 //! - **`editor-shell`** (the W08 accelerator-execution work) resolves it and
 //!   routes a keystroke to its bound command through
 //!   [`ResolveResult::command_for_shortcut`](crate::menus::ResolveResult::command_for_shortcut).
@@ -22,9 +23,9 @@
 //! resolves a keystroke to its `Shortcut` and routes the bound `Command` via
 //! `ResolveResult::command_for_shortcut` → `EditorShell::route_menu_command`, so
 //! `Ctrl+O` / `Ctrl+S` / `Ctrl+Shift+S` / `Ctrl+Z` / `Ctrl+Y` live ONLY here.
-//! Play/View carry no accelerator — Play's real keys are the plain `Space` /
-//! `Escape` PIE binds, and `Reset Camera` has no binding. Every entry uses the
-//! default section +
+//! Play/View carry no executable accelerator — Play's real keys are the separate
+//! plain `Space` / `Escape` PIE binds, surfaced only as passive display hints,
+//! and `Reset Camera` has no binding. Every entry uses the default section +
 //! [`OrderHint::AtEnd`](crate::menus::OrderHint::AtEnd), so
 //! [`MenuRegistry::resolve`] returns each point's entries in registration order.
 //!
@@ -81,8 +82,8 @@ pub fn view_menu_point() -> ExtensionPoint {
 /// extension points (File + Edit + Play + View) declared and each point's entries
 /// registered, in order. The returned registry is UNRESOLVED — the consumer calls
 /// [`MenuRegistry::resolve`] with its own
-/// [`PredicateContext`](crate::menus::PredicateContext) (the host resolves once at
-/// construction; `editor-shell` resolves to drive accelerator execution).
+/// [`PredicateContext`](crate::menus::PredicateContext) (the host resolves at
+/// render time; `editor-shell` resolves to drive accelerator execution).
 ///
 /// The registry is the single source of truth for all four menus' content + order:
 /// - **File** = Open / Save / Save As New Project — each with its real keyboard
@@ -91,9 +92,10 @@ pub fn view_menu_point() -> ExtensionPoint {
 /// - **Edit** = Undo / Redo ([`Command::Undo`] `Ctrl+Z`, [`Command::Redo`]
 ///   `Ctrl+Y`).
 /// - **Play** = Play / Pause / Stop / Step ([`Command::PlayStart`] /
-///   [`Command::PlayPause`] / [`Command::PlayStop`] / [`Command::PlayStep`]) — no
-///   accelerator (the live keys are the plain `Space` / `Escape` PIE binds).
-/// - **View** = Reset Camera ([`Command::ResetCamera`]) — no accelerator.
+///   [`Command::PlayPause`] / [`Command::PlayStop`] / [`Command::PlayStep`]) —
+///   no executable accelerator; passive display hints show the already-live
+///   plain `Space` / `Escape` PIE bindings.
+/// - **View** = Reset Camera ([`Command::ResetCamera`]) — no binding.
 ///
 /// ENABLEMENT predicates (greyed-but-present, accelerator intact — distinct from
 /// visibility): File Save/Open/Save-As carry an `is_editing` predicate (they
@@ -182,37 +184,42 @@ pub fn default_editor_menu() -> MenuRegistry {
     // state — ENABLEMENT predicates keyed on the canonical `PlayState::can_*`
     // booleans (filled shell-side onto the `PredicateContext`). The items stay
     // present (greyed), not hidden.
-    for (id, label, command, enabled) in [
+    for (id, label, command, enabled, shortcut_hint) in [
         (
             "play.start",
             "Play",
             Command::PlayStart,
             Predicate::from_fn(|c| c.can_play),
+            Some(Shortcut::plain(Key::Space)),
         ),
         (
             "play.pause",
             "Pause",
             Command::PlayPause,
             Predicate::from_fn(|c| c.can_pause),
+            Some(Shortcut::plain(Key::Space)),
         ),
         (
             "play.stop",
             "Stop",
             Command::PlayStop,
             Predicate::from_fn(|c| c.can_stop),
+            Some(Shortcut::plain(Key::Escape)),
         ),
         (
             "play.step",
             "Step",
             Command::PlayStep,
             Predicate::from_fn(|c| c.can_step),
+            None,
         ),
     ] {
+        let mut entry = MenuEntry::new(id, label, command).with_enabled(enabled);
+        if let Some(shortcut_hint) = shortcut_hint {
+            entry = entry.with_shortcut_hint(shortcut_hint);
+        }
         registry
-            .register_entry(
-                &play_point,
-                MenuEntry::new(id, label, command).with_enabled(enabled),
-            )
+            .register_entry(&play_point, entry)
             .expect("static Play menu entries register cleanly");
     }
     registry
@@ -280,7 +287,7 @@ mod tests {
     }
 
     #[test]
-    fn has_no_shortcut_conflicts_and_binds_exactly_five() {
+    fn executable_accelerators_have_no_conflicts_and_bind_exactly_five() {
         let resolved = default_editor_menu().resolve(&PredicateContext::default());
         assert!(
             resolved.conflicts.is_empty(),
@@ -294,17 +301,42 @@ mod tests {
     }
 
     #[test]
-    fn play_and_view_entries_carry_no_accelerator() {
+    fn play_and_view_entries_carry_no_executable_accelerator() {
         let resolved = default_editor_menu().resolve(&PredicateContext::default());
         for point in [play_menu_point(), view_menu_point()] {
             for r in resolved.entries_for(&point) {
                 assert!(
                     r.entry.shortcut.is_none(),
-                    "Play/View entries carry no accelerator: {}",
+                    "Play/View entries carry no executable accelerator: {}",
                     r.entry.id.as_str()
                 );
             }
         }
+    }
+
+    #[test]
+    fn play_entries_carry_passive_shortcut_hints_only() {
+        let resolved = default_editor_menu().resolve(&PredicateContext::default());
+        let hints: Vec<Option<String>> = resolved
+            .entries_for(&play_menu_point())
+            .iter()
+            .map(|r| r.entry.shortcut_hint.as_ref().map(Shortcut::display))
+            .collect();
+        assert_eq!(
+            hints,
+            vec![
+                Some("Space".to_owned()),
+                Some("Space".to_owned()),
+                Some("Escape".to_owned()),
+                None,
+            ],
+            "Play shows passive hints for the existing Space toggle / Escape stop path"
+        );
+        assert_eq!(
+            resolved.accelerator_table.len(),
+            5,
+            "passive Play hints must not add executable accelerator bindings"
+        );
     }
 
     #[test]

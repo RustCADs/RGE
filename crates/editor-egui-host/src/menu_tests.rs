@@ -1,18 +1,20 @@
 //! Unit tests for the host's main-menu wiring: that
 //! [`crate::menu::project_main_menu`] resolves each extension point
 //! (File / Edit / Play / View) to the expected
-//! `(label, accelerator display, `[`Command`]`)` list in order, that File/Edit
-//! items carry their real accelerator hint while Play/View carry none, and that
-//! each resolved [`Command`] round-trips through
+//! `(label, shortcut display, `[`Command`]`)` list in order, that File/Edit
+//! items carry their real accelerator hint while Play carries passive
+//! Space/Escape hints, and that each resolved [`Command`] round-trips through
 //! the [`super::MenuCommandHandoff`] FIFO.
 //!
 //! Originally extracted verbatim from the inline `#[cfg(test)] mod menu_tests`
 //! in `lib.rs` (EGUIHOST-TEST-EXTRACTION) — at the time a behaviour-identical
 //! move that dropped `lib.rs` back under the §1.3 Rule 3 1000-line split cap.
 //! MENU-SHORTCUT-DISPLAY (#304) later widened these tests to pin the File/Edit
-//! accelerator display + the Play/View deferral; EGUIHOST-MENU-EXTRACTION then
-//! moved the menu-construction code these tests target into the `menu` submodule
-//! (hence the `crate::menu::` paths below), keeping `lib.rs` under the cap.
+//! accelerator display + the then-current Play/View deferral; the passive Play
+//! hint slice now pins Space/Escape display without changing keyboard execution.
+//! EGUIHOST-MENU-EXTRACTION moved the menu-construction code these tests target
+//! into the `menu` submodule (hence the `crate::menu::` paths below), keeping
+//! `lib.rs` under the cap.
 
 use rge_editor_ui::menus::{default_editor_menu, Command, PredicateContext};
 
@@ -21,7 +23,7 @@ use crate::menu::project_main_menu;
 
 /// Project the canonical menu's four points to `(label, accel, command)` triples,
 /// dropping the resolved `enabled` flag — these tests pin labels / commands /
-/// accelerator display / order, which are context-independent. Resolved against an
+/// shortcut display / order, which are context-independent. Resolved against an
 /// empty context; enablement is covered by `enablement_tracks_context`.
 #[allow(clippy::type_complexity)]
 fn menu_entries() -> (
@@ -110,14 +112,26 @@ fn play_menu_registry_resolves_play_pause_stop_step_in_order() {
     assert_eq!(
         play,
         vec![
-            ("Play".to_owned(), None, Command::PlayStart),
-            ("Pause".to_owned(), None, Command::PlayPause),
-            ("Stop".to_owned(), None, Command::PlayStop),
+            (
+                "Play".to_owned(),
+                Some("Space".to_owned()),
+                Command::PlayStart,
+            ),
+            (
+                "Pause".to_owned(),
+                Some("Space".to_owned()),
+                Command::PlayPause,
+            ),
+            (
+                "Stop".to_owned(),
+                Some("Escape".to_owned()),
+                Command::PlayStop,
+            ),
             ("Step".to_owned(), None, Command::PlayStep),
         ],
         "the MenuRegistry resolves the Play menu to exactly Play / Pause / Stop / \
-         Step, in order — no accelerator display (Play's real keys are the plain \
-         Space/Escape PIE binds, not menu accelerators)"
+         Step, in order — Space/Escape are passive display hints for the existing \
+         playback key path, not executable menu accelerators"
     );
 }
 
@@ -147,7 +161,7 @@ fn view_menu_registry_resolves_reset_camera() {
         view,
         vec![("Reset Camera".to_owned(), None, Command::ResetCamera)],
         "the MenuRegistry resolves the View menu to exactly Reset Camera \
-         (no accelerator display)"
+         (no shortcut display)"
     );
 }
 
@@ -212,14 +226,13 @@ fn enablement_tracks_context() {
 }
 
 #[test]
-fn file_and_edit_items_carry_their_real_accelerator_display_play_view_deferred() {
-    // The accelerator-display column (middle tuple element) is sourced from each
-    // resolved `MenuEntry.shortcut` via `Shortcut::display`. File + Edit carry the
-    // canonical File/Edit accelerators (Ctrl+O/S/Shift+S, Ctrl+Z/Y) — the SAME
-    // definition editor-shell's live keystroke routing resolves through (the W08
-    // thread made the menu the single source of truth); Play + View carry NO
-    // accelerator display (Play's real keys are the plain Space/Escape PIE binds;
-    // Reset Camera has no binding). Pinning the exact strings here guards both.
+fn file_and_edit_items_carry_accelerators_play_carries_passive_hints() {
+    // The shortcut-display column (middle tuple element) is sourced from each
+    // resolved executable `MenuEntry.shortcut`, falling back to passive
+    // `shortcut_hint`. File + Edit carry the canonical executable accelerators
+    // (Ctrl+O/S/Shift+S, Ctrl+Z/Y) — the SAME definition editor-shell's live
+    // keystroke routing resolves through. Play carries display-only Space/Escape
+    // hints for the separate playback route; View still has no binding.
     let (file, edit, play, view) = menu_entries();
     let accel = |entries: &[(String, Option<String>, Command)]| -> Vec<Option<String>> {
         entries.iter().map(|(_, s, _)| s.clone()).collect()
@@ -239,13 +252,18 @@ fn file_and_edit_items_carry_their_real_accelerator_display_play_view_deferred()
         vec![Some("Ctrl+Z".to_owned()), Some("Ctrl+Y".to_owned())],
         "Edit items display Undo=Ctrl+Z, Redo=Ctrl+Y"
     );
-    assert!(
-        play.iter().all(|(_, s, _)| s.is_none()),
-        "Play items carry no accelerator display (Play's real keys are the plain \
-         Space/Escape PIE binds, not menu accelerators)"
+    assert_eq!(
+        accel(&play),
+        vec![
+            Some("Space".to_owned()),
+            Some("Space".to_owned()),
+            Some("Escape".to_owned()),
+            None,
+        ],
+        "Play items display the existing Space toggle / Escape stop keys as passive hints"
     );
     assert!(
         view.iter().all(|(_, s, _)| s.is_none()),
-        "View items carry no accelerator display (Reset Camera has no binding)"
+        "View items carry no shortcut display (Reset Camera has no binding)"
     );
 }
