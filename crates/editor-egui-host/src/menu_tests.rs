@@ -3,8 +3,9 @@
 //! (File / Edit / Play / View) to the expected
 //! `(label, shortcut display, `[`Command`]`)` list in order, that File/Edit
 //! items carry their real accelerator hint while Play carries passive
-//! Space/Escape hints, and that each resolved [`Command`] round-trips through
-//! the [`super::MenuCommandHandoff`] FIFO.
+//! Space/Escape hints, that shortcut conflicts project as host diagnostics, and
+//! that each resolved [`Command`] round-trips through the
+//! [`super::MenuCommandHandoff`] FIFO.
 //!
 //! Originally extracted verbatim from the inline `#[cfg(test)] mod menu_tests`
 //! in `lib.rs` (EGUIHOST-TEST-EXTRACTION) — at the time a behaviour-identical
@@ -16,7 +17,10 @@
 //! into the `menu` submodule (hence the `crate::menu::` paths below), keeping
 //! `lib.rs` under the cap.
 
-use rge_editor_ui::menus::{default_editor_menu, Command, PredicateContext};
+use rge_editor_ui::menus::{
+    default_editor_menu, file_menu_point, Command, Key, MenuEntry, Modifiers, PredicateContext,
+    Shortcut,
+};
 
 use super::MenuCommandHandoff;
 use crate::menu::project_main_menu;
@@ -37,8 +41,13 @@ fn menu_entries() -> (
             .map(|(l, a, c, _)| (l, a, c))
             .collect::<Vec<_>>()
     };
-    let (f, e, p, vw) = project_main_menu(&default_editor_menu(), &PredicateContext::default());
-    (strip(f), strip(e), strip(p), strip(vw))
+    let menu = project_main_menu(&default_editor_menu(), &PredicateContext::default());
+    (
+        strip(menu.file),
+        strip(menu.edit),
+        strip(menu.play),
+        strip(menu.view),
+    )
 }
 
 #[test]
@@ -143,7 +152,7 @@ fn play_menu_projection_uses_resume_label_when_paused() {
     ctx.can_pause = true;
     ctx.can_stop = true;
     ctx.can_step = true;
-    let (_file, _edit, play, _view) = project_main_menu(&default_editor_menu(), &ctx);
+    let play = project_main_menu(&default_editor_menu(), &ctx).play;
     let labels: Vec<&str> = play.iter().map(|(label, _, _, _)| label.as_str()).collect();
     assert_eq!(
         labels,
@@ -225,7 +234,9 @@ fn enablement_tracks_context() {
     let mut editing = PredicateContext::default();
     editing.is_editing = true;
     editing.can_play = true;
-    let (file, _edit, play, _view) = project_main_menu(&default_editor_menu(), &editing);
+    let menu = project_main_menu(&default_editor_menu(), &editing);
+    let file = menu.file;
+    let play = menu.play;
     assert!(enabled_of(&file, &Command::Save));
     assert!(enabled_of(&file, &Command::OpenFile));
     assert!(enabled_of(&play, &Command::PlayStart));
@@ -236,7 +247,9 @@ fn enablement_tracks_context() {
     let mut playing = PredicateContext::default();
     playing.can_pause = true;
     playing.can_stop = true;
-    let (file, _edit, play, _view) = project_main_menu(&default_editor_menu(), &playing);
+    let menu = project_main_menu(&default_editor_menu(), &playing);
+    let file = menu.file;
+    let play = menu.play;
     assert!(
         !enabled_of(&file, &Command::Save),
         "Save greyed while playing"
@@ -292,5 +305,35 @@ fn file_and_edit_items_carry_accelerators_play_carries_passive_hints() {
         accel(&view),
         vec![Some("Home".to_owned())],
         "View Reset Camera displays its Home accelerator"
+    );
+}
+
+#[test]
+fn shortcut_conflicts_project_as_host_diagnostics() {
+    let mut registry = default_editor_menu();
+    registry
+        .register_entry(
+            &file_menu_point(),
+            MenuEntry::new(
+                "plugin.conflict.save",
+                "Plugin Save",
+                Command::Custom("plugin.save".to_owned()),
+            )
+            .with_shortcut(Shortcut::new(Modifiers::CTRL, Key::Char('S'))),
+        )
+        .expect("synthetic plugin entry registers in the File menu");
+
+    let menu = project_main_menu(&registry, &PredicateContext::default());
+
+    assert_eq!(
+        menu.conflicts.len(),
+        1,
+        "the host projection carries registry shortcut conflicts"
+    );
+    assert_eq!(menu.conflicts[0].shortcut, "Ctrl+S");
+    assert_eq!(
+        menu.conflicts[0].entries,
+        vec!["file.save".to_owned(), "plugin.conflict.save".to_owned()],
+        "conflict diagnostics preserve registration order"
     );
 }

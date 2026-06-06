@@ -22,15 +22,43 @@ use rge_editor_ui::menus::{
     MenuRegistry, PredicateContext, Shortcut,
 };
 
+/// Projected menu item: `(label, shortcut display, command, enabled)`.
+pub(crate) type ProjectedMenuEntry = (String, Option<String>, Command, bool);
+
+/// Host-owned shortcut-conflict diagnostic.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ProjectedShortcutConflict {
+    /// Human-readable shortcut display, e.g. `Ctrl+S`.
+    pub shortcut: String,
+    /// Entry ids that claimed the same shortcut, in registration order.
+    pub entries: Vec<String>,
+}
+
+/// Host-owned projection of the main menu surface.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct ProjectedMainMenu {
+    /// File menu entries.
+    pub file: Vec<ProjectedMenuEntry>,
+    /// Edit menu entries.
+    pub edit: Vec<ProjectedMenuEntry>,
+    /// Play menu entries.
+    pub play: Vec<ProjectedMenuEntry>,
+    /// View menu entries.
+    pub view: Vec<ProjectedMenuEntry>,
+    /// Shortcut conflicts detected by the registry during this resolve.
+    pub conflicts: Vec<ProjectedShortcutConflict>,
+}
+
 /// Resolve `registry` against the live `ctx` and project each of the four points
-/// (File / Edit / Play / View) to the `(label, shortcut display, command,
-/// enabled)` tuples the menu bar paints. The shortcut element is
-/// `Some(`[`Shortcut::display`]`)` for real executable shortcuts (File/Edit) and
-/// also for passive display-only hints such as Play's Space/Escape keys. Passive
-/// hints do not enter the accelerator table; the keystroke itself is routed by
-/// editor-shell's playback path. `enabled` is the resolved entry's
-/// [`rge_editor_ui::menus::ResolvedEntry::enabled`] for `ctx` (greys the item
-/// when its enablement predicate is false). Returns `(file, edit, play, view)`.
+/// (File / Edit / Play / View) to the entries the menu bar paints. The shortcut
+/// element is `Some(`[`Shortcut::display`]`)` for real executable shortcuts
+/// (File/Edit/View) and also for passive display-only hints such as Play's
+/// Space/Escape keys. Passive hints do not enter the accelerator table; the
+/// keystroke itself is routed by editor-shell's playback path. `enabled` is the
+/// resolved entry's [`rge_editor_ui::menus::ResolvedEntry::enabled`] for `ctx`
+/// (greys the item when its enablement predicate is false). The projection also
+/// carries registry shortcut conflicts so the host can render diagnostics instead
+/// of silently dropping them.
 ///
 /// Called PER FRAME with the live [`PredicateContext`] the editor-shell publishes,
 /// so menu enablement tracks the live `PlayState` / editing state. The host caches
@@ -40,19 +68,14 @@ use rge_editor_ui::menus::{
 pub(crate) fn project_main_menu(
     registry: &MenuRegistry,
     ctx: &PredicateContext,
-) -> (
-    Vec<(String, Option<String>, Command, bool)>,
-    Vec<(String, Option<String>, Command, bool)>,
-    Vec<(String, Option<String>, Command, bool)>,
-    Vec<(String, Option<String>, Command, bool)>,
-) {
+) -> ProjectedMainMenu {
     let resolved = registry.resolve(ctx);
     // Project each resolved entry to `(label, optional shortcut display,
     // command, enabled)`. The accelerator is sourced from the resolved
     // `MenuEntry.shortcut` via `Shortcut::display`, falling back to the passive
     // `shortcut_hint`; `enabled` is the resolved `ResolvedEntry.enabled` (the
     // host greys disabled items, which stay present).
-    let project = |point: &ExtensionPoint| -> Vec<(String, Option<String>, Command, bool)> {
+    let project = |point: &ExtensionPoint| -> Vec<ProjectedMenuEntry> {
         resolved
             .entries_for(point)
             .iter()
@@ -70,12 +93,21 @@ pub(crate) fn project_main_menu(
             })
             .collect()
     };
-    (
-        project(&file_menu_point()),
-        project(&edit_menu_point()),
-        project(&play_menu_point()),
-        project(&view_menu_point()),
-    )
+    let conflicts = resolved
+        .conflicts
+        .iter()
+        .map(|conflict| ProjectedShortcutConflict {
+            shortcut: conflict.shortcut.display(),
+            entries: conflict.entries.iter().map(ToString::to_string).collect(),
+        })
+        .collect();
+    ProjectedMainMenu {
+        file: project(&file_menu_point()),
+        edit: project(&edit_menu_point()),
+        play: project(&play_menu_point()),
+        view: project(&view_menu_point()),
+        conflicts,
+    }
 }
 
 /// Add one main-menu item: its `label`, plus — when the entry carries an

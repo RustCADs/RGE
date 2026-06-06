@@ -97,7 +97,9 @@
 //!     `Ctrl+S` / `Ctrl+Shift+S` / `Ctrl+Z` / `Ctrl+Y`) via egui `shortcut_text`,
 //!     sourced from the `rge_editor_ui::menus::Shortcut` substrate on
 //!     `MenuEntry.shortcut` (`menu::menu_item`); display-only — clicks dispatch
-//!     through the FIFO. Play / View accelerators are deferred (`None`).
+//!     through the FIFO. Play shows passive Space/Escape hints; View Reset Camera
+//!     shows its executable Home accelerator. Shortcut conflicts detected by the
+//!     registry are surfaced as a diagnostic menu when present.
 //!
 //! # Headless by design
 //!
@@ -706,8 +708,7 @@ impl EguiHost {
             .acquire()
             .map(|arc| (*arc).clone())
             .unwrap_or_default();
-        let (file_entries, edit_entries, play_entries, view_entries) =
-            project_main_menu(&self.menu_registry, &ctx);
+        let main_menu = project_main_menu(&self.menu_registry, &ctx);
         let dock_state = &mut self.dock_state;
         let full_output = self.context.run_ui(raw_input, |root_ui| {
             // Top menu bar — File ▸ Open / Save / Save As New Project, Edit ▸
@@ -723,7 +724,7 @@ impl EguiHost {
                     // path) — File/Edit grey out outside Editing, Play items per the
                     // live PlayState. The host re-encodes no validity rule.
                     ui.menu_button("File", |ui| {
-                        for (label, shortcut, cmd, enabled) in &file_entries {
+                        for (label, shortcut, cmd, enabled) in &main_menu.file {
                             if menu_item(ui, *enabled, label.as_str(), shortcut.as_deref())
                                 .clicked()
                             {
@@ -733,7 +734,7 @@ impl EguiHost {
                         }
                     });
                     ui.menu_button("Edit", |ui| {
-                        for (label, shortcut, cmd, enabled) in &edit_entries {
+                        for (label, shortcut, cmd, enabled) in &main_menu.edit {
                             if menu_item(ui, *enabled, label.as_str(), shortcut.as_deref())
                                 .clicked()
                             {
@@ -743,7 +744,7 @@ impl EguiHost {
                         }
                     });
                     ui.menu_button("Play", |ui| {
-                        for (label, shortcut, cmd, enabled) in &play_entries {
+                        for (label, shortcut, cmd, enabled) in &main_menu.play {
                             if menu_item(ui, *enabled, label.as_str(), shortcut.as_deref())
                                 .clicked()
                             {
@@ -753,7 +754,7 @@ impl EguiHost {
                         }
                     });
                     ui.menu_button("View", |ui| {
-                        for (label, shortcut, cmd, enabled) in &view_entries {
+                        for (label, shortcut, cmd, enabled) in &main_menu.view {
                             if menu_item(ui, *enabled, label.as_str(), shortcut.as_deref())
                                 .clicked()
                             {
@@ -762,6 +763,17 @@ impl EguiHost {
                             }
                         }
                     });
+                    if !main_menu.conflicts.is_empty() {
+                        ui.menu_button("Shortcut Conflicts", |ui| {
+                            for conflict in &main_menu.conflicts {
+                                ui.label(format!(
+                                    "{}: {}",
+                                    conflict.shortcut,
+                                    conflict.entries.join(", ")
+                                ));
+                            }
+                        });
+                    }
                 });
             });
             // Bottom status bar — open save source file name + dirty marker. Added

@@ -558,6 +558,19 @@ Until **at least one** of those fires, treat the reflection substrate as observe
 4. Cross-check the editor's call graph against the `CommandBus::submit` / `Action::apply` / `Action::revert` signatures to determine whether user-visible CAD mutations can flow through the existing bus.
 5. Test inventory across `editor-*` (`#[test]` count + integration vs unit breakdown + workflow coverage).
 
+### 2026-06-06 - Menu shortcut conflict diagnostics surfaced
+
+**Forward-only follow-up (MENU-CONFLICT-DIAGNOSTIC).** Narrows the "AcceleratorTable conflict UI / conflict population surface" item from the 2026-06-06 menu shortcut reconciliation below. The registry already computed `ResolveResult.conflicts`; the egui host now carries that data through its projection and makes it visible instead of silently ignoring it.
+
+**Now shipped - host-level conflict diagnostics.**
+- `editor-egui-host::menu::project_main_menu` now returns a named `ProjectedMainMenu` containing the four menu entry lists plus projected shortcut-conflict diagnostics (`shortcut` display string + conflicting entry ids).
+- `EguiHost::render` renders a `Shortcut Conflicts` top-bar menu only when conflicts are present, listing each conflicting shortcut and the entry ids that claimed it.
+- The default canonical menu remains conflict-free, so normal users see no extra menu; the new host test injects a synthetic duplicate `Ctrl+S` registration and proves the diagnostic is populated.
+
+**Still open - explicitly NOT closed here:** conflict resolution policy / keybinding editor / fatal gating, plugin menu entry registration UX, host->shell FIFO menu-click replacement, generalized execution beyond wired canonical accelerators, and broader dynamic labels such as camera-state-aware View.
+
+**Scope:** `editor-egui-host` projection/render/tests plus top-level status docs; no `editor-ui` registry semantics, default shortcut values, shell accelerator routing, Cargo, scheduler, or dispatch automation change.
+
 ### 2026-06-06 - Menu shortcut/display follow-up shipped: Play hints, Resume label, View Home
 
 **Forward-only follow-up (MENU-SHORTCUT-DOC-RECONCILE).** Narrows the 2026-06-05 registry-enable section's "Play/View accelerator DISPLAY + execution" and "dynamic toggle LABELS" open items, and narrows the 2026-06-04 W08 section's "View -> Reset Camera has no keystroke binding" line. The menu baseline now reflects the three follow-up commits after #313/#314: Play exposes passive Space/Escape hints, the Play start item resolves as `Resume` while paused, and View -> Reset Camera binds the canonical plain `Home` accelerator.
