@@ -698,7 +698,7 @@ pub struct EditorShell {
     /// Holds `Command::Custom` / `Command::Plugin` for a future plugin/action
     /// executor. Capturing keeps extension menu activations observable without
     /// pretending the editor-shell can execute them before a runtime is wired.
-    extension_menu_commands: Vec<Command>,
+    pub(crate) extension_menu_commands: Vec<Command>,
 
     /// Shell-local entity clipboard for the bounded Edit Copy/Paste path.
     ///
