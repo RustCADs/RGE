@@ -220,6 +220,9 @@ Initial standalone tooling now lives in `Invoke-HandoffClaim.ps1`. It supports
 `Status`, `Claim`, `Renew`, `Release`, and `Reclaim` actions over the live
 `.ai/handoff-claims/<DISPATCH_ID>/` directory plus append-only
 `ai_handoffs/claims/*.json` events. It is not wired into any dispatch runner.
+The helper also supports a separate live-lock root, so a queue runner can keep
+the atomic live lock in a shared primary checkout while writing append-only
+claim events under the isolated worktree that will be committed.
 
 The queue scope guard now recognizes this dispatch's helper-generated
 `ai_handoffs/claims/<DISPATCH_ID>_<TIMESTAMP>_<EVENT>.json` files as
@@ -315,6 +318,10 @@ decision explicitly promotes it.
 
 The fourth slice allows ADR-121 claim-event JSON through the queue scope guard
 without wiring the claim helper into any runner.
+
+The fifth slice lets the claim helper split live-lock root from event root,
+which is required before queue/worktree integration can prevent cross-worktree
+duplicate claims.
 
 Blocking behavior is deliberately out of scope until advisory output has proven
 stable.

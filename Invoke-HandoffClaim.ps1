@@ -7,6 +7,8 @@
     Advisory tooling for the ADR-121 claim primitive. It acquires a live
     dispatch lock by atomically creating `.ai/handoff-claims/<DISPATCH_ID>/`
     and records durable append-only events under `ai_handoffs/claims/`.
+    Use `-LiveRoot` when the live lock must be shared from a primary checkout
+    while append-only events are written under an isolated worktree root.
 
     This script is deliberately not wired into Invoke-AiDispatchLoop.ps1,
     Invoke-AiDispatchQueue.ps1, Invoke-AiDispatchAuto.ps1, or
@@ -29,6 +31,8 @@ param(
     [int]$TtlSeconds = 3600,
 
     [string]$Root = (Get-Location).Path,
+
+    [string]$LiveRoot = '',
 
     [switch]$JsonOnly,
 
@@ -67,18 +71,25 @@ function Resolve-HandoffClaimRoot {
 function Get-HandoffClaimPaths {
     param(
         [Parameter(Mandatory)][string]$RepoRoot,
+        [string]$LiveRepoRoot = '',
         [Parameter(Mandatory)][string]$Id
     )
     if (-not (Test-HandoffClaimDispatchId -Id $Id)) {
         throw "invalid dispatch id for claim path: $Id"
     }
     $rootPath = Resolve-HandoffClaimRoot -Path $RepoRoot
-    $liveRoot = Join-Path $rootPath '.ai\handoff-claims'
+    $liveBase = if ([string]::IsNullOrWhiteSpace($LiveRepoRoot)) {
+        $rootPath
+    } else {
+        Resolve-HandoffClaimRoot -Path $LiveRepoRoot
+    }
+    $liveRoot = Join-Path $liveBase '.ai\handoff-claims'
     $eventRoot = Join-Path $rootPath 'ai_handoffs\claims'
     $lockDir = Join-Path $liveRoot $Id
     $recordPath = Join-Path $lockDir 'claim.json'
     return [pscustomobject][ordered]@{
         root = $rootPath
+        live_root_base = $liveBase
         live_root = $liveRoot
         event_root = $eventRoot
         lock_dir = $lockDir
@@ -231,6 +242,7 @@ function Invoke-HandoffClaim {
         [string]$ClaimBranch = '',
         [int]$Seconds = 3600,
         [string]$RepoRoot = (Get-Location).Path,
+        [string]$LiveRepoRoot = '',
         [DateTimeOffset]$Now = [DateTimeOffset]::Now
     )
 
@@ -241,7 +253,7 @@ function Invoke-HandoffClaim {
         throw "Actor is required for $ClaimAction"
     }
 
-    $paths = Get-HandoffClaimPaths -RepoRoot $RepoRoot -Id $Id
+    $paths = Get-HandoffClaimPaths -RepoRoot $RepoRoot -LiveRepoRoot $LiveRepoRoot -Id $Id
     if (-not (Test-Path -LiteralPath $paths.live_root)) {
         New-Item -ItemType Directory -Path $paths.live_root -Force | Out-Null
     }
@@ -355,7 +367,8 @@ if ([string]::IsNullOrWhiteSpace($DispatchId)) {
 
 try {
     $result = Invoke-HandoffClaim -ClaimAction $Action -Id $DispatchId -ClaimActor $Actor `
-        -ClaimHarness $Harness -ClaimBranch $Branch -Seconds $TtlSeconds -RepoRoot $Root
+        -ClaimHarness $Harness -ClaimBranch $Branch -Seconds $TtlSeconds -RepoRoot $Root `
+        -LiveRepoRoot $LiveRoot
 } catch {
     Fail $_.Exception.Message
 }

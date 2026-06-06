@@ -23,7 +23,7 @@ BeforeAll {
         return Join-Path $Root ".ai\handoff-claims\$DispatchId\claim.json"
     }
 
-    function Get-ClaimEventFiles {
+    function Get-ClaimEventFile {
         param([Parameter(Mandatory)][string]$Root)
         $dir = Join-Path $Root 'ai_handoffs\claims'
         if (-not (Test-Path -LiteralPath $dir)) { return @() }
@@ -59,12 +59,39 @@ Describe 'Invoke-HandoffClaim status and claim' {
         $record.branch | Should -Be 'ai-dispatch/test'
         $record.ttl_seconds | Should -Be 60
 
-        $events = Get-ClaimEventFiles -Root $TestDrive
+        $events = Get-ClaimEventFile -Root $TestDrive
         $events.Count | Should -Be 1
-        $event = Read-JsonFile -Path $events[0].FullName
-        $event.event | Should -Be 'claim'
-        $event.dispatch_id | Should -Be 'CLAIM-PESTER-CREATE'
-        $event.actor | Should -Be 'Codex'
+        $claimEvent = Read-JsonFile -Path $events[0].FullName
+        $claimEvent.event | Should -Be 'claim'
+        $claimEvent.dispatch_id | Should -Be 'CLAIM-PESTER-CREATE'
+        $claimEvent.actor | Should -Be 'Codex'
+    }
+
+    It 'can share the live lock root while writing events under a worktree root' {
+        $now = [DateTimeOffset]::Parse('2026-06-06T13:00:00+03:00')
+        $primaryRoot = Join-Path $TestDrive 'primary'
+        $worktreeRoot = Join-Path $TestDrive 'worktree-a'
+        $otherWorktreeRoot = Join-Path $TestDrive 'worktree-b'
+        New-Item -ItemType Directory -Path $primaryRoot, $worktreeRoot, $otherWorktreeRoot -Force |
+            Out-Null
+
+        $result = Invoke-HandoffClaim -ClaimAction Claim -Id 'CLAIM-PESTER-SPLIT-ROOT' `
+            -ClaimActor 'Codex' -ClaimHarness 'Queue' -ClaimBranch 'ai-dispatch/split' `
+            -Seconds 60 -RepoRoot $worktreeRoot -LiveRepoRoot $primaryRoot -Now $now
+
+        $result.status | Should -Be 'CLAIMED'
+        Test-Path -LiteralPath (Get-ClaimRecordPath -Root $primaryRoot -DispatchId 'CLAIM-PESTER-SPLIT-ROOT') |
+            Should -BeTrue
+        (Get-ClaimEventFile -Root $worktreeRoot).Count | Should -Be 1
+        (Get-ClaimEventFile -Root $primaryRoot).Count | Should -Be 0
+
+        $blocked = Invoke-HandoffClaim -ClaimAction Claim -Id 'CLAIM-PESTER-SPLIT-ROOT' `
+            -ClaimActor 'Claude' -ClaimHarness 'Queue' -ClaimBranch 'ai-dispatch/split' `
+            -Seconds 60 -RepoRoot $otherWorktreeRoot -LiveRepoRoot $primaryRoot -Now $now.AddSeconds(1)
+
+        $blocked.status | Should -Be 'BLOCKED'
+        $blocked.actor | Should -Be 'Codex'
+        (Get-ClaimEventFile -Root $otherWorktreeRoot).Count | Should -Be 0
     }
 
     It 'blocks another actor while the claim is live' {
@@ -116,7 +143,7 @@ Describe 'Invoke-HandoffClaim renew and release' {
         $record = Read-JsonFile -Path (Get-ClaimRecordPath -Root $TestDrive -DispatchId 'CLAIM-PESTER-RENEW')
         $record.ttl_seconds | Should -Be 120
         $record.timestamp | Should -Be '2026-06-06T13:00:10.0000000+03:00'
-        (Get-ClaimEventFiles -Root $TestDrive | Where-Object { $_.Name -match '_renew\.json$' }).Count |
+        (Get-ClaimEventFile -Root $TestDrive | Where-Object { $_.Name -match '_renew\.json$' }).Count |
             Should -Be 1
     }
 
@@ -142,7 +169,7 @@ Describe 'Invoke-HandoffClaim renew and release' {
 
         $status = Invoke-HandoffClaim -ClaimAction Status -Id 'CLAIM-PESTER-RELEASE' -RepoRoot $TestDrive
         $status.status | Should -Be 'AVAILABLE'
-        (Get-ClaimEventFiles -Root $TestDrive | Where-Object { $_.Name -match '_release\.json$' }).Count |
+        (Get-ClaimEventFile -Root $TestDrive | Where-Object { $_.Name -match '_release\.json$' }).Count |
             Should -Be 1
     }
 }
@@ -170,9 +197,9 @@ Describe 'Invoke-HandoffClaim stale and safety semantics' {
 
         $record = Read-JsonFile -Path (Get-ClaimRecordPath -Root $TestDrive -DispatchId 'CLAIM-PESTER-STALE')
         $record.actor | Should -Be 'Claude'
-        (Get-ClaimEventFiles -Root $TestDrive | Where-Object { $_.Name -match '_expire\.json$' }).Count |
+        (Get-ClaimEventFile -Root $TestDrive | Where-Object { $_.Name -match '_expire\.json$' }).Count |
             Should -Be 1
-        (Get-ClaimEventFiles -Root $TestDrive | Where-Object { $_.Name -match '_reclaim\.json$' }).Count |
+        (Get-ClaimEventFile -Root $TestDrive | Where-Object { $_.Name -match '_reclaim\.json$' }).Count |
             Should -Be 1
     }
 
