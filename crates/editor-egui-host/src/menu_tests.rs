@@ -18,12 +18,12 @@
 //! `lib.rs` under the cap.
 
 use rge_editor_ui::menus::{
-    default_editor_menu, file_menu_point, plugins_menu_point, Command, Key, MenuEntry, Modifiers,
-    PredicateContext, Shortcut,
+    default_editor_menu, file_menu_point, Command, Key, MenuEntry, Modifiers, PredicateContext,
+    RegistryError, Shortcut,
 };
 
 use super::MenuCommandHandoff;
-use crate::menu::project_main_menu;
+use crate::menu::{project_main_menu, register_plugin_menu_entry};
 
 /// Project the canonical menu's four points to `(label, accel, command)` triples,
 /// dropping the resolved `enabled` flag — these tests pin labels / commands /
@@ -331,14 +331,13 @@ fn plugins_menu_projects_registered_entries_and_round_trips() {
         plugin_id: "com.example.mesh-audit".to_owned(),
         action_id: "open-panel".to_owned(),
     };
-    registry
-        .register_entry(
-            &plugins_menu_point(),
-            MenuEntry::new("plugin.mesh_audit.open", "Mesh Audit", command.clone()).with_shortcut(
-                Shortcut::new(Modifiers::CTRL | Modifiers::SHIFT, Key::Char('P')),
-            ),
-        )
-        .expect("synthetic plugin entry registers in the Plugins menu");
+    register_plugin_menu_entry(
+        &mut registry,
+        MenuEntry::new("plugin.mesh_audit.open", "Mesh Audit", command.clone()).with_shortcut(
+            Shortcut::new(Modifiers::CTRL | Modifiers::SHIFT, Key::Char('P')),
+        ),
+    )
+    .expect("synthetic plugin entry registers in the Plugins menu");
 
     let plugins = project_main_menu(&registry, &PredicateContext::default()).plugins;
 
@@ -360,6 +359,30 @@ fn plugins_menu_projects_registered_entries_and_round_trips() {
         handoff.drain(),
         vec![command],
         "a plugin menu entry enqueues its Command::Plugin unchanged"
+    );
+}
+
+#[test]
+fn plugins_menu_registration_rejects_duplicate_entry_ids() {
+    let mut registry = default_editor_menu();
+    let command = Command::Plugin {
+        plugin_id: "com.example.mesh-audit".to_owned(),
+        action_id: "open-panel".to_owned(),
+    };
+    let entry = MenuEntry::new("plugin.mesh_audit.open", "Mesh Audit", command);
+
+    register_plugin_menu_entry(&mut registry, entry.clone())
+        .expect("first plugin menu entry registers");
+    let err = register_plugin_menu_entry(&mut registry, entry)
+        .expect_err("duplicate plugin menu entry id is rejected");
+
+    assert_eq!(
+        err,
+        RegistryError::DuplicateEntryId(
+            "editor.main_menu.plugins".to_owned(),
+            "plugin.mesh_audit.open".to_owned()
+        ),
+        "duplicate rejection reports the Plugins point and entry id"
     );
 }
 

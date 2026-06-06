@@ -137,7 +137,7 @@ use std::sync::Arc;
 // `egui_winit::EventResponse` for the input adapter return type.
 pub use egui::ViewportId;
 pub use egui_winit::EventResponse;
-use rge_editor_ui::menus::{default_editor_menu, MenuRegistry};
+use rge_editor_ui::menus::{default_editor_menu, MenuEntry, MenuRegistry, RegistryError};
 use winit::event::WindowEvent;
 use winit::window::Window;
 
@@ -148,7 +148,7 @@ pub mod tabs;
 pub use handoff::{
     InspectorHandoff, MenuCommandHandoff, PredicateContextHandoff, SaveStatusHandoff,
 };
-use menu::{menu_item, project_main_menu};
+use menu::{menu_item, project_main_menu, register_plugin_menu_entry as register_plugin_entry};
 pub use tabs::{EditorTabViewer, InspectorTabBody, TabBody, ViewportRectSink};
 
 // ---------------------------------------------------------------------------
@@ -527,6 +527,22 @@ impl EguiHost {
     #[must_use]
     pub fn menu_command_handoff(&self) -> &Arc<MenuCommandHandoff> {
         &self.menu_command_handoff
+    }
+
+    /// Register a plugin-provided main-menu entry in the optional Plugins menu.
+    ///
+    /// The entry becomes part of the host-owned [`MenuRegistry`] that
+    /// [`Self::render`] re-resolves every frame. Activating the item only pushes
+    /// its [`rge_editor_ui::menus::Command`] into [`Self::menu_command_handoff`];
+    /// plugin action execution remains the editor-shell/plugin-runtime
+    /// consumer's responsibility.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RegistryError::DuplicateEntryId`] if another Plugins entry with
+    /// the same id is already registered.
+    pub fn register_plugin_menu_entry(&mut self, entry: MenuEntry) -> Result<(), RegistryError> {
+        register_plugin_entry(&mut self.menu_registry, entry)
     }
 
     /// Borrow the shared predicate-context handoff (host→shell latest-only slot of

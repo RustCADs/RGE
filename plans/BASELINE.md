@@ -558,6 +558,21 @@ Until **at least one** of those fires, treat the reflection substrate as observe
 4. Cross-check the editor's call graph against the `CommandBus::submit` / `Action::apply` / `Action::revert` signatures to determine whether user-visible CAD mutations can flow through the existing bus.
 5. Test inventory across `editor-*` (`#[test]` count + integration vs unit breakdown + workflow coverage).
 
+### 2026-06-06 - Plugin menu registration hook
+
+**Forward-only follow-up (MENU-PLUGIN-REGISTRATION).** Narrows the remaining plugin menu registration UX gap from the optional Plugins projection slice. The live `EguiHost` now exposes a production registration hook that writes plugin-provided entries into the host-owned Plugins menu registry that `render()` already resolves each frame.
+
+**Now shipped - plugin menu registration.**
+- `EguiHost::register_plugin_menu_entry(MenuEntry) -> Result<(), RegistryError>` registers into the canonical `plugins_menu_point()`.
+- The host API keeps the registration surface on the live `EguiHost` rather than only in tests that manually own a `MenuRegistry`.
+- The existing render path remains unchanged: registered entries project into `ProjectedMainMenu::plugins`, the top-level Plugins menu stays hidden while empty, and activation enqueues the entry's `Command` through `MenuCommandHandoff`.
+- Host tests register a synthetic `Command::Plugin`, assert projection + FIFO round-trip, and assert duplicate plugin entry ids return `RegistryError::DuplicateEntryId`.
+- The public API smoke pins the method signature without constructing a GPU-backed host.
+
+**Still open - explicitly NOT closed here:** plugin action execution/routing policy, `editor-shell` handling for `Command::Plugin`, plugin runtime/discovery/loading, command-palette integration, host->shell FIFO menu-click replacement, generalized registry execution beyond the now-wired menu command queue, broader camera UI beyond reset/frame/zoom, and conflict resolution/keybinding editor/fatal gating.
+
+**Scope:** `editor-egui-host` menu registration helper, `EguiHost` public API, projection/FIFO/duplicate-id tests, public API smoke, and top-level status docs; no `editor-ui` default-menu behavior change, no `editor-shell` routing, no plugin runtime, no plugin discovery, no command palette, no keybinding editor, no FIFO replacement, no Cargo, scheduler, dispatch automation, or task arming.
+
 ### 2026-06-06 - File Quit app exit
 
 **Forward-only follow-up (MENU-FILE-QUIT).** Narrows the File menu surface with a bounded application-exit command. `Quit` now has a visible File menu entry, an executable `Ctrl+Q` accelerator, and a shell route that requests app exit without owning the winit event loop.

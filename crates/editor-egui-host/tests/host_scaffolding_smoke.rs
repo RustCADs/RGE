@@ -14,6 +14,7 @@
 //! payoff that dispatch B exercises naturally through editor-shell.
 
 use rge_editor_egui_host::EguiHost;
+use rge_editor_ui::menus::{MenuEntry, RegistryError};
 
 // ---------------------------------------------------------------------------
 // Trait bounds
@@ -66,6 +67,8 @@ fn public_api_surface_is_present() {
     let _ = EguiHost::context as fn(&EguiHost) -> &egui::Context;
     let _ = EguiHost::surface_size as fn(&EguiHost) -> [u32; 2];
     let _ = EguiHost::pixels_per_point as fn(&EguiHost) -> f32;
+    let _ = EguiHost::register_plugin_menu_entry
+        as fn(&mut EguiHost, MenuEntry) -> Result<(), RegistryError>;
 
     // Dispatch C: `render` no longer takes a caller-supplied UI
     // closure — the host owns the [`egui_dock::DockState`] layout

@@ -19,7 +19,7 @@
 
 use rge_editor_ui::menus::{
     edit_menu_point, file_menu_point, play_menu_point, plugins_menu_point, view_menu_point,
-    Command, ExtensionPoint, MenuRegistry, PredicateContext, Shortcut,
+    Command, ExtensionPoint, MenuEntry, MenuRegistry, PredicateContext, RegistryError, Shortcut,
 };
 
 /// Projected menu item: `(label, shortcut display, command, enabled)`.
@@ -111,6 +111,24 @@ pub(crate) fn project_main_menu(
         plugins: project(&plugins_menu_point()),
         conflicts,
     }
+}
+
+/// Register a plugin-provided entry against the optional Plugins main-menu
+/// extension point. The entry is stored in the same [`MenuRegistry`] that
+/// [`project_main_menu`] resolves each frame; activation still only enqueues the
+/// entry's [`Command`] into the host->shell menu handoff.
+///
+/// # Errors
+///
+/// Forwards [`RegistryError::DuplicateEntryId`] from the registry when another
+/// entry with the same id already exists in Plugins. The default editor menu
+/// declares the Plugins point, so [`RegistryError::UnknownExtensionPoint`] would
+/// indicate a caller supplied a non-canonical registry.
+pub(crate) fn register_plugin_menu_entry(
+    registry: &mut MenuRegistry,
+    entry: MenuEntry,
+) -> Result<(), RegistryError> {
+    registry.register_entry(&plugins_menu_point(), entry)
 }
 
 /// Add one main-menu item: its `label`, plus — when the entry carries an
