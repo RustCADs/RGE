@@ -3740,22 +3740,31 @@ mod menu_routing {
     }
 
     #[test]
-    fn menu_unrouted_command_is_noop() {
-        // An unrouted core Command drains without firing any handler, panicking,
-        // adopting state, or being mistaken for an extension command.
+    fn menu_toggle_command_palette_sets_one_shot_request() {
+        // Command::ToggleCommandPalette has no UI surface yet. The shell still
+        // records the activation as a one-shot request so a future palette
+        // surface can consume it without the command vanishing at the router.
         let mut s = EditorShell::new();
         s.menu_command_handoff = Some(handoff_with(&[Command::ToggleCommandPalette]));
 
         s.drain_and_route_menu_commands();
 
+        assert!(
+            s.take_command_palette_toggle_request(),
+            "ToggleCommandPalette sets a pending palette-toggle request"
+        );
+        assert!(
+            !s.take_command_palette_toggle_request(),
+            "the pending palette-toggle request is single-consume"
+        );
         assert_eq!(
             s.save_source(),
             None,
-            "an unrouted menu command changes nothing"
+            "toggling the future palette does not run document handlers"
         );
         assert!(
             s.drain_extension_menu_commands().is_empty(),
-            "an unrouted core command is not captured as an extension command"
+            "the core palette toggle is not captured as an extension command"
         );
     }
 

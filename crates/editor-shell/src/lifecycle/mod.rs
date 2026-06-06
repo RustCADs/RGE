@@ -289,6 +289,9 @@ pub struct EditorShell {
     /// Set by command sources that request application exit without holding an
     /// `ActiveEventLoop`; consumed at the next winit event boundary.
     quit_requested: bool,
+    /// Set by command sources that request the future command-palette surface to
+    /// toggle; consumed by a future UI boundary.
+    command_palette_toggle_requested: bool,
 
     // ---- sub-δ.1.B render path -------------------------------------------
     //
@@ -741,6 +744,7 @@ impl EditorShell {
             last_frame_instant: None,
             initialized: false,
             quit_requested: false,
+            command_palette_toggle_requested: false,
             editor_camera: EditorCameraState::default(),
             render_handoff: RenderHandoff::new(),
             cad_world: None,
@@ -909,6 +913,22 @@ impl EditorShell {
         requested
     }
 
+    /// Request that the future command-palette UI toggle at the next consumer
+    /// boundary.
+    ///
+    /// This deliberately does not create or render a palette. It only makes the
+    /// existing core `Command::ToggleCommandPalette` observable instead of
+    /// letting it disappear at the menu-command router.
+    pub fn handle_command_palette_toggle_request(&mut self) {
+        self.command_palette_toggle_requested = true;
+    }
+
+    fn take_command_palette_toggle_request(&mut self) -> bool {
+        let requested = self.command_palette_toggle_requested;
+        self.command_palette_toggle_requested = false;
+        requested
+    }
+
     /// Construct an [`EditorShell`] with a pre-built CAD scene attached
     /// to the render path. **Sub-δ.1.B entry point** for `rge-editor`.
     ///
@@ -962,6 +982,7 @@ impl EditorShell {
             last_frame_instant: None,
             initialized: false,
             quit_requested: false,
+            command_palette_toggle_requested: false,
             editor_camera: EditorCameraState::default(),
             render_handoff: RenderHandoff::new(),
             cad_world: Some(cad_world),
@@ -1225,6 +1246,7 @@ impl EditorShell {
             last_frame_instant: None,
             initialized: false,
             quit_requested: false,
+            command_palette_toggle_requested: false,
             editor_camera,
             render_handoff: RenderHandoff::new(),
             cad_world: None,

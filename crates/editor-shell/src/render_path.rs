@@ -404,10 +404,11 @@ impl EditorShell {
     /// — the same PIE driver as the Space / Escape playback keys; A4
     /// (VIEWMENU-RESETCAMERA) adds the View camera commands, routed to
     /// [`EditorShell::reset_camera`], [`EditorShell::zoom_camera_in`], and
-    /// [`EditorShell::zoom_camera_out`]. Extension commands (`Custom` /
-    /// `Plugin`) are captured into [`Self::drain_extension_menu_commands`] for a
-    /// future plugin/action executor. Any other unrouted core `Command` is
-    /// logged + ignored.
+    /// [`EditorShell::zoom_camera_out`]. The command-palette toggle is captured
+    /// as a one-shot shell request for a future palette UI. Extension commands
+    /// (`Custom` / `Plugin`) are captured into
+    /// [`Self::drain_extension_menu_commands`] for a future plugin/action
+    /// executor. Any other unrouted core `Command` is logged + ignored.
     ///
     /// `pub` so headless tests can drive a `Command` without synthesizing a winit
     /// `KeyEvent` or a menu click (mirrors [`EditorShell::handle_key_command`]).
@@ -470,6 +471,7 @@ impl EditorShell {
             Command::ResetCamera => self.reset_camera(),
             Command::ZoomIn => self.zoom_camera_in(),
             Command::ZoomOut => self.zoom_camera_out(),
+            Command::ToggleCommandPalette => self.handle_command_palette_toggle_request(),
             extension @ (Command::Custom(_) | Command::Plugin { .. }) => {
                 tracing::debug!(
                     target: "rge::editor-shell::menu",

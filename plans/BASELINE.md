@@ -558,6 +558,20 @@ Until **at least one** of those fires, treat the reflection substrate as observe
 4. Cross-check the editor's call graph against the `CommandBus::submit` / `Action::apply` / `Action::revert` signatures to determine whether user-visible CAD mutations can flow through the existing bus.
 5. Test inventory across `editor-*` (`#[test]` count + integration vs unit breakdown + workflow coverage).
 
+### 2026-06-06 - Command palette toggle request
+
+**Forward-only follow-up (MENU-COMMAND-PALETTE-REQUEST).** Narrows the command-palette gap without pretending the palette exists. The `Command::ToggleCommandPalette` variant already existed, but after extension-command capture it was the lone meaningful core command that still vanished at `route_menu_command`.
+
+**Now shipped - one-shot palette toggle request.**
+- `EditorShell` owns a pending command-palette toggle flag.
+- `route_menu_command` routes `Command::ToggleCommandPalette` to `handle_command_palette_toggle_request()`.
+- `take_command_palette_toggle_request()` consumes the request once, matching the existing quit-request latch shape.
+- Shell tests prove the request is set and single-consume, does not run document handlers, and is not captured as an extension command.
+
+**Still open - explicitly NOT closed here:** command-palette UI, command search/list model, default menu entry or shortcut binding for the palette, plugin action execution/routing policy beyond capture, plugin runtime/discovery/loading, host->shell FIFO menu-click replacement, generalized command execution beyond the existing menu command router, and conflict resolution/keybinding editor/fatal gating.
+
+**Scope:** `editor-shell` routing/state/tests plus top-level status docs; no `editor-ui` default-menu change, `editor-egui-host` projection change, command-palette UI, plugin runtime, Cargo, scheduler, dispatch automation, or task arming.
+
 ### 2026-06-06 - Extension menu command capture
 
 **Forward-only follow-up (MENU-EXTENSION-COMMAND-CAPTURE).** Narrows the registration-to-execution gap opened by the optional Plugins menu and generic registration hooks. Registered extension entries can already reach the shell through `MenuCommandHandoff`; this beat prevents their `Command::Custom` / `Command::Plugin` activations from disappearing at `EditorShell::route_menu_command`.
