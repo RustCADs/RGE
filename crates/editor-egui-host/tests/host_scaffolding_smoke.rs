@@ -14,7 +14,7 @@
 //! payoff that dispatch B exercises naturally through editor-shell.
 
 use rge_editor_egui_host::EguiHost;
-use rge_editor_ui::menus::{MenuEntry, RegistryError};
+use rge_editor_ui::menus::{ExtensionPoint, MenuEntry, RegistryError};
 
 // ---------------------------------------------------------------------------
 // Trait bounds
@@ -67,6 +67,8 @@ fn public_api_surface_is_present() {
     let _ = EguiHost::context as fn(&EguiHost) -> &egui::Context;
     let _ = EguiHost::surface_size as fn(&EguiHost) -> [u32; 2];
     let _ = EguiHost::pixels_per_point as fn(&EguiHost) -> f32;
+    let _ = EguiHost::register_menu_entry
+        as fn(&mut EguiHost, &ExtensionPoint, MenuEntry) -> Result<(), RegistryError>;
     let _ = EguiHost::register_plugin_menu_entry
         as fn(&mut EguiHost, MenuEntry) -> Result<(), RegistryError>;
 

@@ -113,10 +113,25 @@ pub(crate) fn project_main_menu(
     }
 }
 
-/// Register a plugin-provided entry against the optional Plugins main-menu
-/// extension point. The entry is stored in the same [`MenuRegistry`] that
+/// Register an extension-provided entry against any declared main-menu extension
+/// point. The entry is stored in the same [`MenuRegistry`] that
 /// [`project_main_menu`] resolves each frame; activation still only enqueues the
 /// entry's [`Command`] into the host->shell menu handoff.
+///
+/// # Errors
+///
+/// Forwards [`RegistryError::UnknownExtensionPoint`] and
+/// [`RegistryError::DuplicateEntryId`] from the registry.
+pub(crate) fn register_menu_entry(
+    registry: &mut MenuRegistry,
+    point: &ExtensionPoint,
+    entry: MenuEntry,
+) -> Result<(), RegistryError> {
+    registry.register_entry(point, entry)
+}
+
+/// Register a plugin-provided entry against the optional Plugins main-menu
+/// extension point.
 ///
 /// # Errors
 ///
@@ -128,7 +143,7 @@ pub(crate) fn register_plugin_menu_entry(
     registry: &mut MenuRegistry,
     entry: MenuEntry,
 ) -> Result<(), RegistryError> {
-    registry.register_entry(&plugins_menu_point(), entry)
+    register_menu_entry(registry, &plugins_menu_point(), entry)
 }
 
 /// Add one main-menu item: its `label`, plus — when the entry carries an

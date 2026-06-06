@@ -23,7 +23,7 @@ use rge_editor_ui::menus::{
 };
 
 use super::MenuCommandHandoff;
-use crate::menu::{project_main_menu, register_plugin_menu_entry};
+use crate::menu::{project_main_menu, register_menu_entry, register_plugin_menu_entry};
 
 /// Project the canonical menu's four points to `(label, accel, command)` triples,
 /// dropping the resolved `enabled` flag — these tests pin labels / commands /
@@ -321,6 +321,31 @@ fn plugins_menu_defaults_empty() {
     assert!(
         menu.plugins.is_empty(),
         "Plugins is an optional top-level menu and starts hidden/empty"
+    );
+}
+
+#[test]
+fn extension_menu_registration_projects_declared_main_menu_points() {
+    let mut registry = default_editor_menu();
+    let command = Command::Custom("plugin.export.scene".to_owned());
+
+    register_menu_entry(
+        &mut registry,
+        &file_menu_point(),
+        MenuEntry::new("plugin.export.scene", "Export Scene", command.clone()),
+    )
+    .expect("extension entry registers in a declared File menu point");
+
+    let file = project_main_menu(&registry, &PredicateContext::default()).file;
+
+    assert!(
+        file.iter().any(
+            |(label, shortcut, projected_command, enabled)| label == "Export Scene"
+                && shortcut.is_none()
+                && projected_command == &command
+                && *enabled
+        ),
+        "extension entries registered outside Plugins project through the host menu surface"
     );
 }
 

@@ -558,6 +558,20 @@ Until **at least one** of those fires, treat the reflection substrate as observe
 4. Cross-check the editor's call graph against the `CommandBus::submit` / `Action::apply` / `Action::revert` signatures to determine whether user-visible CAD mutations can flow through the existing bus.
 5. Test inventory across `editor-*` (`#[test]` count + integration vs unit breakdown + workflow coverage).
 
+### 2026-06-06 - Generic menu extension registration
+
+**Forward-only follow-up (MENU-EXTENSION-REGISTRATION).** Narrows the host registration surface beyond the Plugins-only convenience method. The live `EguiHost` can now register extension entries against any declared menu extension point in its owned registry.
+
+**Now shipped - generic menu registration.**
+- `EguiHost::register_menu_entry(&ExtensionPoint, MenuEntry) -> Result<(), RegistryError>` registers against any declared point in the host's canonical menu registry.
+- `EguiHost::register_plugin_menu_entry` now delegates through the generic method using `plugins_menu_point()`.
+- Host tests register a synthetic extension entry into File, assert it projects through the host menu surface, and keep the Plugins projection/FIFO/duplicate-id coverage intact.
+- The public API smoke pins both the generic method and the Plugins convenience method without constructing a GPU-backed host.
+
+**Still open - explicitly NOT closed here:** plugin action execution/routing policy, `editor-shell` handling for `Command::Plugin` or `Command::Custom`, plugin runtime/discovery/loading, command-palette integration, host->shell FIFO menu-click replacement, generalized command execution beyond the host menu command queue, broader camera UI beyond reset/frame/zoom, and conflict resolution/keybinding editor/fatal gating.
+
+**Scope:** `editor-egui-host` menu registration helper/API/tests, public API smoke, and top-level status docs; no new default menu entries, no `editor-ui` default-menu behavior change, no `editor-shell` routing, no plugin runtime, no plugin discovery, no command palette, no keybinding editor, no FIFO replacement, no Cargo, scheduler, dispatch automation, or task arming.
+
 ### 2026-06-06 - Plugin menu registration hook
 
 **Forward-only follow-up (MENU-PLUGIN-REGISTRATION).** Narrows the remaining plugin menu registration UX gap from the optional Plugins projection slice. The live `EguiHost` now exposes a production registration hook that writes plugin-provided entries into the host-owned Plugins menu registry that `render()` already resolves each frame.
