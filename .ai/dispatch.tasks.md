@@ -7293,7 +7293,7 @@ is the only safeguard against selector drift.
      schema, workflow, Rust/Cargo, test, fixture, or task-selection behavior
      changed.
 
-62. **Read-only Phase 9 audit: freeze-validity pressure.**
+62. **[DONE 2026-05-26 via ISSUE-210 / commit `20518c0`] Read-only Phase 9 audit: freeze-validity pressure.**
    Delegated-main smoke batch task 1 of 10. Audit Phase 9's "freeze validity"
    pressure axis against current `plans/PLAN.md`, `plans/IMPLEMENTATION.md`,
    `Status.md`, `HANDOFF.md`, recent `change.md`, and current source layout.
@@ -7301,21 +7301,21 @@ is the only safeguard against selector drift.
    supports or weakens the freeze, and name exactly one smallest safe follow-up
    or `NEEDS_HUMAN`.
 
-63. **Read-only Phase 9 audit: abstraction-pain pressure.**
+63. **[DONE 2026-05-26 via ISSUE-212 / commit `e8219e0`] Read-only Phase 9 audit: abstraction-pain pressure.**
    Delegated-main smoke batch task 2 of 10. Audit current abstraction pain
    across the most active substrates (`cad-core`, `cad-projection`,
    `editor-shell`, `gfx`, `rge-scene-loader`, automation scripts) using only
    existing code and dispatch artifacts. Identify the sharpest pain point and
    name exactly one smallest safe follow-up or `NEEDS_HUMAN`.
 
-64. **Read-only Phase 9 audit: invalidation-economics pressure.**
+64. **[DONE 2026-05-26 via ISSUE-214 / commit `283cc19`] Read-only Phase 9 audit: invalidation-economics pressure.**
    Delegated-main smoke batch task 3 of 10. Audit cache invalidation and
    recompute economics across graph-foundation, cad-core tessellation/projection
    caches, frame-graph resource maps, and script hot-reload evidence. Identify
    whether any measured or structural invalidation cost deserves the next
    dispatch, and name exactly one smallest safe follow-up or `NEEDS_HUMAN`.
 
-65. **Read-only Phase 9 audit: reflection-scale pressure.**
+65. **[DONE 2026-05-26 via ISSUE-216 / commit `b3bfb76`] Read-only Phase 9 audit: reflection-scale pressure.**
    Delegated-main smoke batch task 4 of 10. Re-audit reflection adoption after
    the recent typed scene-loader work: search production and test usage of
    `kernel/types`, `rge-macros-reflect`, typed `ComponentValue`, and any
@@ -7323,41 +7323,41 @@ is the only safeguard against selector drift.
    still untriggered, and name exactly one smallest safe follow-up or
    `NEEDS_HUMAN`.
 
-66. **Read-only Phase 9 audit: async-orchestration pressure.**
+66. **[DONE 2026-05-26 via ISSUE-217 / commit `2650320`] Read-only Phase 9 audit: async-orchestration pressure.**
    Delegated-main smoke batch task 5 of 10. Audit whether job-system,
    io-scheduler, asset-streaming, asset-view, or shared kernel cavities have
    gained concrete consumer pressure from current runtime/editor/asset paths.
    Do not invent substrate work. Name exactly one smallest safe follow-up or
    `NEEDS_HUMAN`.
 
-67. **Read-only Phase 9 audit: compile-time pressure.**
+67. **[DONE 2026-05-26 via ISSUE-218 / commit `93b7fa6`] Read-only Phase 9 audit: compile-time pressure.**
    Delegated-main smoke batch task 6 of 10. Audit current compile-time signals
    from CI logs, local dispatch verify logs, crate/test fanout, and recent
    dependency churn. Identify whether compile-time pressure has a bounded
    autonomous follow-up, and name exactly one smallest safe follow-up or
    `NEEDS_HUMAN`.
 
-68. **Read-only Phase 9 audit: editor-usability pressure.**
+68. **[DONE 2026-05-26 via ISSUE-219 / commit `6df1bef`] Read-only Phase 9 audit: editor-usability pressure.**
    Delegated-main smoke batch task 7 of 10. Audit current editor usability
    substrate, including editor-shell, editor-ui, command-bus, runtime-headless,
    and scene-loader consumers. Distinguish user-visible gaps from substrate
    prerequisites. Name exactly one smallest safe follow-up or `NEEDS_HUMAN`.
 
-69. **Read-only Phase 9 audit: GPU-pressure axis.**
+69. **[DONE 2026-05-26 via ISSUE-220 / commit `7760bb9`] Read-only Phase 9 audit: GPU-pressure axis.**
    Delegated-main smoke batch task 8 of 10. Audit GPU/render pressure from gfx,
    frame-graph, render-handoff, editor-shell render path, and baseline docs.
    Determine whether the next GPU task is measurement, integration, docs
    reconciliation, or no-op. Name exactly one smallest safe follow-up or
    `NEEDS_HUMAN`.
 
-70. **Read-only audit: persistent kernel cavity pressure.**
+70. **[DONE 2026-05-26 via ISSUE-221 / commit `7c100e2`] Read-only audit: persistent kernel cavity pressure.**
    Delegated-main smoke batch task 9 of 10. Re-audit the five persistent
    Tier-1 kernel v0 cavities (`shared`, `asset-streaming`, `io-scheduler`,
    `job-system`, `asset-view`) against current code and docs. Classify each as
    still pressure-deferred or newly triggered. Name exactly one smallest safe
    follow-up or `NEEDS_HUMAN`.
 
-71. **Read-only audit: delegated-main batch outcome synthesis.**
+71. **[DONE 2026-05-27 via ISSUE-222 / commit `ab7229c`] Read-only audit: delegated-main batch outcome synthesis.**
    Delegated-main smoke batch task 10 of 10. After tasks #62-#70 are filed or
    completed, synthesize their issue/EXEC outcomes plus JSONL timing traces.
    Report which Phase 9 axis, if any, should become the next branch-mode
@@ -7381,7 +7381,7 @@ is the only safeguard against selector drift.
      --untracked-files=all`, and static inspection proving no tracked
      production/doc/script/Cargo/workflow/schema/task-brief files changed.
 
-72. **Add PowerShell CI guardrails for dispatch automation.**
+72. **[DONE 2026-05-27 via ISSUE-223 / commit `6a24f51`] Add PowerShell CI guardrails for dispatch automation.**
    Branch-mode infrastructure task. Add the first PowerShell quality gate for
    the dispatch scripts by combining (a) focused Pester behavior coverage for
    the queue audit-log writer and (b) repository-wide PSScriptAnalyzer static
