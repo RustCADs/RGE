@@ -64,7 +64,7 @@ function Get-HandoffFirstField {
     )
     $escaped = [regex]::Escape($Key)
     $m = [regex]::Match($Text, "(?m)^$escaped[ \t]*:[ \t]*(.*?)[ \t]*$")
-    if ($m.Success) { return $m.Groups[1].Value }
+    if ($m.Success) { return $m.Groups[1].Value.Trim() }
     return $null
 }
 
@@ -79,7 +79,7 @@ function Get-HandoffRelatedFiles {
         }
         if ($inBlock) {
             if ($line -match '^[ \t]*-[ \t]+(.+?)[ \t]*$') {
-                $items += $Matches[1]
+                $items += $Matches[1].Trim()
             } elseif ($line.Trim() -ne '') {
                 break
             }
@@ -409,7 +409,7 @@ function Get-HandoffEnvelope {
         found         = $true
         may_edit      = @(Get-HandoffEnvelopeList -Body $body -Key 'MAY_EDIT')
         must_not_edit = @(Get-HandoffEnvelopeList -Body $body -Key 'MUST_NOT_EDIT')
-        incidental_ok = ($body -match '(?im)^[ \t]*INCIDENTAL_OK[ \t]*:[ \t]*true[ \t]*$')
+        incidental_ok = ($body -match '(?im)^[ \t]*INCIDENTAL_OK[ \t]*:[ \t]*true[ \t\r]*$')
     }
 }
 

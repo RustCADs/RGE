@@ -86,7 +86,6 @@ Describe 'Test-HandoffPacketFile' {
 
         $result = Test-HandoffPacketFile -Path $packet
 
-        if ($result.verdict -ne 'PASS') { Write-Host ($result | ConvertTo-Json -Depth 6) }
         $result.verdict | Should -Be 'PASS'
         $result.errors | Should -BeNullOrEmpty
         $result.packet_type | Should -Be 'TASK'
@@ -168,7 +167,6 @@ EXIT_CODE: 0
 
         $result = Test-HandoffPacketFile -Path $packet
 
-        if ($result.verdict -ne 'PASS') { Write-Host ($result | ConvertTo-Json -Depth 6) }
         $result.verdict | Should -Be 'PASS'
         $result.errors | Should -BeNullOrEmpty
     }
@@ -251,7 +249,6 @@ INCIDENTAL_OK: true
             'nested/packet.meta.json'
         )
 
-        if ($result.verdict -ne 'PASS') { Write-Host ($result | ConvertTo-Json -Depth 6) }
         $result.verdict | Should -Be 'PASS'
         $result.violations | Should -BeNullOrEmpty
     }
