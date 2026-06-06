@@ -56,6 +56,8 @@ Describe 'Test-HardRule command patterns (review #1/#2: broadened protected-ref 
         @{ Cmd = 'git push origin +main:main' }
         @{ Cmd = 'git push --force origin main' }
         @{ Cmd = 'git push -f origin master' }
+        @{ Cmd = 'git push --force origin feature/widget' }
+        @{ Cmd = 'git push origin +feature/widget' }
     ) {
         Test-HardRule -CommandText $Cmd -SignalText '' -ElapsedMinutes 0 -StallElapsed 0 -CorrectionRounds 0 |
             Should -Match 'forbidden-command'
@@ -63,6 +65,7 @@ Describe 'Test-HardRule command patterns (review #1/#2: broadened protected-ref 
 
     It 'does NOT trip on a non-protected push: <Cmd>' -ForEach @(
         @{ Cmd = 'git push origin feature/widget' }
+        @{ Cmd = 'git push origin feature/main-fix' }
         @{ Cmd = 'git push origin ai-dispatch/ISSUE-42' }
     ) {
         Test-HardRule -CommandText $Cmd -SignalText '' -ElapsedMinutes 0 -StallElapsed 0 -CorrectionRounds 0 |
@@ -100,5 +103,44 @@ Describe 'Test-HardRule stall limit' {
     It 'trips when the no-progress duration reaches the stall limit' {
         Test-HardRule -CommandText '' -SignalText '' -ElapsedMinutes 1 -StallElapsed 999 -CorrectionRounds 0 |
             Should -Match 'stalled'
+    }
+}
+
+Describe 'Invoke-GuardLiveRun final-drain safety sweep' {
+    It 'aborts when a forbidden command is emitted immediately before child exit' {
+        $mockDriver = Join-Path $TestDrive 'instant-danger.ps1'
+        Set-Content -LiteralPath $mockDriver -Encoding utf8 -Value @'
+param(
+    [string]$Executor,
+    [string]$PublishMode,
+    [int]$MaxAutonomousTasks
+)
+Write-Output "+ git push origin main"
+exit 0
+'@
+
+        $guard = Join-Path $PSScriptRoot '..\..\Invoke-AiDispatchGuard.ps1'
+        $watchRoot = Join-Path $TestDrive 'watch'
+        $oldSkipMain = $env:RGE_AI_DISPATCH_GUARD_SKIP_MAIN
+        Remove-Item Env:RGE_AI_DISPATCH_GUARD_SKIP_MAIN -ErrorAction SilentlyContinue
+        try {
+            $proc = Start-Process -FilePath 'powershell.exe' -ArgumentList @(
+                '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $guard,
+                '-DispatchId', 'FINAL-DRAIN',
+                '-DriverCommand', $mockDriver,
+                '-MockAssess',
+                '-AssessIntervalSec', '120',
+                '-PollIntervalSec', '2',
+                '-WatchRoot', $watchRoot
+            ) -Wait -PassThru -NoNewWindow
+        }
+        finally {
+            if ($oldSkipMain) { $env:RGE_AI_DISPATCH_GUARD_SKIP_MAIN = $oldSkipMain }
+            else { Remove-Item Env:RGE_AI_DISPATCH_GUARD_SKIP_MAIN -ErrorAction SilentlyContinue }
+        }
+
+        $proc.ExitCode | Should -Be 2
+        Get-Content -LiteralPath (Join-Path $watchRoot 'FINAL-DRAIN\abort-report.md') -Raw |
+            Should -Match 'forbidden-command'
     }
 }

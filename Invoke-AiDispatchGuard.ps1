@@ -131,9 +131,9 @@ $script:CommandForbiddenPatterns = @(
     # a push that targets the protected main/master ref in any form:
     #   origin main | origin master | origin HEAD:main | origin refs/heads/main |
     #   origin +main | origin +main:main | a URL remote ... main
-    'git\s+push\b.*\b(\+?(refs/heads/)?|HEAD:)(main|master)\b',
+    'git\s+push\b.*(^|\s)(\+?(refs/heads/)?(main|master)|HEAD:(refs/heads/)?(main|master)|\+?[^:\s]+:(refs/heads/)?(main|master))(\s|$)',
     # any force push (flag anywhere, or a leading-+ force refspec):
-    'git\s+push\b.*(--force|--force-with-lease|\s-f\b|\s\+[^\s:]*:?(main|master)\b)'
+    'git\s+push\b.*((^|\s)(--force|--force-with-lease|-f)(\s|$)|(^|\s)\+[^\s]+(\s|$))'
 )
 $script:SignalForbiddenPatterns = @(
     'VERIFY (FAILED|FAIL)\b',                          # the gate's own failure line
@@ -446,6 +446,43 @@ function Invoke-GuardLiveRun {
     while ($true) {
         Start-Sleep -Seconds $PollIntervalSec
 
+        if ($proc.HasExited) {
+            # Drain any final output the child wrote before exit.
+            foreach ($stream in @(@{ p = $driverOut; o = [ref]$outOffset }, @{ p = $driverErr; o = [ref]$errOffset })) {
+                $chunk = Read-NewText -Path $stream.p -Offset $stream.o
+                if ($chunk) {
+                    foreach ($ln in ($chunk -split "`r?`n")) {
+                        if ($ln -ne '') {
+                            $src = Get-RecordSource -Line $ln
+                            Add-Utf8Line -Path $script:LogPath -Text ("[driver:$src] $ln")
+                            switch ($src) {
+                                'command' { $cmdRecent.Enqueue($ln) }
+                                'signal'  { $sigRecent.Enqueue($ln) }
+                            }
+                            $allRecent.Enqueue($ln)
+                        }
+                    }
+                }
+            }
+            $exit = $proc.ExitCode
+            Write-GuardLine -Kind 'EXIT' -Message "driver exited code=$exit"
+
+            # A final hard-rule sweep over drained output, then the exit code.
+            $elapsedMin = ((Get-Date) - $startTime).TotalMinutes
+            $rule = Test-HardRule -CommandText ($cmdRecent.ToArray() -join "`n") -SignalText ($sigRecent.ToArray() -join "`n") `
+                -ElapsedMinutes $elapsedMin -StallElapsed 0 -CorrectionRounds $rounds
+            if ($rule) {
+                Stop-GuardRun -Trigger 'hard-rule' -Reason $rule -ChildPid 0 -RecentText ($allRecent.ToArray() -join "`n")
+                return 'aborted'
+            }
+            if ($exit -ne 0) {
+                Stop-GuardRun -Trigger 'driver-exit' -Reason "driver exited non-zero ($exit)" -ChildPid 0 -RecentText ($allRecent.ToArray() -join "`n")
+                return 'aborted'
+            }
+            Write-GuardLine -Kind 'DONE' -Message 'driver completed exit=0; no anomaly detected'
+            return 'completed'
+        }
+
         $fresh = @()
         foreach ($stream in @(@{ p = $driverOut; o = [ref]$outOffset }, @{ p = $driverErr; o = [ref]$errOffset })) {
             $chunk = Read-NewText -Path $stream.p -Offset $stream.o
@@ -490,39 +527,6 @@ function Invoke-GuardLiveRun {
                 Stop-GuardRun -Trigger 'llm-veto' -Reason $assessment.reason -ChildPid $childPid -RecentText ($allRecent.ToArray() -join "`n")
                 return 'aborted'
             }
-        }
-
-        if ($proc.HasExited) {
-            # Drain any final output the child wrote between the last poll and exit.
-            foreach ($stream in @(@{ p = $driverOut; o = [ref]$outOffset }, @{ p = $driverErr; o = [ref]$errOffset })) {
-                $chunk = Read-NewText -Path $stream.p -Offset $stream.o
-                if ($chunk) {
-                    foreach ($ln in ($chunk -split "`r?`n")) {
-                        if ($ln -ne '') {
-                            $src = Get-RecordSource -Line $ln
-                            Add-Utf8Line -Path $script:LogPath -Text ("[driver:$src] $ln")
-                            if ($src -eq 'signal') { $sigRecent.Enqueue($ln) }
-                            $allRecent.Enqueue($ln)
-                        }
-                    }
-                }
-            }
-            $exit = $proc.ExitCode
-            Write-GuardLine -Kind 'EXIT' -Message "driver exited code=$exit"
-
-            # A final signal-pattern sweep over the drained output, then the exit code.
-            $rule = Test-HardRule -CommandText '' -SignalText ($sigRecent.ToArray() -join "`n") `
-                -ElapsedMinutes $elapsedMin -StallElapsed 0 -CorrectionRounds $rounds
-            if ($rule) {
-                Stop-GuardRun -Trigger 'hard-rule' -Reason $rule -ChildPid 0 -RecentText ($allRecent.ToArray() -join "`n")
-                return 'aborted'
-            }
-            if ($exit -ne 0) {
-                Stop-GuardRun -Trigger 'driver-exit' -Reason "driver exited non-zero ($exit)" -ChildPid 0 -RecentText ($allRecent.ToArray() -join "`n")
-                return 'aborted'
-            }
-            Write-GuardLine -Kind 'DONE' -Message 'driver completed exit=0; no anomaly detected'
-            return 'completed'
         }
     }
 }
