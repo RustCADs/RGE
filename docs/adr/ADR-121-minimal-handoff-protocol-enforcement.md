@@ -206,6 +206,11 @@ acquiring a fresh live lock.
 This design does not pretend one TTL file is append-only. The live lock is
 mutable operational state; the claim events are the durable audit record.
 
+Initial standalone tooling now lives in `Invoke-HandoffClaim.ps1`. It supports
+`Status`, `Claim`, `Renew`, `Release`, and `Reclaim` actions over the live
+`.ai/handoff-claims/<DISPATCH_ID>/` directory plus append-only
+`ai_handoffs/claims/*.json` events. It is not wired into any dispatch runner.
+
 ### D7. Rollout and smoke requirements
 
 The rollout is advisory-first:
