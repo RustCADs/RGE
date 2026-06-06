@@ -188,7 +188,6 @@ pub(crate) fn filter_command_palette_entries<'a>(
                     || entry
                         .command
                         .diagnostic_id()
-                        .as_ref()
                         .to_ascii_lowercase()
                         .contains(term)
             })
