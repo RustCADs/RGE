@@ -1,8 +1,8 @@
 //! `editor-egui-host::menu` — host projection of the editor's main menus.
 //!
 //! Resolves the canonical editor-menu definition EACH FRAME against the live
-//! [`PredicateContext`] the editor-shell publishes, and projects each of the four
-//! surfaces (File / Edit / Play / View) to the `(label, shortcut display,
+//! [`PredicateContext`] the editor-shell publishes, and projects each main-menu
+//! surface (File / Edit / Play / View / Plugins) to the `(label, shortcut display,
 //! `[`Command`]`, enabled)` tuples the host's menu bar paints — `enabled` greys
 //! items whose enablement predicate is false for the current state. Also owns
 //! [`menu_item`] (one button + optional `shortcut_text`).
@@ -18,8 +18,8 @@
 //! only through display hints, not as executable menu accelerators.
 
 use rge_editor_ui::menus::{
-    edit_menu_point, file_menu_point, play_menu_point, view_menu_point, Command, ExtensionPoint,
-    MenuRegistry, PredicateContext, Shortcut,
+    edit_menu_point, file_menu_point, play_menu_point, plugins_menu_point, view_menu_point,
+    Command, ExtensionPoint, MenuRegistry, PredicateContext, Shortcut,
 };
 
 /// Projected menu item: `(label, shortcut display, command, enabled)`.
@@ -45,12 +45,14 @@ pub(crate) struct ProjectedMainMenu {
     pub play: Vec<ProjectedMenuEntry>,
     /// View menu entries.
     pub view: Vec<ProjectedMenuEntry>,
+    /// Plugin menu entries. Empty until extension/plugin code registers entries.
+    pub plugins: Vec<ProjectedMenuEntry>,
     /// Shortcut conflicts detected by the registry during this resolve.
     pub conflicts: Vec<ProjectedShortcutConflict>,
 }
 
-/// Resolve `registry` against the live `ctx` and project each of the four points
-/// (File / Edit / Play / View) to the entries the menu bar paints. The shortcut
+/// Resolve `registry` against the live `ctx` and project each main-menu point
+/// (File / Edit / Play / View / Plugins) to the entries the menu bar paints. The shortcut
 /// element is `Some(`[`Shortcut::display`]`)` for real executable shortcuts
 /// (File/Edit/View) and also for passive display-only hints such as Play's
 /// Space/Escape keys. Passive hints do not enter the accelerator table; the
@@ -106,6 +108,7 @@ pub(crate) fn project_main_menu(
         edit: project(&edit_menu_point()),
         play: project(&play_menu_point()),
         view: project(&view_menu_point()),
+        plugins: project(&plugins_menu_point()),
         conflicts,
     }
 }

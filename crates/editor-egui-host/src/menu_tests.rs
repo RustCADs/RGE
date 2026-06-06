@@ -1,6 +1,6 @@
 //! Unit tests for the host's main-menu wiring: that
 //! [`crate::menu::project_main_menu`] resolves each extension point
-//! (File / Edit / Play / View) to the expected
+//! (File / Edit / Play / View / optional Plugins) to the expected
 //! `(label, shortcut display, `[`Command`]`)` list in order, that File/Edit
 //! items carry their real accelerator hint while Play carries passive
 //! Space/Escape hints, that shortcut conflicts project as host diagnostics, and
@@ -18,8 +18,8 @@
 //! `lib.rs` under the cap.
 
 use rge_editor_ui::menus::{
-    default_editor_menu, file_menu_point, Command, Key, MenuEntry, Modifiers, PredicateContext,
-    Shortcut,
+    default_editor_menu, file_menu_point, plugins_menu_point, Command, Key, MenuEntry, Modifiers,
+    PredicateContext, Shortcut,
 };
 
 use super::MenuCommandHandoff;
@@ -211,6 +211,54 @@ fn view_menu_entries_round_trip_through_the_handoff() {
         handoff.drain(),
         vec![Command::ResetCamera],
         "each resolved View item enqueues its Command; they drain FIFO"
+    );
+}
+
+#[test]
+fn plugins_menu_defaults_empty() {
+    let menu = project_main_menu(&default_editor_menu(), &PredicateContext::default());
+    assert!(
+        menu.plugins.is_empty(),
+        "Plugins is an optional top-level menu and starts hidden/empty"
+    );
+}
+
+#[test]
+fn plugins_menu_projects_registered_entries_and_round_trips() {
+    let mut registry = default_editor_menu();
+    let command = Command::Plugin {
+        plugin_id: "com.example.mesh-audit".to_owned(),
+        action_id: "open-panel".to_owned(),
+    };
+    registry
+        .register_entry(
+            &plugins_menu_point(),
+            MenuEntry::new("plugin.mesh_audit.open", "Mesh Audit", command.clone()).with_shortcut(
+                Shortcut::new(Modifiers::CTRL | Modifiers::SHIFT, Key::Char('P')),
+            ),
+        )
+        .expect("synthetic plugin entry registers in the Plugins menu");
+
+    let plugins = project_main_menu(&registry, &PredicateContext::default()).plugins;
+
+    assert_eq!(
+        plugins,
+        vec![(
+            "Mesh Audit".to_owned(),
+            Some("Ctrl+Shift+P".to_owned()),
+            command.clone(),
+            true
+        )],
+        "registered plugin entries project into the optional Plugins menu"
+    );
+    let handoff = MenuCommandHandoff::new();
+    for (_, _, cmd, _) in plugins {
+        handoff.push(cmd);
+    }
+    assert_eq!(
+        handoff.drain(),
+        vec![command],
+        "a plugin menu entry enqueues its Command::Plugin unchanged"
     );
 }
 

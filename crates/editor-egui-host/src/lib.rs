@@ -75,7 +75,8 @@
 //!     `render` signature is unchanged.
 //! - **MENU-BAR ARC** (#287/#288 substrate→wiring, A1–A4 registry menus, #302
 //!   dynamic Play enablement, #304 accelerator display, #305 `menu` extraction,
-//!   #308 canonical-source move) — the top menu bar (File / Edit / Play / View),
+//!   #308 canonical-source move) — the top menu bar (File / Edit / Play / View /
+//!   optional Plugins),
 //!   built on the W08 `MenuRegistry` + a host→shell command FIFO. The canonical
 //!   menu DEFINITION (extension points + entries + File/Edit accelerators) lives
 //!   in `rge_editor_ui::menus::default_menu` (W08-CANONICAL-MENU-SOURCE), so
@@ -85,10 +86,11 @@
 //!   file by EGUIHOST-MENU-EXTRACTION):
 //!   - the host caches the canonical `default_editor_menu()` `MenuRegistry` and
 //!     `menu::project_main_menu` RE-RESOLVES it each frame against the live
-//!     `PredicateContext` editor-shell publishes, projecting all four menus to
+//!     `PredicateContext` editor-shell publishes, projecting the main menus to
 //!     `(label, accelerator, Command, enabled)` tuples; activating an item enqueues
 //!     a `Command` onto [`handoff::MenuCommandHandoff`] (a host→shell FIFO that
-//!     editor-shell drains + routes).
+//!     editor-shell drains + routes). The optional Plugins menu is rendered only
+//!     when extension/plugin code registers entries against its canonical point.
 //!   - Every item greys out per its resolved `ResolvedEntry.enabled` — File/Edit
 //!     outside Editing, Play items per the live `PlayState` — the one canonical
 //!     registry enablement path (the bespoke `MenuStateSnapshot` /
@@ -181,7 +183,7 @@ pub const INSPECTOR_PANE_OLD_FRACTION: f32 = 0.75;
 /// [`InspectorTabBody`]; the save-status handoff, consumed by the bottom
 /// status bar in [`Self::render`]; and the menu-state handoff, consumed by
 /// the Play menu's `add_enabled`), and a [`MenuCommandHandoff`] —
-/// a host→shell FIFO queue the File + Edit + Play + View menu bars enqueue [`Command`]s onto.
+/// a host→shell FIFO queue the main menu bars enqueue [`Command`]s onto.
 ///
 /// # Trait bounds
 ///
@@ -277,7 +279,7 @@ pub struct EguiHost {
     /// The canonical editor [`MenuRegistry`] (built once at construction from
     /// `default_editor_menu`). [`Self::render`] re-resolves it EACH FRAME against
     /// the live [`PredicateContext`] (acquired from `predicate_context_handoff`)
-    /// and projects the four points (File / Edit / Play / View) via
+    /// and projects the main-menu points via
     /// [`project_main_menu`] — so menu enablement (greying) tracks the live
     /// `PlayState` / editing state. The menus' content + order, File/Edit
     /// accelerator display, and passive Play shortcut hints are owned by
@@ -404,7 +406,7 @@ impl EguiHost {
             "EguiHost constructed"
         );
 
-        // Build the canonical `MenuRegistry` ONCE (all four extension points +
+        // Build the canonical `MenuRegistry` ONCE (all extension points +
         // entries). `render` re-resolves it each frame against the live
         // `PredicateContext` so menu enablement tracks the live state.
         let menu_registry = default_editor_menu();
@@ -514,7 +516,7 @@ impl EguiHost {
 
     /// Borrow the shared menu-command handoff (host→shell FIFO).
     ///
-    /// The File + Edit + Play + View menu bars drawn by [`Self::render`] enqueue a
+    /// The main menu bars drawn by [`Self::render`] enqueue a
     /// [`rge_editor_ui::menus::Command`] when an item is activated; the
     /// editor-shell consumer clones this `Arc` and drains the queue at the top
     /// of each frame (`EditorShell::drain_and_route_menu_commands`), routing
@@ -693,7 +695,7 @@ impl EguiHost {
             .unwrap_or_default();
         // Clone the menu-command FIFO `Arc` BEFORE the `run_ui` borrow (mirrors
         // the `save_status` / `viewport_sink` split-borrows) so the closure owns
-        // its handle. The File + Edit + Play + View menu bars push onto it; the
+        // its handle. The main menu bars push onto it; the
         // editor-shell drains + routes it at the top of render_frame.
         let menu_commands = Arc::clone(&self.menu_command_handoff);
         // Re-resolve the menu against the LIVE `PredicateContext` (published by
@@ -712,8 +714,9 @@ impl EguiHost {
         let dock_state = &mut self.dock_state;
         let full_output = self.context.run_ui(raw_input, |root_ui| {
             // Top menu bar — File ▸ Open / Save / Save As New Project, Edit ▸
-            // Undo / Redo, Play ▸ Play / Pause / Stop / Step, and View ▸ Reset
-            // Camera. Added BEFORE the bottom status bar + DockArea so egui
+            // Undo / Redo, Play ▸ Play / Pause / Stop / Step, View ▸ Reset
+            // Camera, and optional Plugins entries. Added BEFORE the bottom
+            // status bar + DockArea so egui
             // reserves the top strip and the dock fills the remaining central rect.
             // Activating an item ENQUEUES a `Command` onto the host→shell FIFO; the
             // editor-shell drain routes it (File wiring + A2 Edit + A3 Play + A4 View).
@@ -763,6 +766,18 @@ impl EguiHost {
                             }
                         }
                     });
+                    if !main_menu.plugins.is_empty() {
+                        ui.menu_button("Plugins", |ui| {
+                            for (label, shortcut, cmd, enabled) in &main_menu.plugins {
+                                if menu_item(ui, *enabled, label.as_str(), shortcut.as_deref())
+                                    .clicked()
+                                {
+                                    menu_commands.push(cmd.clone());
+                                    ui.close();
+                                }
+                            }
+                        });
+                    }
                     if !main_menu.conflicts.is_empty() {
                         ui.menu_button("Shortcut Conflicts", |ui| {
                             for conflict in &main_menu.conflicts {

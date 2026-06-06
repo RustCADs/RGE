@@ -1,12 +1,13 @@
-//! `editor_ui::menus::default_menu` — the editor's canonical four-menu definition.
+//! `editor_ui::menus::default_menu` — the editor's canonical main-menu definition.
 //!
-//! [`default_editor_menu`] builds the [`MenuRegistry`] for the editor's four
-//! main-menu surfaces — **File / Edit / Play / View** — as host-agnostic data:
+//! [`default_editor_menu`] builds the [`MenuRegistry`] for the editor's main-menu
+//! surfaces — **File / Edit / Play / View / Plugins** — as host-agnostic data:
 //! the single source of truth for each menu's content, order, [`Command`], and
 //! (for File/Edit) keyboard accelerator. Play carries display-only shortcut
-//! hints for its separate plain-key playback path. It lives in `editor-ui` rather
-//! than the egui host so BOTH consumers build from one definition without a
-//! reverse crate edge:
+//! hints for its separate plain-key playback path; Plugins is declared empty so
+//! extension/plugin code can register entries without the host inventing another
+//! surface. It lives in `editor-ui` rather than the egui host so BOTH consumers
+//! build from one definition without a reverse crate edge:
 //!
 //! - **`editor-egui-host`** resolves it and projects each point to the
 //!   `(label, shortcut display, `[`Command`]`)` triples its menu bar paints.
@@ -25,8 +26,8 @@
 //! `Ctrl+O` / `Ctrl+S` / `Ctrl+Shift+S` / `Ctrl+Z` / `Ctrl+Y` live ONLY here.
 //! Play carries no executable accelerator — its real keys are the separate plain
 //! `Space` / `Escape` PIE binds, surfaced only as passive display hints. View
-//! Reset Camera binds the canonical plain `Home` accelerator. Every entry uses
-//! the default section +
+//! Reset Camera binds the canonical plain `Home` accelerator. Every core entry
+//! uses the default section +
 //! [`OrderHint::AtEnd`](crate::menus::OrderHint::AtEnd), so
 //! [`MenuRegistry::resolve`] returns each point's entries in registration order.
 //!
@@ -56,6 +57,11 @@ const PLAY_MENU_ID: &str = "editor.main_menu.play";
 /// live scene to its bounds) via the host→shell FIFO, not the PIE driver.
 const VIEW_MENU_ID: &str = "editor.main_menu.view";
 
+/// Extension-point id for the editor's main-menu **Plugins** surface. The
+/// default menu declares it with no core entries; the egui host renders the
+/// top-level Plugins menu only when extension/plugin code registers entries.
+const PLUGINS_MENU_ID: &str = "editor.main_menu.plugins";
+
 /// The **File** main-menu [`ExtensionPoint`] (`editor.main_menu.file`).
 #[must_use]
 pub fn file_menu_point() -> ExtensionPoint {
@@ -80,14 +86,21 @@ pub fn view_menu_point() -> ExtensionPoint {
     ExtensionPoint::new(VIEW_MENU_ID)
 }
 
-/// Build the editor's canonical [`MenuRegistry`] with ALL FOUR main-menu
-/// extension points (File + Edit + Play + View) declared and each point's entries
-/// registered, in order. The returned registry is UNRESOLVED — the consumer calls
+/// The **Plugins** main-menu [`ExtensionPoint`] (`editor.main_menu.plugins`).
+#[must_use]
+pub fn plugins_menu_point() -> ExtensionPoint {
+    ExtensionPoint::new(PLUGINS_MENU_ID)
+}
+
+/// Build the editor's canonical [`MenuRegistry`] with all core main-menu
+/// extension points (File + Edit + Play + View) plus the optional Plugins
+/// extension point declared. The returned registry is UNRESOLVED — the consumer
+/// calls
 /// [`MenuRegistry::resolve`] with its own
 /// [`PredicateContext`](crate::menus::PredicateContext) (the host resolves at
 /// render time; `editor-shell` resolves to drive accelerator execution).
 ///
-/// The registry is the single source of truth for all four menus' content + order:
+/// The registry is the single source of truth for all main menus' content + order:
 /// - **File** = Open / Save / Save As New Project — each with its real keyboard
 ///   accelerator ([`Command::OpenFile`] `Ctrl+O`, [`Command::Save`] `Ctrl+S`,
 ///   [`Command::SaveAs`] `Ctrl+Shift+S`).
@@ -98,6 +111,8 @@ pub fn view_menu_point() -> ExtensionPoint {
 ///   no executable accelerator; passive display hints show the already-live
 ///   plain `Space` / `Escape` PIE bindings.
 /// - **View** = Reset Camera ([`Command::ResetCamera`] `Home`).
+/// - **Plugins** = declared empty; plugin code may register
+///   [`Command::Plugin`] entries against [`plugins_menu_point`].
 ///
 /// ENABLEMENT predicates (greyed-but-present, accelerator intact — distinct from
 /// visibility): File Save/Open/Save-As carry an `is_editing` predicate (they
@@ -108,7 +123,7 @@ pub fn view_menu_point() -> ExtensionPoint {
 /// Every entry carries the default order hint
 /// ([`OrderHint::AtEnd`](crate::menus::OrderHint::AtEnd)) in the default section,
 /// so `resolve` returns each point in registration order. The `expect`s are
-/// unreachable: a fresh registry with four distinct ids declares and registers
+/// unreachable: a fresh registry with five distinct ids declares and registers
 /// cleanly.
 #[must_use]
 pub fn default_editor_menu() -> MenuRegistry {
@@ -117,6 +132,7 @@ pub fn default_editor_menu() -> MenuRegistry {
     let edit_point = edit_menu_point();
     let play_point = play_menu_point();
     let view_point = view_menu_point();
+    let plugins_point = plugins_menu_point();
     registry
         .declare_extension_point(file_point.clone())
         .expect("static File extension point declares cleanly");
@@ -129,6 +145,9 @@ pub fn default_editor_menu() -> MenuRegistry {
     registry
         .declare_extension_point(view_point.clone())
         .expect("static View extension point declares cleanly");
+    registry
+        .declare_extension_point(plugins_point)
+        .expect("static Plugins extension point declares cleanly");
     for (id, label, command, shortcut) in [
         (
             "file.open",
@@ -245,7 +264,7 @@ mod tests {
     use crate::menus::PredicateContext;
 
     #[test]
-    fn declares_file_edit_play_view_in_order() {
+    fn declares_file_edit_play_view_plugins_in_order() {
         let registry = default_editor_menu();
         let points: Vec<&str> = registry
             .extension_points()
@@ -258,8 +277,26 @@ mod tests {
                 "editor.main_menu.edit",
                 "editor.main_menu.play",
                 "editor.main_menu.view",
+                "editor.main_menu.plugins",
             ],
-            "the canonical menu declares File / Edit / Play / View in that order"
+            "the canonical menu declares File / Edit / Play / View / Plugins in that order"
+        );
+    }
+
+    #[test]
+    fn plugins_menu_declares_empty_extension_point() {
+        let registry = default_editor_menu();
+        assert_eq!(
+            registry.entry_count(&plugins_menu_point()),
+            Some(0),
+            "the canonical Plugins menu point starts empty for extension/plugin entries"
+        );
+        assert!(
+            registry
+                .resolve(&PredicateContext::default())
+                .entries_for(&plugins_menu_point())
+                .is_empty(),
+            "an empty plugin point resolves to no entries"
         );
     }
 
