@@ -47,6 +47,9 @@ pub struct PredicateContext {
     /// an unselected non-empty scene, but disabled for an empty scene. Default
     /// `false`.
     pub has_selectable_entities: bool,
+    /// `true` when the editor has at least one entity snapshot available for a
+    /// paste operation. Default `false`.
+    pub has_clipboard_entities: bool,
     /// Focused tab id (`""` when no tab is focused). Lets predicates
     /// gate "Save" on whether the focused tab is dirty without baking
     /// that policy into editor-ui.
@@ -222,6 +225,7 @@ mod tests {
         assert!(!ctx.is_editing);
         assert!(!ctx.has_frameable_scene);
         assert!(!ctx.has_selectable_entities);
+        assert!(!ctx.has_clipboard_entities);
 
         let p = Predicate::from_fn(|c| c.can_play);
         assert!(!p.evaluate(&ctx), "can_play defaults false");

@@ -208,11 +208,13 @@ use crate::render_input::{RenderHandoff, RenderInputOwned};
 use crate::snapshot::{capture_and_audit, restore_and_audit, WorldSnapshot};
 use crate::time_scale::{TimeScale, TimeScaleClass};
 use crate::viewport::Viewport;
-use crate::world::World;
+use crate::world::{ComponentBlob, ComponentTypeId, World};
 
 /// Default progress-line interval (frames). Mirrors rustforge's
 /// `PROGRESS_FRAME_INTERVAL` — once per ~second at 60Hz.
 const PROGRESS_FRAME_INTERVAL: u64 = 60;
+
+type EntityClipboardItem = Vec<(ComponentTypeId, ComponentBlob)>;
 
 pub mod accelerator;
 pub mod asset_reload;
@@ -684,8 +686,15 @@ pub struct EditorShell {
     // `None` for shells that never trigger render init. Drained at the TOP of
     // each `render_frame` (before this frame's render borrows) by
     // [`crate::render_path::EditorShell::drain_and_route_menu_commands`], which
-    // routes each `Command` one-way into the existing Open/Save/Save-As handlers.
+    // routes each `Command` one-way through the shared menu-command sink.
     pub(crate) menu_command_handoff: Option<Arc<MenuCommandHandoff>>,
+
+    /// Shell-local entity clipboard for the bounded Edit Copy/Paste path.
+    ///
+    /// Stores cloned legacy component blobs only. It is not the OS clipboard, is
+    /// not serialized, and intentionally does not clone typed kernel components
+    /// or CAD graph/projection/render identity.
+    entity_clipboard: Vec<EntityClipboardItem>,
 }
 
 impl EditorShell {
@@ -747,6 +756,7 @@ impl EditorShell {
             save_status_handoff: None,
             predicate_context_handoff: None,
             menu_command_handoff: None,
+            entity_clipboard: Vec::new(),
             prebuilt_render_meshes: Vec::new(),
             prebuilt_render_base_colors: Vec::new(),
             prebuilt_render_base_textures: Vec::new(),
@@ -833,6 +843,7 @@ impl EditorShell {
         self.command_bus = CommandBus::new();
         self.glb_source_path = None;
         self.save_source = None;
+        self.entity_clipboard.clear();
 
         Ok(())
     }
@@ -932,6 +943,7 @@ impl EditorShell {
             save_status_handoff: None,
             predicate_context_handoff: None,
             menu_command_handoff: None,
+            entity_clipboard: Vec::new(),
             prebuilt_render_meshes: Vec::new(),
             prebuilt_render_base_colors: Vec::new(),
             prebuilt_render_base_textures: Vec::new(),
@@ -1192,6 +1204,7 @@ impl EditorShell {
             save_status_handoff: None,
             predicate_context_handoff: None,
             menu_command_handoff: None,
+            entity_clipboard: Vec::new(),
             prebuilt_render_meshes: meshes,
             prebuilt_render_base_colors: base_colors,
             prebuilt_render_base_textures: textures,
@@ -1541,6 +1554,45 @@ impl EditorShell {
         duplicates
     }
 
+    /// Copy currently selected legacy-blob entities into the shell clipboard.
+    ///
+    /// This stores cloned legacy component blobs only. It does not touch the OS
+    /// clipboard, typed kernel components, CAD graph/projection data, render
+    /// meshes, the command bus, or dirty/undo state.
+    pub fn copy_selected_entities(&mut self) -> usize {
+        let selected: Vec<_> = self.coord.selection.iter().collect();
+        if selected.is_empty() {
+            return 0;
+        }
+
+        self.entity_clipboard = selected
+            .into_iter()
+            .filter_map(|entity| self.world.clone_entity_blobs(entity))
+            .collect();
+        self.entity_clipboard.len()
+    }
+
+    /// Paste shell-local copied legacy-blob entities into the editor world.
+    ///
+    /// Pasted entities receive fresh entity IDs, cloned legacy component blobs,
+    /// and become the entity selection. Face selection is cleared because no
+    /// authoritative face-ID remapping exists for this bounded wrapper-world
+    /// operation.
+    pub fn paste_copied_entities(&mut self) -> Vec<crate::world::EntityId> {
+        if self.entity_clipboard.is_empty() {
+            return Vec::new();
+        }
+
+        let snapshots = self.entity_clipboard.clone();
+        let pasted: Vec<_> = snapshots
+            .into_iter()
+            .map(|components| self.world.spawn_with_component_blobs(components))
+            .collect();
+        self.coord.selection.replace_with(pasted.iter().copied());
+        self.coord.face_selection.clear();
+        pasted
+    }
+
     /// Borrow the play-mode toolbar.
     #[must_use]
     pub fn toolbar(&self) -> &PlayToolbar {
@@ -1629,6 +1681,7 @@ impl EditorShell {
         ctx.play_state = self.state.label().to_ascii_lowercase();
         ctx.has_selection = self.coord.selection.len() > 0;
         ctx.has_selectable_entities = self.world.entity_count() > 0;
+        ctx.has_clipboard_entities = !self.entity_clipboard.is_empty();
         ctx.can_play = self.state.can_play();
         ctx.can_pause = self.state.can_pause();
         ctx.can_stop = self.state.can_stop();

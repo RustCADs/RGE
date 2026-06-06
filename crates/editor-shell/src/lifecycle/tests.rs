@@ -3079,6 +3079,15 @@ mod menu_routing {
             .next()
             .expect("seeded world has entity");
         s.coord_mut().selection.add(selected);
+        assert_eq!(
+            s.copy_selected_entities(),
+            1,
+            "precondition: New clears a non-empty shell clipboard"
+        );
+        assert!(
+            s.predicate_context().has_clipboard_entities,
+            "precondition: clipboard state is published"
+        );
         s.set_time_scale(2.0);
         assert!(
             s.command_bus().is_dirty(),
@@ -3103,6 +3112,10 @@ mod menu_routing {
         assert!(
             s.coord().selection.is_empty(),
             "New clears editor coordination selection"
+        );
+        assert!(
+            !s.predicate_context().has_clipboard_entities,
+            "New clears the shell-local entity clipboard"
         );
         assert!(
             !s.command_bus().is_dirty(),
@@ -3369,6 +3382,78 @@ mod menu_routing {
         assert!(
             s.coord().face_selection.is_empty(),
             "face selection is cleared because face IDs are not remapped"
+        );
+    }
+
+    #[test]
+    fn menu_copy_paste_commands_clone_selected_legacy_blobs() {
+        // Command::Copy stores selected wrapper-world legacy blobs in a
+        // shell-local clipboard. Command::Paste spawns fresh entities from that
+        // clipboard and selects the pasted entities. This is intentionally not
+        // an OS clipboard or authoritative CAD/projection clone.
+        let mut s = EditorShell::new();
+        build_scene(&mut s, 2);
+        let ids: Vec<_> = s.world().entities().collect();
+        let owner = BRepOwnerId::from_bytes([0x71; 16]);
+        let selected_face = FaceSelection {
+            entity: ids[1],
+            owner,
+            face_id: BRepFaceId::for_cuboid_face(owner, CuboidFaceTag::NegZ),
+        };
+        let original_tick = s.world().component(ids[0], ComponentTypeId(1)).cloned();
+        let original_position = s.world().component(ids[0], ComponentTypeId(2)).cloned();
+        s.coord_mut().selection.add(ids[0]);
+        s.menu_command_handoff = Some(handoff_with(&[Command::Copy]));
+
+        s.drain_and_route_menu_commands();
+
+        assert_eq!(
+            s.world().entity_count(),
+            2,
+            "Copy does not mutate world contents"
+        );
+        assert!(
+            s.predicate_context().has_clipboard_entities,
+            "Copy publishes a non-empty Paste predicate"
+        );
+        assert_eq!(
+            s.coord().selection.iter().collect::<Vec<_>>(),
+            vec![ids[0]],
+            "Copy leaves entity selection unchanged"
+        );
+
+        s.coord_mut().selection.clear();
+        s.coord_mut().selection.add(ids[1]);
+        s.coord_mut().face_selection.add(selected_face);
+        s.menu_command_handoff = Some(handoff_with(&[Command::Paste]));
+
+        s.drain_and_route_menu_commands();
+
+        assert_eq!(s.world().entity_count(), 3);
+        assert!(
+            s.world().entities().any(|id| id == ids[0]),
+            "the copied source remains live"
+        );
+        let selected_after: Vec<_> = s.coord().selection.iter().collect();
+        assert_eq!(selected_after.len(), 1, "Paste selects the pasted entity");
+        let pasted = selected_after[0];
+        assert!(
+            !ids.contains(&pasted),
+            "Paste creates a fresh entity rather than re-selecting an original"
+        );
+        assert_eq!(
+            s.world().component(pasted, ComponentTypeId(1)).cloned(),
+            original_tick,
+            "pasted entity receives cloned TickCounter blob"
+        );
+        assert_eq!(
+            s.world().component(pasted, ComponentTypeId(2)).cloned(),
+            original_position,
+            "pasted entity receives cloned Position blob"
+        );
+        assert!(
+            s.coord().face_selection.is_empty(),
+            "Paste clears face selection because face IDs are not remapped"
         );
     }
 

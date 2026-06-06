@@ -558,6 +558,23 @@ Until **at least one** of those fires, treat the reflection substrate as observe
 4. Cross-check the editor's call graph against the `CommandBus::submit` / `Action::apply` / `Action::revert` signatures to determine whether user-visible CAD mutations can flow through the existing bus.
 5. Test inventory across `editor-*` (`#[test]` count + integration vs unit breakdown + workflow coverage).
 
+### 2026-06-06 - Edit Copy/Paste selected entities
+
+**Forward-only follow-up (MENU-EDIT-COPY-PASTE).** Narrows the generalized Edit menu execution and clipboard surface with bounded shell-local Copy/Paste commands. `Copy` and `Paste` now have visible Edit menu entries, executable `Ctrl+C` / `Ctrl+V` accelerators, and shell routes over the same legacy-blob wrapper-world substrate used by Duplicate.
+
+**Now shipped - Edit Copy/Paste.**
+- `default_editor_menu` registers Edit -> Copy and Edit -> Paste after Select All, with `Command::Copy` / `Command::Paste` and executable `Ctrl+C` / `Ctrl+V`.
+- Copy is enabled only while Editing with a non-empty entity selection. Paste is enabled only while Editing with a non-empty shell-local entity clipboard. The shortcuts remain bound for display but disabled contexts do not execute them.
+- `PredicateContext` carries `has_clipboard_entities`, filled by `EditorShell::predicate_context()` from the shell-local clipboard.
+- `World::clone_entity_blobs` and `World::spawn_with_component_blobs` provide the shared legacy-blob clone/spawn substrate; `World::duplicate_entity_blobs` reuses that substrate.
+- `EditorShell::route_menu_command` routes `Command::Copy` to `copy_selected_entities()` and `Command::Paste` to `paste_copied_entities()`. Copy stores cloned legacy component blobs in a shell-local clipboard; Paste spawns fresh wrapper-world entities, selects the pasted entities, and clears face selection because no authoritative face-ID remapping exists.
+- `replace_world` clears the shell-local clipboard, so File New and scene Open drop stale copied entities with the old world.
+- Registry, host projection/FIFO, host enablement, keyboard-bridge parity, world clone/spawn helper, shell routing, and File New clipboard-clearing tests pin the behavior.
+
+**Still open - explicitly NOT closed here:** Cut semantics, OS/system clipboard integration, typed kernel component cloning, authoritative CAD graph/projection/render copy/paste, undo/redo and dirty-state integration for Copy/Paste, authoritative CAD graph/projection/render deletion/duplication, plugin action execution/registration UX beyond the optional Plugins projection, command-palette integration, host->shell FIFO menu-click replacement, generalized registry execution beyond the now-wired canonical menu commands, broader camera UI beyond reset/frame/zoom, and conflict resolution/keybinding editor/fatal gating.
+
+**Scope:** `editor-ui` default Edit menu entries/tests, `editor-egui-host` projection/enablement tests, `editor-shell` wrapper-world clipboard/routing/tests, `world.rs` legacy-blob clone/spawn helpers, and top-level status docs; no OS clipboard, typed ECS clone, CAD graph mutation, projection-cache invalidation, render-mesh invalidation, CommandBus action, undo stack, dirty-state semantics, plugin runtime, command palette, keybinding editor, FIFO replacement, Cargo, scheduler, dispatch automation, or task arming.
+
 ### 2026-06-06 - File New empty scene command
 
 **Forward-only follow-up (MENU-FILE-NEW).** Narrows the File menu surface with a bounded reset-to-empty command. `New` now has a visible File menu entry, an executable `Ctrl+N` accelerator, and a shell route that reuses the existing `replace_world(KernelWorld::new())` reset substrate.

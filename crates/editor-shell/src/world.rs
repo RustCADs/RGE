@@ -177,19 +177,42 @@ impl World {
     /// components are intentionally not cloned here; there is no safe generic
     /// clone path for arbitrary typed ECS components.
     pub fn duplicate_entity_blobs(&mut self, entity: EntityId) -> Option<EntityId> {
+        let components = self.clone_entity_blobs(entity)?;
+        Some(self.spawn_with_component_blobs(components))
+    }
+
+    /// Clone all legacy component blobs for a live entity.
+    ///
+    /// Returns `None` when `entity` is not live in the wrapper-world entity set.
+    /// Type-erased kernel components are intentionally omitted for the same
+    /// reason as [`duplicate_entity_blobs`](Self::duplicate_entity_blobs): there
+    /// is no safe generic clone path for arbitrary typed ECS components.
+    #[must_use]
+    pub fn clone_entity_blobs(
+        &self,
+        entity: EntityId,
+    ) -> Option<Vec<(ComponentTypeId, ComponentBlob)>> {
         if !self.entities.contains(&entity) {
             return None;
         }
-        let components: Vec<_> = self
-            .components
-            .iter()
-            .filter_map(|(ty, map)| map.get(&entity).cloned().map(|blob| (*ty, blob)))
-            .collect();
-        let duplicate = self.spawn();
+        Some(
+            self.components
+                .iter()
+                .filter_map(|(ty, map)| map.get(&entity).cloned().map(|blob| (*ty, blob)))
+                .collect(),
+        )
+    }
+
+    /// Spawn a new entity and install cloned legacy component blobs on it.
+    pub fn spawn_with_component_blobs<I>(&mut self, components: I) -> EntityId
+    where
+        I: IntoIterator<Item = (ComponentTypeId, ComponentBlob)>,
+    {
+        let entity = self.spawn();
         for (ty, blob) in components {
-            self.insert_component(duplicate, ty, blob);
+            self.insert_component(entity, ty, blob);
         }
-        Some(duplicate)
+        entity
     }
 
     // -----------------------------------------------------------------------
@@ -440,6 +463,41 @@ mod tests {
             Some(&vec![1, 2, 3]),
             "duplicate blobs are independent clones"
         );
+    }
+
+    #[test]
+    fn clone_and_spawn_component_blobs_round_trip_legacy_components() {
+        let mut w = World::new();
+        let e = w.spawn();
+        w.insert_component(e, ComponentTypeId(1), vec![1, 2, 3]);
+        w.insert_component(e, ComponentTypeId(2), vec![4, 5, 6]);
+
+        let cloned = w.clone_entity_blobs(e).expect("live entity clones");
+        let pasted = w.spawn_with_component_blobs(cloned);
+
+        assert_ne!(pasted, e);
+        assert_eq!(
+            w.component(pasted, ComponentTypeId(1)),
+            Some(&vec![1, 2, 3])
+        );
+        assert_eq!(
+            w.component(pasted, ComponentTypeId(2)),
+            Some(&vec![4, 5, 6])
+        );
+        w.component_mut(pasted, ComponentTypeId(2))
+            .expect("pasted entity has component")
+            .push(9);
+        assert_eq!(
+            w.component(e, ComponentTypeId(2)),
+            Some(&vec![4, 5, 6]),
+            "spawned blobs are independent clones"
+        );
+    }
+
+    #[test]
+    fn clone_entity_blobs_rejects_absent_entity() {
+        let w = World::new();
+        assert_eq!(w.clone_entity_blobs(EntityId::new()), None);
     }
 
     #[test]

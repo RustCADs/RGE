@@ -79,7 +79,7 @@ fn file_menu_registry_resolves_the_authoring_loop_commands() {
 }
 
 #[test]
-fn edit_menu_registry_resolves_undo_redo_select_all_delete_duplicate_in_order() {
+fn edit_menu_registry_resolves_undo_redo_select_all_copy_paste_delete_duplicate_in_order() {
     let (_file, edit, _play, _view) = menu_entries();
     assert_eq!(
         edit,
@@ -92,6 +92,16 @@ fn edit_menu_registry_resolves_undo_redo_select_all_delete_duplicate_in_order() 
                 Command::SelectAll,
             ),
             (
+                "Copy".to_owned(),
+                Some("Ctrl+C".to_owned()),
+                Command::Copy,
+            ),
+            (
+                "Paste".to_owned(),
+                Some("Ctrl+V".to_owned()),
+                Command::Paste,
+            ),
+            (
                 "Delete".to_owned(),
                 Some("Delete".to_owned()),
                 Command::Delete,
@@ -102,7 +112,7 @@ fn edit_menu_registry_resolves_undo_redo_select_all_delete_duplicate_in_order() 
                 Command::Duplicate,
             ),
         ],
-        "the MenuRegistry resolves the Edit menu to exactly Undo / Redo / Select All / Delete / Duplicate, in order \
+        "the MenuRegistry resolves the Edit menu to exactly Undo / Redo / Select All / Copy / Paste / Delete / Duplicate, in order \
          — each with its real accelerator display"
     );
 }
@@ -139,6 +149,8 @@ fn edit_menu_entries_round_trip_through_the_handoff_in_order() {
             Command::Undo,
             Command::Redo,
             Command::SelectAll,
+            Command::Copy,
+            Command::Paste,
             Command::Delete,
             Command::Duplicate,
         ],
@@ -359,6 +371,7 @@ fn enablement_tracks_context() {
     editing.can_play = true;
     editing.has_selection = true;
     editing.has_selectable_entities = true;
+    editing.has_clipboard_entities = true;
     let menu = project_main_menu(&default_editor_menu(), &editing);
     let file = menu.file;
     let edit = menu.edit;
@@ -367,6 +380,8 @@ fn enablement_tracks_context() {
     assert!(enabled_of(&file, &Command::Save));
     assert!(enabled_of(&file, &Command::OpenFile));
     assert!(enabled_of(&edit, &Command::SelectAll));
+    assert!(enabled_of(&edit, &Command::Copy));
+    assert!(enabled_of(&edit, &Command::Paste));
     assert!(enabled_of(&edit, &Command::Delete));
     assert!(enabled_of(&edit, &Command::Duplicate));
     assert!(enabled_of(&play, &Command::PlayStart));
@@ -379,6 +394,7 @@ fn enablement_tracks_context() {
     playing.can_stop = true;
     playing.has_selection = true;
     playing.has_selectable_entities = true;
+    playing.has_clipboard_entities = true;
     let menu = project_main_menu(&default_editor_menu(), &playing);
     let file = menu.file;
     let edit = menu.edit;
@@ -401,6 +417,14 @@ fn enablement_tracks_context() {
         "Select All greyed while playing"
     );
     assert!(
+        !enabled_of(&edit, &Command::Copy),
+        "Copy greyed while playing"
+    );
+    assert!(
+        !enabled_of(&edit, &Command::Paste),
+        "Paste greyed while playing"
+    );
+    assert!(
         !enabled_of(&edit, &Command::Delete),
         "Delete greyed while playing"
     );
@@ -418,7 +442,7 @@ fn file_and_edit_items_carry_accelerators_play_carries_passive_hints() {
     // The shortcut-display column (middle tuple element) is sourced from each
     // resolved executable `MenuEntry.shortcut`, falling back to passive
     // `shortcut_hint`. File + Edit carry the canonical executable accelerators
-    // (Ctrl+N/O/S/Shift+S, Ctrl+Z/Y/A/D/Delete) — the SAME definition editor-shell's live
+    // (Ctrl+N/O/S/Shift+S, Ctrl+Z/Y/A/C/V/D/Delete) — the SAME definition editor-shell's live
     // keystroke routing resolves through. Play carries display-only Space/Escape
     // hints for the separate playback route; View carries executable Home.
     let (file, edit, play, view) = menu_entries();
@@ -442,10 +466,12 @@ fn file_and_edit_items_carry_accelerators_play_carries_passive_hints() {
             Some("Ctrl+Z".to_owned()),
             Some("Ctrl+Y".to_owned()),
             Some("Ctrl+A".to_owned()),
+            Some("Ctrl+C".to_owned()),
+            Some("Ctrl+V".to_owned()),
             Some("Delete".to_owned()),
             Some("Ctrl+D".to_owned()),
         ],
-        "Edit items display Undo=Ctrl+Z, Redo=Ctrl+Y, Select All=Ctrl+A, Delete=Delete, Duplicate=Ctrl+D"
+        "Edit items display Undo=Ctrl+Z, Redo=Ctrl+Y, Select All=Ctrl+A, Copy=Ctrl+C, Paste=Ctrl+V, Delete=Delete, Duplicate=Ctrl+D"
     );
     assert_eq!(
         accel(&play),
