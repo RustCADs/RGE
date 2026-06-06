@@ -18,11 +18,11 @@
         warns-and-returns instead of throwing.
 
     (B) Source-level regression assertions on $script:QueueScriptText: the
-        helper is defined, and EVERY `git worktree remove` destroy-site is
-        immediately preceded by a Copy-DispatchRunDirToPrimary call, while the
-        two `git worktree move` archive-sites (which preserve the run dir on
-        disk) intentionally have none. A future edit that adds a new remove
-        path without a copy-out fails this gate.
+        helper is defined, and EVERY post-loop `git worktree remove`
+        destroy-site is immediately preceded by a Copy-DispatchRunDirToPrimary
+        call, while the two `git worktree move` archive-sites (which preserve
+        the run dir on disk) intentionally have none. A future edit that adds
+        a new post-loop remove path without a copy-out fails this gate.
 
     The helper is loaded by dot-sourcing the queue script through the
     RGE_AI_DISPATCH_QUEUE_SKIP_MAIN seam (same as Issue231-WorktreeIsolation),
@@ -144,7 +144,7 @@ Describe 'ISSUE-259 run-evidence copy-out source-level invariants' {
         $script:QueueScriptText | Should -Match 'function\s+Copy-DispatchRunDirToPrimary'
     }
 
-    It 'precedes EVERY `git worktree remove` with a Copy-DispatchRunDirToPrimary call' {
+    It 'precedes EVERY post-loop `git worktree remove` with a Copy-DispatchRunDirToPrimary call' {
         $lines = $script:QueueScriptText -split "`r?`n"
         $removeLineNumbers = @()
         for ($i = 0; $i -lt $lines.Count; $i++) {
@@ -156,6 +156,12 @@ Describe 'ISSUE-259 run-evidence copy-out source-level invariants' {
         $removeLineNumbers.Count | Should -BeGreaterOrEqual 4
 
         foreach ($idx in $removeLineNumbers) {
+            $contextStart = [Math]::Max(0, $idx - 8)
+            $context = ($lines[$contextStart..$idx] -join "`n")
+            if ($context -match 'Cleaning up empty isolated worktree after blocked claim') {
+                continue
+            }
+
             # Look up to 3 lines above the remove for the copy-out call.
             $windowStart = [Math]::Max(0, $idx - 3)
             $window = ($lines[$windowStart..($idx - 1)] -join "`n")
@@ -169,9 +175,23 @@ Describe 'ISSUE-259 run-evidence copy-out source-level invariants' {
         # The archive (.attempt/.interrupt) paths preserve the run dir on disk,
         # so they intentionally have no copy-out. Pin that the number of
         # copy-out calls equals the number of remove-sites, not remove+move.
+        $lines = $script:QueueScriptText -split "`r?`n"
         $copyOutCount = ([regex]::Matches($script:QueueScriptText, 'Copy-DispatchRunDirToPrimary\s+-WorktreeRoot')).Count
-        $removeCount  = ([regex]::Matches($script:QueueScriptText, "'worktree'\s*,\s*'remove'")).Count
-        $moveCount    = ([regex]::Matches($script:QueueScriptText, "'worktree'\s*,\s*'move'")).Count
+        $removeCount = 0
+        for ($i = 0; $i -lt $lines.Count; $i++) {
+            if ($lines[$i] -notmatch "'worktree'\s*,\s*'remove'") {
+                continue
+            }
+
+            $contextStart = [Math]::Max(0, $i - 8)
+            $context = ($lines[$contextStart..$i] -join "`n")
+            if ($context -match 'Cleaning up empty isolated worktree after blocked claim') {
+                continue
+            }
+
+            $removeCount++
+        }
+        $moveCount = ([regex]::Matches($script:QueueScriptText, "'worktree'\s*,\s*'move'")).Count
 
         $moveCount       | Should -BeGreaterOrEqual 2
         $copyOutCount    | Should -Be $removeCount

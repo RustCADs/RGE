@@ -22,7 +22,8 @@
 
     Exactly one issue is processed per invocation. This is meant to be fired
     on a recurring schedule (e.g. Claude Code `/loop`). A temp-dir lock file
-    prevents overlapping runs from colliding.
+    prevents overlapping runs from colliding. An ADR-121 handoff claim also
+    prevents another actor from executing the same dispatch id concurrently.
 
     Pre-existing untracked files (unrelated working-tree clutter) are parked
     with `git stash --include-untracked` for the duration of the run so the
@@ -39,6 +40,11 @@
 .PARAMETER TraceTiming
     Emit timing trace lines for automation phase diagnosis. Can also be enabled
     by setting RGE_AI_DISPATCH_TRACE_TIMING=1.
+
+.PARAMETER SkipHandoffClaim
+    Skip ADR-121 handoff claim acquisition and release. This is an operator
+    escape hatch for diagnosing the claim helper; normal queue runs should keep
+    the default claim lifecycle enabled.
 
 .NOTES
     Requires local `git`, `gh` (authenticated), `codex`, `claude`,
@@ -76,6 +82,8 @@ param(
 
     [ValidateSet('claude', 'codex')]
     [string]$Executor = 'claude',
+
+    [switch]$SkipHandoffClaim,
 
     [switch]$TraceTiming,
 
@@ -2082,6 +2090,132 @@ function New-DispatchLoopArguments {
     return ,$args
 }
 
+function New-HandoffClaimArguments {
+    # Build the child powershell.exe argument vector used to call the
+    # standalone ADR-121 claim helper. Pure helper: no process launch, no git,
+    # no gh, no network. Queue integration passes -Root as the isolated
+    # worktree (committed event JSON) and -LiveRoot as the primary checkout
+    # (shared live lock).
+    [CmdletBinding()]
+    [OutputType([string[]])]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ClaimScript,
+
+        [Parameter(Mandatory = $true)]
+        [ValidateSet('Claim', 'Release', 'Reclaim')]
+        [string]$Action,
+
+        [Parameter(Mandatory = $true)]
+        [string]$DispatchId,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Actor,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Harness,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Branch,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Root,
+
+        [Parameter(Mandatory = $true)]
+        [string]$LiveRoot,
+
+        [ValidateRange(1, 604800)]
+        [int]$TtlSeconds = 7200
+    )
+
+    return ,@(
+        '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $ClaimScript,
+        '-Action', $Action,
+        '-DispatchId', $DispatchId,
+        '-Actor', $Actor,
+        '-Harness', $Harness,
+        '-Branch', $Branch,
+        '-Root', $Root,
+        '-LiveRoot', $LiveRoot,
+        '-TtlSeconds', $TtlSeconds,
+        '-JsonOnly'
+    )
+}
+
+function Invoke-QueueHandoffClaim {
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet('Claim', 'Release', 'Reclaim')]
+        [string]$Action,
+
+        [Parameter(Mandatory = $true)]
+        [string]$DispatchId,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Actor,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Branch,
+
+        [Parameter(Mandatory = $true)]
+        [string]$WorktreeRoot,
+
+        [Parameter(Mandatory = $true)]
+        [string]$PrimaryRoot
+    )
+
+    $claimArgs = New-HandoffClaimArguments -ClaimScript $claimScript -Action $Action `
+        -DispatchId $DispatchId -Actor $Actor -Harness 'Invoke-AiDispatchQueue.ps1' `
+        -Branch $Branch -Root $WorktreeRoot -LiveRoot $PrimaryRoot
+    $r = Invoke-Tool -Exe 'powershell.exe' -CmdArgs $claimArgs
+    if ($r.Code -ne 0) {
+        Fail "ADR-121 handoff claim action '$Action' failed (exit $($r.Code)):`n$($r.Text)"
+    }
+    try {
+        return ($r.Text | ConvertFrom-Json)
+    } catch {
+        Fail "ADR-121 handoff claim action '$Action' returned unparseable JSON: $($_.Exception.Message)`n$($r.Text)"
+    }
+}
+
+function Acquire-QueueHandoffClaim {
+    param(
+        [Parameter(Mandatory = $true)][string]$DispatchId,
+        [Parameter(Mandatory = $true)][string]$Actor,
+        [Parameter(Mandatory = $true)][string]$Branch,
+        [Parameter(Mandatory = $true)][string]$WorktreeRoot,
+        [Parameter(Mandatory = $true)][string]$PrimaryRoot
+    )
+
+    $claim = Invoke-QueueHandoffClaim -Action 'Claim' -DispatchId $DispatchId `
+        -Actor $Actor -Branch $Branch -WorktreeRoot $WorktreeRoot -PrimaryRoot $PrimaryRoot
+    if ($claim.status -eq 'STALE') {
+        Write-Output "ADR-121 handoff claim is stale; reclaiming $DispatchId before execution."
+        $claim = Invoke-QueueHandoffClaim -Action 'Reclaim' -DispatchId $DispatchId `
+            -Actor $Actor -Branch $Branch -WorktreeRoot $WorktreeRoot -PrimaryRoot $PrimaryRoot
+    }
+
+    return $claim
+}
+
+function Release-QueueHandoffClaim {
+    param(
+        [Parameter(Mandatory = $true)][string]$DispatchId,
+        [Parameter(Mandatory = $true)][string]$Actor,
+        [Parameter(Mandatory = $true)][string]$Branch,
+        [Parameter(Mandatory = $true)][string]$WorktreeRoot,
+        [Parameter(Mandatory = $true)][string]$PrimaryRoot
+    )
+
+    $release = Invoke-QueueHandoffClaim -Action 'Release' -DispatchId $DispatchId `
+        -Actor $Actor -Branch $Branch -WorktreeRoot $WorktreeRoot -PrimaryRoot $PrimaryRoot
+    if ($release.status -ne 'RELEASED') {
+        Write-Output ("WARNING: ADR-121 handoff claim release for $DispatchId returned " +
+            "status=$($release.status); live lock may remain until TTL expiry.")
+    }
+    return $release
+}
+
 # --- Environment -----------------------------------------------------------
 
 # Testability seam: when RGE_AI_DISPATCH_QUEUE_SKIP_MAIN is set, return
@@ -2107,6 +2241,10 @@ Require-Command powershell.exe
 $loopScript = Join-Path $script:RepoRoot 'Invoke-AiDispatchLoop.ps1'
 if (-not (Test-Path -LiteralPath $loopScript)) {
     Fail "Dispatch loop script not found: $loopScript"
+}
+$claimScript = Join-Path $script:RepoRoot 'Invoke-HandoffClaim.ps1'
+if (-not $SkipHandoffClaim -and -not (Test-Path -LiteralPath $claimScript)) {
+    Fail "Handoff claim helper not found: $claimScript"
 }
 
 $auth = Invoke-Tool -Exe 'gh' -CmdArgs @('auth', 'status')
@@ -2370,6 +2508,34 @@ try {
     Write-TimingTrace "queue.worktree: add done"
     $script:DispatchWorktreeRoot = $worktreePath
 
+    $handoffClaimActor = "Invoke-AiDispatchQueue.ps1:$PID"
+    $handoffClaimHeld = $false
+    if (-not $SkipHandoffClaim) {
+        Write-TimingTrace "queue.claim: acquire start (dispatch=$id)"
+        $claimResult = Acquire-QueueHandoffClaim -DispatchId $id -Actor $handoffClaimActor `
+            -Branch $branch -WorktreeRoot $worktreePath -PrimaryRoot $script:RepoRoot
+        Write-TimingTrace "queue.claim: acquire done (status=$($claimResult.status))"
+        if ($claimResult.status -notin @('CLAIMED', 'RECLAIMED', 'OWNED')) {
+            Write-Output ("ADR-121 handoff claim blocked dispatch $id " +
+                "(status=$($claimResult.status), actor=$($claimResult.actor), " +
+                "harness=$($claimResult.harness), branch=$($claimResult.branch)).")
+            Write-Output "Cleaning up empty isolated worktree after blocked claim."
+            $rmClaimWt = Invoke-Tool -Exe 'git' -CmdArgs @('worktree', 'remove', $worktreePath)
+            if ($rmClaimWt.Code -eq 0) {
+                $script:DispatchWorktreeRoot = $null
+                [void](Invoke-Tool -Exe 'git' -CmdArgs @('branch', '-D', $branch))
+            } else {
+                Write-Output ("WARNING: could not remove claim-blocked worktree '$worktreePath' " +
+                    "(exit $($rmClaimWt.Code)): $($rmClaimWt.Text)")
+            }
+            Fail ("ADR-121 handoff claim blocked dispatch $id; no execution was started.")
+        }
+        $handoffClaimHeld = $true
+        Write-Output "ADR-121 handoff claim: $($claimResult.status) ($($claimResult.lock_path))"
+    } else {
+        Write-Output "ADR-121 handoff claim: skipped by -SkipHandoffClaim."
+    }
+
     $loopLog = Join-Path $env:TEMP "rge-ai-dispatch-$id.log"
 
     # Progress comment: inner loop starting. Best-effort; failures warn only.
@@ -2413,6 +2579,15 @@ try {
     Write-Output "----------------------------------------------------------------"
     Write-Output "Dispatch loop exited with code $loopExit."
     Write-TimingTrace "queue.loop: done (exit=$loopExit)"
+
+    if ($handoffClaimHeld) {
+        Write-TimingTrace "queue.claim: release start (dispatch=$id)"
+        $releaseResult = Release-QueueHandoffClaim -DispatchId $id -Actor $handoffClaimActor `
+            -Branch $branch -WorktreeRoot $worktreePath -PrimaryRoot $script:RepoRoot
+        Write-TimingTrace "queue.claim: release done (status=$($releaseResult.status))"
+        Write-Output "ADR-121 handoff claim release: $($releaseResult.status)"
+        $handoffClaimHeld = $false
+    }
 
     $loopText = (Get-Content -Raw -LiteralPath $loopLog -ErrorAction SilentlyContinue)
     # Read the Codex control verdict from the structured run-dir JSON the loop

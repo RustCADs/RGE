@@ -28,6 +28,7 @@ BeforeAll {
             throw "Autonomous Codex executor dry-run tests: required script not found at $p"
         }
     }
+    $script:QueueScriptText = [System.IO.File]::ReadAllText($script:QueueScriptPath)
 
     $env:RGE_AI_DISPATCH_QUEUE_SKIP_MAIN = '1'
     try {
@@ -47,19 +48,20 @@ BeforeAll {
         param([string]$ScriptPath, [string]$ParameterName)
         $tokens = $null
         $errors = $null
+        $targetName = $ParameterName
         $ast = [System.Management.Automation.Language.Parser]::ParseFile(
             $ScriptPath, [ref]$tokens, [ref]$errors)
         if ($errors -and $errors.Count -gt 0) {
             $msgs = $errors | ForEach-Object { $_.Message }
             throw "Parser errors in $($ScriptPath): " + ($msgs -join '; ')
         }
-        $matches = $ast.FindAll({
+        $parameterMatches = $ast.FindAll({
             param($n)
             $n -is [System.Management.Automation.Language.ParameterAst] -and
-            $n.Name.VariablePath.UserPath -eq $ParameterName
+            $n.Name.VariablePath.UserPath -eq $targetName
         }, $true)
-        if (-not $matches -or $matches.Count -eq 0) { return $null }
-        return $matches[0]
+        if (-not $parameterMatches -or $parameterMatches.Count -eq 0) { return $null }
+        return $parameterMatches[0]
     }
 
     function script:Get-ParameterDefaultValueString {
@@ -73,7 +75,7 @@ BeforeAll {
         return [string]$p.DefaultValue.Extent.Text
     }
 
-    function script:Get-ValidateSetValues {
+    function script:Get-ValidateSetValue {
         param([string]$ScriptPath, [string]$ParameterName)
         $p = Get-ParameterAst -ScriptPath $ScriptPath -ParameterName $ParameterName
         if (-not $p) { return $null }
@@ -105,7 +107,7 @@ Describe 'Codex executor parameter contracts' {
                 $script:QueueScriptPath,
                 $script:AutoScriptPath,
                 $script:ScheduleScriptPath)) {
-            $values = Get-ValidateSetValues -ScriptPath $scriptPath -ParameterName 'Executor'
+            $values = Get-ValidateSetValue -ScriptPath $scriptPath -ParameterName 'Executor'
             $values | Should -Not -BeNullOrEmpty
             $values | Should -Contain 'claude'
             $values | Should -Contain 'codex'
@@ -115,7 +117,7 @@ Describe 'Codex executor parameter contracts' {
 
 Describe 'Codex-as-human command dry-run' {
     It 'Auto would call Queue with main publish mode and Codex executor' {
-        $args = New-AutoQueueArguments `
+        $queueArgs = New-AutoQueueArguments `
             -QueueScript 'Invoke-AiDispatchQueue.ps1' `
             -PublishMode 'main' `
             -MaxPlanRevisions 2 `
@@ -124,19 +126,19 @@ Describe 'Codex-as-human command dry-run' {
             -TraceTiming $true `
             -EnablePreflightAudit $true
 
-        $args | Should -Contain '-File'
-        $args | Should -Contain 'Invoke-AiDispatchQueue.ps1'
-        $args | Should -Contain '-PublishMode'
-        $args | Should -Contain 'main'
-        $args | Should -Contain '-Executor'
-        $args | Should -Contain 'codex'
-        $args | Should -Contain '-TraceTiming'
-        $args | Should -Contain '-EnablePreflightAudit'
-        $args | Should -Not -Contain '-NoPublish'
+        $queueArgs | Should -Contain '-File'
+        $queueArgs | Should -Contain 'Invoke-AiDispatchQueue.ps1'
+        $queueArgs | Should -Contain '-PublishMode'
+        $queueArgs | Should -Contain 'main'
+        $queueArgs | Should -Contain '-Executor'
+        $queueArgs | Should -Contain 'codex'
+        $queueArgs | Should -Contain '-TraceTiming'
+        $queueArgs | Should -Contain '-EnablePreflightAudit'
+        $queueArgs | Should -Not -Contain '-NoPublish'
     }
 
     It 'Queue would pass Codex executor through to the dispatch loop' {
-        $args = New-DispatchLoopArguments `
+        $loopArgs = New-DispatchLoopArguments `
             -LoopScript 'Invoke-AiDispatchLoop.ps1' `
             -DispatchId 'DRY-RUN-CODEX' `
             -GoalFile 'OLD\dry-run-goal.md' `
@@ -145,13 +147,13 @@ Describe 'Codex-as-human command dry-run' {
             -Executor 'codex' `
             -EnablePreflightAudit $true
 
-        $args | Should -Contain '-File'
-        $args | Should -Contain 'Invoke-AiDispatchLoop.ps1'
-        $args | Should -Contain '-DispatchId'
-        $args | Should -Contain 'DRY-RUN-CODEX'
-        $args | Should -Contain '-Executor'
-        $args | Should -Contain 'codex'
-        $args | Should -Contain '-EnablePreflightAudit'
+        $loopArgs | Should -Contain '-File'
+        $loopArgs | Should -Contain 'Invoke-AiDispatchLoop.ps1'
+        $loopArgs | Should -Contain '-DispatchId'
+        $loopArgs | Should -Contain 'DRY-RUN-CODEX'
+        $loopArgs | Should -Contain '-Executor'
+        $loopArgs | Should -Contain 'codex'
+        $loopArgs | Should -Contain '-EnablePreflightAudit'
     }
 
     It 'Queue progress text names Codex execute when the executor is codex' {
@@ -165,6 +167,51 @@ Describe 'Codex-as-human command dry-run' {
 
         $body | Should -Match 'Codex execute'
         $body | Should -Not -Match 'Claude execute'
+    }
+}
+
+Describe 'Queue ADR-121 handoff claim command dry-run' {
+    It 'builds claim helper arguments with worktree events and primary live lock' {
+        $claimArgs = New-HandoffClaimArguments `
+            -ClaimScript 'Invoke-HandoffClaim.ps1' `
+            -Action 'Claim' `
+            -DispatchId 'ISSUE-CLAIM' `
+            -Actor 'Invoke-AiDispatchQueue.ps1:1234' `
+            -Harness 'Invoke-AiDispatchQueue.ps1' `
+            -Branch 'ai-dispatch/ISSUE-CLAIM' `
+            -Root 'A:\RCAD\dispatch-worktrees\ISSUE-CLAIM' `
+            -LiveRoot 'A:\RCAD\RGE' `
+            -TtlSeconds 7200
+
+        $claimArgs | Should -Contain '-File'
+        $claimArgs | Should -Contain 'Invoke-HandoffClaim.ps1'
+        $claimArgs | Should -Contain '-Action'
+        $claimArgs | Should -Contain 'Claim'
+        $claimArgs | Should -Contain '-Root'
+        $claimArgs | Should -Contain 'A:\RCAD\dispatch-worktrees\ISSUE-CLAIM'
+        $claimArgs | Should -Contain '-LiveRoot'
+        $claimArgs | Should -Contain 'A:\RCAD\RGE'
+        $claimArgs | Should -Contain '-JsonOnly'
+    }
+
+    It 'acquires the claim after worktree selection and before the loop starts' {
+        $worktreeIdx = $script:QueueScriptText.IndexOf('$script:DispatchWorktreeRoot = $worktreePath')
+        $claimIdx = $script:QueueScriptText.IndexOf('queue.claim: acquire start', $worktreeIdx)
+        $loopIdx = $script:QueueScriptText.IndexOf('queue.loop: start', $claimIdx)
+
+        $worktreeIdx | Should -BeGreaterThan -1
+        $claimIdx | Should -BeGreaterThan $worktreeIdx
+        $loopIdx | Should -BeGreaterThan $claimIdx
+    }
+
+    It 'releases the claim after the loop exits and before dispatch-log staging' {
+        $loopDoneIdx = $script:QueueScriptText.IndexOf('queue.loop: done')
+        $releaseIdx = $script:QueueScriptText.IndexOf('queue.claim: release start', $loopDoneIdx)
+        $logIdx = $script:QueueScriptText.IndexOf('queue.commit: dispatch-log start', $releaseIdx)
+
+        $loopDoneIdx | Should -BeGreaterThan -1
+        $releaseIdx | Should -BeGreaterThan $loopDoneIdx
+        $logIdx | Should -BeGreaterThan $releaseIdx
     }
 }
 

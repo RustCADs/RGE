@@ -228,7 +228,17 @@ The queue scope guard now recognizes this dispatch's helper-generated
 `ai_handoffs/claims/<DISPATCH_ID>_<TIMESTAMP>_<EVENT>.json` files as
 hard-coded protocol artifacts, while continuing to reject arbitrary nested
 `ai_handoffs/**` paths. This only prepares safe staging for future claim
-integration; the queue and loop still do not acquire claims.
+integration.
+
+The queue now acquires the helper claim by default after creating the isolated
+worktree and before starting `Invoke-AiDispatchLoop.ps1`. It uses the primary
+checkout as `-LiveRoot` so concurrent worktrees contend on one shared
+`.ai/handoff-claims/<DISPATCH_ID>/claim.json`, and uses the isolated worktree
+as `-Root` so `ai_handoffs/claims/*.json` events are staged with the dispatch
+output. A blocked claim removes the empty just-created worktree and branch and
+fails before execution starts. A successful run releases the claim after the
+loop exits and before dispatch-log generation and staging. `-SkipHandoffClaim`
+exists only as an operator escape hatch.
 
 ### D7. Rollout and smoke requirements
 
@@ -322,6 +332,12 @@ without wiring the claim helper into any runner.
 The fifth slice lets the claim helper split live-lock root from event root,
 which is required before queue/worktree integration can prevent cross-worktree
 duplicate claims.
+
+The sixth slice wires queue claim acquisition into the default live queue path:
+primary-root live lock, worktree-root append-only events, blocked-before-loop
+cleanup, release-after-loop, and a `-SkipHandoffClaim` escape hatch. It does
+not promote packet validation to blocking and does not change scheduler,
+publish-mode, schema, workflow, Rust, or Cargo behavior.
 
 Blocking behavior is deliberately out of scope until advisory output has proven
 stable.

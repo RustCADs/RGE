@@ -29,7 +29,7 @@
       2. Source-level: the queue script precomputes the repo-relative
          dispatch-log path once (`$dispatchLogRel = Get-RepoRelativePathForQueue
          $dispatchLogPath`) immediately after `Write-DispatchLog` returns
-         and BEFORE any `$script:DispatchWorktreeRoot = $null` assignment,
+         and before post-dispatch cleanup clears `$script:DispatchWorktreeRoot`,
          and the result comment / PR body / close comment all consume
          `$dispatchLogRel` rather than re-calling the formatter on the
          absolute path.
@@ -102,12 +102,11 @@ Describe 'ISSUE-231 stable dispatch-log path across worktree cleanup' {
             $script:QueueScriptText | Should -Match '\$dispatchLogRel\s*=\s*Get-RepoRelativePathForQueue\s+\$dispatchLogPath'
         }
 
-        It 'precomputes $dispatchLogRel BEFORE any $script:DispatchWorktreeRoot = $null assignment' {
+        It 'precomputes $dispatchLogRel before post-dispatch cleanup clears the worktree root' {
             $assignIdx = $script:QueueScriptText.IndexOf('$dispatchLogRel = Get-RepoRelativePathForQueue $dispatchLogPath')
             $assignIdx | Should -BeGreaterThan -1
-            $clearIdx  = $script:QueueScriptText.IndexOf('$script:DispatchWorktreeRoot = $null')
-            $clearIdx  | Should -BeGreaterThan -1
-            $assignIdx | Should -BeLessThan $clearIdx
+            $clearIdx  = $script:QueueScriptText.IndexOf('$script:DispatchWorktreeRoot = $null', $assignIdx)
+            $clearIdx  | Should -BeGreaterThan $assignIdx
         }
 
         It 'does not call Get-RepoRelativePathForQueue on $dispatchLogPath at any other site' {
@@ -116,9 +115,9 @@ Describe 'ISSUE-231 stable dispatch-log path across worktree cleanup' {
             # close comment, and the audit-log commit message -- must
             # consume $dispatchLogRel. A second formatter call on
             # $dispatchLogPath would re-introduce the post-cleanup defect.
-            $matches = [regex]::Matches($script:QueueScriptText,
+            $formatterMatches = [regex]::Matches($script:QueueScriptText,
                 'Get-RepoRelativePathForQueue\s+\$dispatchLogPath')
-            $matches.Count | Should -Be 1
+            $formatterMatches.Count | Should -Be 1
         }
 
         It 'uses $dispatchLogRel in the result-comment "Detailed log:" bullet' {

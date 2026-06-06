@@ -373,6 +373,24 @@ the per-issue branch `ai-dispatch/ISSUE-231`. The path is deterministic
 and computed by the pure helper `Resolve-DispatchWorktreePath` covered
 under `tools/dispatch-tests/**`.
 
+#### ADR-121 handoff claim
+
+After creating the isolated worktree and before starting
+`Invoke-AiDispatchLoop.ps1`, the queue acquires an ADR-121 handoff claim for
+the dispatch id. The mutable live lock is stored under the shared primary
+checkout (`.ai/handoff-claims/<DispatchId>/claim.json`), while append-only
+claim events are written under the isolated worktree
+(`ai_handoffs/claims/*.json`) so they can be staged with the rest of the
+dispatch output.
+
+If another actor owns a live claim, the queue removes the empty just-created
+worktree, deletes its fresh branch, and fails before starting execution. There
+is no run-dir evidence to copy in that path because the loop never ran. A
+successful queue run releases its claim after the loop exits and before
+dispatch-log generation and staging. `-SkipHandoffClaim` is an operator escape
+hatch for diagnosing the helper; default queue, auto, and scheduler-invoked
+runs keep the claim lifecycle enabled.
+
 #### Why worktree isolation
 
 The pre-ISSUE-231 queue ran the loop on the primary checkout, which
