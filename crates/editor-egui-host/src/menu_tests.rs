@@ -25,7 +25,7 @@ use rge_editor_ui::menus::{
 use super::MenuCommandHandoff;
 use crate::menu::{
     command_palette_entries, filter_command_palette_entries, project_main_menu,
-    register_menu_entry, register_plugin_menu_entry,
+    register_menu_entry, register_plugin_menu_entry, ProjectedCommandPaletteEntry,
 };
 
 /// Project the canonical menu's four points to `(label, accel, command)` triples,
@@ -496,6 +496,40 @@ fn command_palette_filter_matches_label_shortcut_and_command_id() {
     assert!(
         labels("not-a-real-command").is_empty(),
         "unknown filters produce an empty palette list"
+    );
+}
+
+#[test]
+fn command_palette_filter_orders_exact_word_matches_before_longer_matches() {
+    let entries = vec![
+        ProjectedCommandPaletteEntry {
+            label: "File: Save As New Project".to_owned(),
+            shortcut: Some("Ctrl+Shift+S".to_owned()),
+            command: Command::SaveAs,
+            enabled: true,
+        },
+        ProjectedCommandPaletteEntry {
+            label: "File: Save".to_owned(),
+            shortcut: Some("Ctrl+S".to_owned()),
+            command: Command::Save,
+            enabled: true,
+        },
+        ProjectedCommandPaletteEntry {
+            label: "File: Open".to_owned(),
+            shortcut: Some("Ctrl+O".to_owned()),
+            command: Command::OpenFile,
+            enabled: true,
+        },
+    ];
+
+    let labels: Vec<&str> = filter_command_palette_entries(&entries, "save")
+        .into_iter()
+        .map(|entry| entry.label.as_str())
+        .collect();
+    assert_eq!(
+        labels,
+        vec!["File: Save", "File: Save As New Project"],
+        "shorter exact word matches sort ahead of longer exact word matches"
     );
 }
 

@@ -161,9 +161,11 @@ pub(crate) fn command_palette_entries(
 
 /// Return command-palette entries matching the user-entered filter.
 ///
-/// Filtering is deliberately presentation-local: it does not rank, persist
-/// history, or change command execution. Each whitespace-separated term must
-/// match the menu-path label, shortcut display, or command diagnostic id.
+/// Filtering is deliberately presentation-local: it does not persist history
+/// or change command execution. Each whitespace-separated term must match the
+/// menu-path label, shortcut display, or command diagnostic id. Matching entries
+/// are ordered by deterministic, simple relevance: exact word/field match,
+/// prefix match, substring match, then original menu order.
 pub(crate) fn filter_command_palette_entries<'a>(
     entries: &'a [ProjectedCommandPaletteEntry],
     filter: &str,
@@ -176,23 +178,55 @@ pub(crate) fn filter_command_palette_entries<'a>(
         return entries.iter().collect();
     }
 
-    entries
+    let mut matches: Vec<(usize, usize, &ProjectedCommandPaletteEntry)> = entries
         .iter()
-        .filter(|entry| {
-            terms.iter().all(|term| {
-                entry.label.to_ascii_lowercase().contains(term)
-                    || entry
-                        .shortcut
-                        .as_deref()
-                        .is_some_and(|shortcut| shortcut.to_ascii_lowercase().contains(term))
-                    || entry
-                        .command
-                        .diagnostic_id()
-                        .to_ascii_lowercase()
-                        .contains(term)
-            })
+        .enumerate()
+        .filter_map(|(index, entry)| {
+            command_palette_match_score(entry, &terms).map(|score| (score, index, entry))
         })
-        .collect()
+        .collect();
+    matches.sort_by_key(|(score, index, _)| (*score, *index));
+    matches.into_iter().map(|(_, _, entry)| entry).collect()
+}
+
+fn command_palette_match_score(
+    entry: &ProjectedCommandPaletteEntry,
+    terms: &[String],
+) -> Option<usize> {
+    let diagnostic_id = entry.command.diagnostic_id();
+    let fields = [
+        entry.label.as_str(),
+        entry.shortcut.as_deref().unwrap_or_default(),
+        diagnostic_id.as_str(),
+    ];
+    let mut score = entry.label.len();
+    for term in terms {
+        let best = fields
+            .iter()
+            .filter_map(|field| command_palette_field_match_rank(field, term))
+            .min()?;
+        score += best * 100;
+    }
+    Some(score)
+}
+
+fn command_palette_field_match_rank(field: &str, term: &str) -> Option<usize> {
+    let field = field.to_ascii_lowercase();
+    if field == term
+        || field
+            .split(|ch: char| !ch.is_ascii_alphanumeric())
+            .any(|word| word == term.as_str())
+    {
+        return Some(0);
+    }
+    if field.starts_with(term)
+        || field
+            .split(|ch: char| !ch.is_ascii_alphanumeric())
+            .any(|word| word.starts_with(term))
+    {
+        return Some(1);
+    }
+    field.contains(term).then_some(2)
 }
 
 /// Register an extension-provided entry against any declared main-menu extension

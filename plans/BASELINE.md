@@ -560,16 +560,16 @@ Until **at least one** of those fires, treat the reflection substrate as observe
 
 ### 2026-06-06 - Command palette filter
 
-**Forward-only follow-up (MENU-COMMAND-PALETTE-FILTER).** Narrows the command-palette gap from a static list to a searchable host-local view. The filter works over the already-projected menu rows, so it does not create a second command model or alter activation semantics.
+**Forward-only follow-up (MENU-COMMAND-PALETTE-FILTER).** Narrows the command-palette gap from a static list to a searchable host-local view with deterministic result ordering. The filter works over the already-projected menu rows, so it does not create a second command model or alter activation semantics.
 
-**Now shipped - basic command-palette filtering.**
+**Now shipped - basic command-palette filtering and ordering.**
 - `EguiHost` owns `command_palette_filter` beside `command_palette_open`.
 - `toggle_command_palette`, close, and command activation clear the filter so stale queries do not carry into the next palette invocation.
-- `filter_command_palette_entries()` matches whitespace-separated terms against menu-path label, shortcut display, and `Command::diagnostic_id()`.
+- `filter_command_palette_entries()` matches whitespace-separated terms against menu-path label, shortcut display, and `Command::diagnostic_id()`, then orders matches by exact word/field match, prefix match, substring match, and original menu order.
 - The `Command Palette` window renders a search field and shows only matching enabled/disabled rows; activation still enqueues through `MenuCommandHandoff`.
-- Host tests pin blank filters, shortcut search (`Ctrl+Shift+P`), diagnostic-id search (`toggle_command_palette`), multi-term matching, and no-match behavior.
+- Host tests pin blank filters, shortcut search (`Ctrl+Shift+P`), diagnostic-id search (`toggle_command_palette`), multi-term matching, exact-word ordering, and no-match behavior.
 
-**Still open - explicitly NOT closed here:** fuzzy ranking/scoring, command history, a separate command model, richer palette keyboard navigation, plugin runtime/action execution beyond FIFO enqueue, host->shell FIFO replacement, and conflict resolution/keybinding editor/fatal gating.
+**Still open - explicitly NOT closed here:** fuzzy matching/scoring, command history, a separate command model, richer palette keyboard navigation, plugin runtime/action execution beyond FIFO enqueue, host->shell FIFO replacement, and conflict resolution/keybinding editor/fatal gating.
 
 **Scope:** `editor-egui-host` palette state/render/filter helper/tests plus top-level status docs; no `editor-ui` default-menu change, no `editor-shell` routing change, no plugin runtime, no Cargo, scheduler, dispatch automation, or task arming.
 
