@@ -17,6 +17,11 @@
         .github/workflows/tests.yml         workspace tests + doctests
         .github/workflows/bench.yml         cargo bench -p rge-script-bench --no-run
 
+    ADR-121 handoff packet validation runs as an advisory-only section after
+    the CI-parity checks. It is deliberately not counted as a verification step
+    and cannot fail this gate unless a later ADR/dispatch explicitly promotes
+    it to blocking behavior.
+
     FIRST-RUN SETUP. Run this script once by hand before relying on it:
         .\.ai\dispatch.verify.ps1
     It needs the `nightly` toolchain (for rustfmt's nightly-only options) and
@@ -38,26 +43,6 @@ $ErrorActionPreference = 'Stop'
 # --- Locate the repo root (this script lives in <repo>/.ai/) ---------------
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location -LiteralPath $RepoRoot
-
-# --- Ensure cargo is reachable ---------------------------------------------
-# Cargo is not always on PATH in unattended sessions; on this machine the
-# Rust install lives on the RustCache volume.
-if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
-    $cargoBin = 'A:\RustCache\cargo\bin'
-    if (Test-Path -LiteralPath (Join-Path $cargoBin 'cargo.exe')) {
-        $env:PATH = $cargoBin + ';' + $env:PATH
-    }
-}
-if (-not $env:CARGO_HOME -and (Test-Path -LiteralPath 'A:\RustCache\cargo')) {
-    $env:CARGO_HOME = 'A:\RustCache\cargo'
-}
-if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
-    Write-Output 'VERIFY FAIL: cargo not found on PATH and not at A:\RustCache\cargo\bin.'
-    exit 127
-}
-
-$env:CARGO_TERM_COLOR = 'always'
-$env:RUST_BACKTRACE = '1'
 
 # --- Step runner -----------------------------------------------------------
 $script:StepIndex = 0
@@ -103,6 +88,171 @@ function Test-CommandRuns {
     $ErrorActionPreference = $prevEap
     return $ok
 }
+
+function Resolve-HandoffAdvisoryDispatchId {
+    param([string]$BranchName = '')
+
+    if (-not [string]::IsNullOrWhiteSpace($env:RGE_AI_DISPATCH_ID)) {
+        return $env:RGE_AI_DISPATCH_ID.Trim()
+    }
+    if ([string]::IsNullOrWhiteSpace($BranchName)) {
+        $prevEap = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            $BranchName = (& git branch --show-current 2>$null)
+        } finally {
+            $ErrorActionPreference = $prevEap
+        }
+    }
+    $BranchName = ([string]$BranchName).Trim()
+    if ($BranchName -match '^ai-dispatch/(.+)$') {
+        return $Matches[1]
+    }
+    return $null
+}
+
+function Resolve-HandoffAdvisoryPacket {
+    param(
+        [Parameter(Mandatory)][string]$HandoffDir,
+        [Parameter(Mandatory)][string]$DispatchId,
+        [Parameter(Mandatory)][ValidateSet('TASK', 'EXEC', 'CORRECT')][string]$PacketType
+    )
+
+    if (-not (Test-Path -LiteralPath $HandoffDir)) { return $null }
+    $idPattern = [regex]::Escape($DispatchId)
+    $typePattern = [regex]::Escape($PacketType)
+    $namePattern = "^$idPattern`_$typePattern`_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}[+-]\d{4}\.md$"
+    return Get-ChildItem -LiteralPath $HandoffDir -File -Filter '*.md' |
+        Where-Object { $_.Name -match $namePattern } |
+        Sort-Object LastWriteTimeUtc -Descending |
+        Select-Object -First 1
+}
+
+function Resolve-HandoffAdvisoryPackets {
+    param(
+        [Parameter(Mandatory)][string]$HandoffDir,
+        [Parameter(Mandatory)][string]$DispatchId,
+        [Parameter(Mandatory)][ValidateSet('CORRECT')][string]$PacketType
+    )
+
+    if (-not (Test-Path -LiteralPath $HandoffDir)) { return @() }
+    $idPattern = [regex]::Escape($DispatchId)
+    $typePattern = [regex]::Escape($PacketType)
+    $namePattern = "^$idPattern`_$typePattern`_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}[+-]\d{4}\.md$"
+    return @(Get-ChildItem -LiteralPath $HandoffDir -File -Filter '*.md' |
+        Where-Object { $_.Name -match $namePattern } |
+        Sort-Object LastWriteTimeUtc)
+}
+
+function Write-HandoffAdvisoryLine {
+    param([AllowNull()][object]$Message)
+    [Console]::Out.WriteLine([string]$Message)
+}
+
+function Invoke-HandoffPacketAdvisoryValidation {
+    param(
+        [Parameter(Mandatory)][string]$RepoRoot,
+        [Parameter(Mandatory)][string]$HandoffDir,
+        [Parameter(Mandatory)][string]$ValidatorPath,
+        [string]$IntegrationRef = 'main',
+        [string]$BranchName = ''
+    )
+
+    Write-HandoffAdvisoryLine ''
+    Write-HandoffAdvisoryLine '=== [advisory] ADR-121 handoff packet validation ==='
+
+    $dispatchId = Resolve-HandoffAdvisoryDispatchId -BranchName $BranchName
+    if ([string]::IsNullOrWhiteSpace($dispatchId)) {
+        Write-HandoffAdvisoryLine 'HANDOFF_ADVISORY: SKIP (no dispatch id in RGE_AI_DISPATCH_ID or ai-dispatch/<id> branch)'
+        return [pscustomobject]@{ Status = 'SKIP'; DispatchId = $null; ExitCode = 0; Packet = $null; TaskPacket = $null }
+    }
+    if (-not (Test-Path -LiteralPath $ValidatorPath)) {
+        Write-HandoffAdvisoryLine "HANDOFF_ADVISORY: SKIP (validator not found: $ValidatorPath)"
+        return [pscustomobject]@{ Status = 'SKIP'; DispatchId = $dispatchId; ExitCode = 0; Packet = $null; TaskPacket = $null }
+    }
+
+    $packet = Resolve-HandoffAdvisoryPacket -HandoffDir $HandoffDir -DispatchId $dispatchId -PacketType 'EXEC'
+    if (-not $packet) {
+        $packet = Resolve-HandoffAdvisoryPacket -HandoffDir $HandoffDir -DispatchId $dispatchId -PacketType 'TASK'
+    }
+    $taskPacket = Resolve-HandoffAdvisoryPacket -HandoffDir $HandoffDir -DispatchId $dispatchId -PacketType 'TASK'
+    if (-not $packet) {
+        Write-HandoffAdvisoryLine "HANDOFF_ADVISORY: SKIP (no TASK or EXEC packet found for $dispatchId)"
+        return [pscustomobject]@{ Status = 'SKIP'; DispatchId = $dispatchId; ExitCode = 0; Packet = $null; TaskPacket = $null }
+    }
+
+    $args = @(
+        '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $ValidatorPath,
+        '-PacketPath', $packet.FullName,
+        '-Integration', $IntegrationRef
+    )
+    if ($taskPacket) {
+        $args += @('-TaskPacket', $taskPacket.FullName)
+        $overridePackets = Resolve-HandoffAdvisoryPackets -HandoffDir $HandoffDir -DispatchId $dispatchId -PacketType 'CORRECT'
+        if ($overridePackets.Count -gt 0) {
+            $args += '-PlannerOverridePacket'
+            foreach ($override in $overridePackets) { $args += $override.FullName }
+        }
+    }
+
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    $global:LASTEXITCODE = 0
+    try {
+        $output = & powershell.exe @args 2>&1
+        $code = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $prevEap
+    }
+    $reportedVerdict = $null
+    foreach ($line in $output) {
+        Write-HandoffAdvisoryLine $line
+        if ([string]$line -match '^HANDOFF_VALIDATE:\s*(PASS|WARN|FAIL)\s*$') {
+            $reportedVerdict = $Matches[1]
+        }
+    }
+    if ($code -eq 0 -and $reportedVerdict -eq 'PASS') {
+        Write-HandoffAdvisoryLine 'HANDOFF_ADVISORY: PASS (non-blocking)'
+        return [pscustomobject]@{
+            Status = 'PASS'; DispatchId = $dispatchId; ExitCode = 0
+            Packet = $packet.FullName; TaskPacket = if ($taskPacket) { $taskPacket.FullName } else { $null }
+        }
+    }
+
+    if ($code -eq 0 -and $reportedVerdict -in @('WARN', 'FAIL')) {
+        Write-HandoffAdvisoryLine "HANDOFF_ADVISORY: WARN (validator reported $reportedVerdict; advisory only, verify remains green)"
+    } elseif ($code -eq 0) {
+        Write-HandoffAdvisoryLine 'HANDOFF_ADVISORY: WARN (validator verdict missing; advisory only, verify remains green)'
+    } else {
+        Write-HandoffAdvisoryLine "HANDOFF_ADVISORY: WARN (validator exited $code; advisory only, verify remains green)"
+    }
+    return [pscustomobject]@{
+        Status = 'WARN'; DispatchId = $dispatchId; ExitCode = $code
+        Packet = $packet.FullName; TaskPacket = if ($taskPacket) { $taskPacket.FullName } else { $null }
+    }
+}
+
+if ($env:RGE_AI_DISPATCH_VERIFY_SKIP_MAIN -eq '1') { return }
+
+# --- Ensure cargo is reachable ---------------------------------------------
+# Cargo is not always on PATH in unattended sessions; on this machine the
+# Rust install lives on the RustCache volume.
+if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
+    $cargoBin = 'A:\RustCache\cargo\bin'
+    if (Test-Path -LiteralPath (Join-Path $cargoBin 'cargo.exe')) {
+        $env:PATH = $cargoBin + ';' + $env:PATH
+    }
+}
+if (-not $env:CARGO_HOME -and (Test-Path -LiteralPath 'A:\RustCache\cargo')) {
+    $env:CARGO_HOME = 'A:\RustCache\cargo'
+}
+if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
+    Write-Output 'VERIFY FAIL: cargo not found on PATH and not at A:\RustCache\cargo\bin.'
+    exit 127
+}
+
+$env:CARGO_TERM_COLOR = 'always'
+$env:RUST_BACKTRACE = '1'
 
 Write-Output "RGE dispatch verification -- repo $RepoRoot"
 Write-Output "Started $((Get-Date).ToString('o'))"
@@ -202,6 +352,12 @@ Invoke-Step -Label 'cargo test --workspace --doc' -Exe 'cargo' `
 # matching the bench.yml job which only verifies that benchmarks still build.
 Invoke-Step -Label 'cargo bench -p rge-script-bench --no-run' -Exe 'cargo' `
     -Arguments @('bench', '-p', 'rge-script-bench', '--no-run')
+
+$null = Invoke-HandoffPacketAdvisoryValidation `
+    -RepoRoot $RepoRoot `
+    -HandoffDir (Join-Path $RepoRoot 'ai_handoffs') `
+    -ValidatorPath (Join-Path $RepoRoot 'Test-HandoffPacket.ps1') `
+    -IntegrationRef 'main'
 
 Write-Output ''
 Write-Output ('VERIFY OK: all {0} verification step(s) passed.' -f $script:StepIndex)

@@ -60,10 +60,12 @@ safe sequence is:
 4. Only then consider protocol/template changes.
 5. Only after another explicit decision consider blocking verification.
 
-Acceptance of this ADR is not permission to edit `.ai/dispatch.verify.ps1`,
-`Invoke-AiDispatchLoop.ps1`, `Invoke-AiDispatchQueue.ps1`, schemas, templates,
-or scheduler behavior. `Test-HandoffPacket.ps1` is the first advisory tooling
-slice and remains standalone.
+Acceptance of this ADR was not permission to make blocking verification,
+template, queue, schema, or scheduler changes. `Test-HandoffPacket.ps1` landed
+first as standalone tooling. A later advisory-only slice wires it into
+`.ai/dispatch.verify.ps1` after the historical smoke suite exists; that hook is
+non-counted, non-blocking, and reports `SKIP`/`WARN` without changing the gate's
+exit code.
 
 ### D2. Thin validator scope
 
@@ -231,9 +233,9 @@ from `git diff-tree`, and pins expected `PASS`, injected `FAIL`,
 Planner-owned `WARN`, and legacy `UNCHECKED` behavior without rewriting
 historical packets.
 
-Only after those results are recorded may a later dispatch propose advisory
-integration into `.ai/dispatch.verify.ps1`. Blocking integration requires a
-separate decision after advisory integration has run cleanly.
+Those results are now recorded, so advisory integration into
+`.ai/dispatch.verify.ps1` is permitted. Blocking integration still requires a
+separate decision after advisory output has run cleanly.
 
 ## Consequences
 
@@ -278,7 +280,7 @@ separate decision after advisory integration has run cleanly.
 
 ## Implementation guidance
 
-The first implementation slice is documentation/tooling-only and must not
+The first implementation slice was documentation/tooling-only and did not
 modify `.ai/dispatch.verify.ps1`.
 
 Suggested first slice:
@@ -292,6 +294,8 @@ Suggested first slice:
 The second slice may update packet templates with the optional envelope block.
 
 The third slice may wire advisory output into the canonical verification gate.
+That integration must remain non-blocking and non-counted unless a later
+decision explicitly promotes it.
 
 Blocking behavior is deliberately out of scope until advisory output has proven
 stable.

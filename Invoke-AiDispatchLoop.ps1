@@ -1349,8 +1349,19 @@ function Invoke-Verification {
         return [pscustomobject]@{ Passed = $true; Skipped = $true; ExitCode = 0; Log = $log }
     }
 
-    $r = Invoke-WithTimeout -Exe 'powershell.exe' -OutFile $log -TimeoutSec $VerifyTimeoutSec `
-        -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $script:VerifyScriptPath)
+    $oldDispatchEnv = $env:RGE_AI_DISPATCH_ID
+    $oldRoundEnv = $env:RGE_AI_DISPATCH_ROUND
+    $env:RGE_AI_DISPATCH_ID = $DispatchId
+    $env:RGE_AI_DISPATCH_ROUND = [string]$Round
+    try {
+        $r = Invoke-WithTimeout -Exe 'powershell.exe' -OutFile $log -TimeoutSec $VerifyTimeoutSec `
+            -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $script:VerifyScriptPath)
+    } finally {
+        if ($null -ne $oldDispatchEnv) { $env:RGE_AI_DISPATCH_ID = $oldDispatchEnv }
+        else { Remove-Item Env:RGE_AI_DISPATCH_ID -ErrorAction SilentlyContinue }
+        if ($null -ne $oldRoundEnv) { $env:RGE_AI_DISPATCH_ROUND = $oldRoundEnv }
+        else { Remove-Item Env:RGE_AI_DISPATCH_ROUND -ErrorAction SilentlyContinue }
+    }
     if ($r.TimedOut) {
         Add-Content -LiteralPath $log -Value "`n[orchestrator] verification timed out after ${VerifyTimeoutSec}s; process tree killed."
     }

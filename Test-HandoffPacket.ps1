@@ -9,9 +9,9 @@
     footer shape, core header fields, optional sidecar consistency, closeout
     evidence, and optional TASK envelope scope checks.
 
-    This script is deliberately not wired into .ai/dispatch.verify.ps1. By
-    default it reports FAIL in output but exits 0 so it can be smoked safely.
-    Pass -Blocking to make a FAIL exit 2.
+    The canonical .ai/dispatch.verify.ps1 gate may call this script as an
+    advisory-only section. By default it reports FAIL in output but exits 0 so
+    it can be smoked safely. Pass -Blocking to make a FAIL exit 2.
 
 .EXAMPLE
     .\Test-HandoffPacket.ps1 -PacketPath ai_handoffs\ISSUE-1_EXEC_2026-06-06_00-00-00+0300.md
