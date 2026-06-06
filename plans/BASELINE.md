@@ -558,6 +558,29 @@ Until **at least one** of those fires, treat the reflection substrate as observe
 4. Cross-check the editor's call graph against the `CommandBus::submit` / `Action::apply` / `Action::revert` signatures to determine whether user-visible CAD mutations can flow through the existing bus.
 5. Test inventory across `editor-*` (`#[test]` count + integration vs unit breakdown + workflow coverage).
 
+### 2026-06-06 - Menu shortcut/display follow-up shipped: Play hints, Resume label, View Home
+
+**Forward-only follow-up (MENU-SHORTCUT-DOC-RECONCILE).** Narrows the 2026-06-05 registry-enable section's "Play/View accelerator DISPLAY + execution" and "dynamic toggle LABELS" open items, and narrows the 2026-06-04 W08 section's "View -> Reset Camera has no keystroke binding" line. The menu baseline now reflects the three follow-up commits after #313/#314: Play exposes passive Space/Escape hints, the Play start item resolves as `Resume` while paused, and View -> Reset Camera binds the canonical plain `Home` accelerator.
+
+**Now shipped - menu shortcut/display follow-up.**
+- **`f3931a7` (`feat(menu): show passive play shortcut hints`)** - `MenuEntry::shortcut_hint` lets the host display Space/Escape beside Play/Pause/Stop without registering those keys in the executable accelerator table. Play keyboard execution remains the existing plain-key PIE path, not a menu accelerator.
+- **`67c140a` (`feat(menu): resolve play resume label dynamically`)** - `MenuEntry::with_label_override` lets `MenuRegistry::resolve` clone a context-specific label; `play.start` shows `Resume` only when `PredicateContext.play_state == "paused"`, while command identity and routing stay unchanged.
+- **`2df991c` (`feat(menu): bind reset camera to home`)** - `default_editor_menu` gives `view.reset_camera` `Shortcut::plain(Key::Home)`. The host displays `Home`, and editor-shell resolves `KeyCode::Home -> Shortcut::Home -> Command::ResetCamera -> EditorShell::reset_camera` through the same menu source of truth as File/Edit.
+
+**Authority (updated).** `editor-ui::menus::default_editor_menu` now owns six executable menu accelerators: File Open/Save/Save-As, Edit Undo/Redo, and View Reset Camera. Play owns passive display hints only; its Space/Escape execution remains outside the menu accelerator table by design.
+
+**Still open - explicitly NOT closed here:**
+- the `AcceleratorTable` conflict UI / conflict population surface.
+- dynamic labels beyond the narrow Play-start `Resume` override, especially a camera-state-aware View item.
+- plugin menu entries.
+- host->shell FIFO menu-click replacement (clicks still use `MenuCommandHandoff`).
+- generalized registry/accelerator-driven command execution beyond the canonical menu accelerators already wired.
+- the VISIBILITY predicates (the filtering `predicate`) remain available but UNUSED by `default_editor_menu` - all entries stay visible; only enablement and selected labels vary.
+
+**Historical preservation.** The 2026-06-05 and 2026-06-04 subsections below are preserved in place; their older "Play/View open" wording is narrowed by this subsection, not rewritten in place.
+
+**Scope:** docs only (`plans/BASELINE.md` + top-level status docs); no Rust source-logic / test / Cargo / scheduler / dispatch automation change.
+
 ### 2026-06-05 — Registry-driven DYNAMIC menu enablement shipped; bespoke Play-greying retired (#313 + #314)
 
 **Forward-only follow-up (MENU-ENABLEMENT-DOC-RECONCILE).** Narrows the W08-accelerator (#308–#311) subsection's "Still open — the W08 registry-driven dynamic predicates + per-frame re-resolve (the menu resolves once with `PredicateContext::default()`; the shortcut→command index is static because every `default_editor_menu` entry is unconditional)" line, and supersedes the PLAYMENU-DYNAMIC (#302) bespoke-greying mechanism: dynamic menu enablement is now the ONE canonical registry path, re-resolved per frame against a live `PredicateContext`, and the bespoke `MenuStateHandoff` / `play_item_enabled` channel is retired. Records the two merged PRs.
