@@ -837,6 +837,22 @@ impl EditorShell {
         Ok(())
     }
 
+    /// Reset the editor to a fresh, unsourced empty world for File -> New.
+    ///
+    /// This reuses [`Self::replace_world`], so it is Editing-only and inherits
+    /// that method's full reset semantics: clear source, selection, render
+    /// content, PIE snapshot, and command bus. It does not prompt for unsaved
+    /// changes or create a project/file on disk.
+    pub fn handle_new_file_request(&mut self) {
+        if let Err(error) = self.replace_world(KernelWorld::new()) {
+            tracing::debug!(
+                target: "rge::editor-shell::menu",
+                %error,
+                "New file request ignored"
+            );
+        }
+    }
+
     /// Construct an [`EditorShell`] with a pre-built CAD scene attached
     /// to the render path. **Sub-δ.1.B entry point** for `rge-editor`.
     ///

@@ -35,6 +35,7 @@ use crate::audit::AuditEvent;
 use crate::coord::FaceSelection;
 use crate::play_state::{PlayState, PlayStateTransition};
 use crate::play_toolbar::ToolbarButtonId;
+use crate::time_scale::TimeScale;
 use crate::world::ComponentTypeId;
 
 fn build_scene(shell: &mut EditorShell, n: usize) {
@@ -3061,6 +3062,57 @@ mod menu_routing {
             h.push(c.clone());
         }
         h
+    }
+
+    #[test]
+    fn menu_new_file_command_resets_to_empty_unsourced_world() {
+        // Command::NewFile drained from the menu handoff must reach
+        // handle_new_file_request -> replace_world(KernelWorld::new()). It is
+        // a reset-to-empty operation, not a disk/project creation path.
+        let mut s = EditorShell::new().with_save_source(SaveSource::Scene(
+            std::path::PathBuf::from("/tmp/old.rge-scene"),
+        ));
+        build_scene(&mut s, 2);
+        let selected = s
+            .world()
+            .entities()
+            .next()
+            .expect("seeded world has entity");
+        s.coord_mut().selection.add(selected);
+        s.set_time_scale(2.0);
+        assert!(
+            s.command_bus().is_dirty(),
+            "precondition: seeded dirty world"
+        );
+        assert!(s.save_source().is_some(), "precondition: source is set");
+        s.menu_command_handoff = Some(handoff_with(&[Command::NewFile]));
+
+        s.drain_and_route_menu_commands();
+
+        assert_eq!(
+            s.world().entity_count(),
+            0,
+            "New resets the wrapper world to empty"
+        );
+        assert_eq!(
+            s.world().kernel().entity_count(),
+            0,
+            "New resets the kernel world to empty"
+        );
+        assert_eq!(s.save_source(), None, "New clears the adopted save source");
+        assert!(
+            s.coord().selection.is_empty(),
+            "New clears editor coordination selection"
+        );
+        assert!(
+            !s.command_bus().is_dirty(),
+            "New installs a fresh clean CommandBus"
+        );
+        assert_eq!(
+            s.time_scale(),
+            TimeScale::default(),
+            "New installs default time scale on the fresh world"
+        );
     }
 
     #[test]

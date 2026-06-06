@@ -12,7 +12,7 @@
 //! [`keycode_to_shortcut`] and dispatches the menu's bound `Command` through
 //! `EditorShell::route_menu_command`); **W08.4 retired the
 //! `EditorKeyCommand::{Undo, Redo, Save, SaveAsProject}` mirror**, so the File/Edit
-//! keystroke→command literals (Ctrl+O/S/Shift+S/Z/Y) now live ONLY in the
+//! keystroke→command literals (Ctrl+N/O/S/Shift+S/Z/Y/A/D/Delete) now live ONLY in the
 //! canonical menu. `EditorKeyCommand::from_key_press` is left as the executor for
 //! the execution-only time-scale binds (`Ctrl+2/0/4`), which have no menu home.
 //!
@@ -226,6 +226,7 @@ mod tests {
         // driven via `keycode_to_shortcut` (the live keyboard translation) ->
         // `command_for_shortcut`.
         let shared = [
+            (KeyCode::KeyN, true, false, Command::NewFile),
             (KeyCode::KeyO, true, false, Command::OpenFile),
             (KeyCode::KeyS, true, false, Command::Save),
             (KeyCode::KeyS, true, true, Command::SaveAs),

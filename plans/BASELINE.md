@@ -558,6 +558,21 @@ Until **at least one** of those fires, treat the reflection substrate as observe
 4. Cross-check the editor's call graph against the `CommandBus::submit` / `Action::apply` / `Action::revert` signatures to determine whether user-visible CAD mutations can flow through the existing bus.
 5. Test inventory across `editor-*` (`#[test]` count + integration vs unit breakdown + workflow coverage).
 
+### 2026-06-06 - File New empty scene command
+
+**Forward-only follow-up (MENU-FILE-NEW).** Narrows the File menu surface with a bounded reset-to-empty command. `New` now has a visible File menu entry, an executable `Ctrl+N` accelerator, and a shell route that reuses the existing `replace_world(KernelWorld::new())` reset substrate.
+
+**Now shipped - File New.**
+- `default_editor_menu` registers File -> New before Open, with `Command::NewFile` and executable `Ctrl+N`.
+- New is enabled only while Editing, like Open/Save/Save-As. The shortcut remains bound for display but disabled contexts do not execute it.
+- `EditorShell::route_menu_command` routes `Command::NewFile` to `handle_new_file_request()`, which resets to a fresh unsourced empty world through `replace_world`.
+- The reset clears the adopted save source, entity selection, render content, PIE snapshot, and command bus; the fresh world gets default `TimeScale`.
+- Registry, host projection/FIFO, host enablement, keyboard-bridge parity, and shell routing tests pin the behavior.
+
+**Still open - explicitly NOT closed here:** unsaved-changes prompt/confirmation, creating a file or project on disk, choosing templates, Save-As to a new `.rge-project` tree, Cut/Copy/Paste semantics, authoritative CAD graph/projection/render duplication/deletion, undo/redo and dirty-state integration for Edit content mutations, clipboard, plugin action execution/registration UX beyond the optional Plugins projection, command-palette integration, host->shell FIFO menu-click replacement, generalized registry execution beyond the now-wired canonical menu commands, broader camera UI beyond reset/frame/zoom, and conflict resolution/keybinding editor/fatal gating.
+
+**Scope:** `editor-ui` default File menu entries/tests, `editor-egui-host` projection/enablement tests, `editor-shell` New routing/tests, and top-level status docs; no prompt, dialog, disk I/O, project/template creation, CAD graph mutation, projection-cache invalidation, render-mesh invalidation beyond the existing reset, CommandBus action, undo stack, dirty-state semantics, clipboard, plugin runtime, command palette, keybinding editor, FIFO replacement, Cargo, scheduler, dispatch automation, or task arming.
+
 ### 2026-06-06 - Edit Duplicate selected entities
 
 **Forward-only follow-up (MENU-EDIT-DUPLICATE).** Narrows the generalized menu-command execution item with a bounded duplication command. `Duplicate` now has a visible menu entry, an executable `Ctrl+D` accelerator, and a shell route that clones selected legacy-blob entities in the editor wrapper world while explicitly staying out of authoritative CAD duplication.

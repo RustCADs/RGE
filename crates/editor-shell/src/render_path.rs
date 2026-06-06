@@ -400,6 +400,7 @@ impl EditorShell {
     /// `KeyEvent` or a menu click (mirrors [`EditorShell::handle_key_command`]).
     pub fn route_menu_command(&mut self, command: Command) {
         match command {
+            Command::NewFile => self.handle_new_file_request(),
             Command::OpenFile => self.handle_open_request(),
             Command::Save => self.handle_save_request(),
             Command::SaveAs => self.handle_save_as_new_project_request(),
@@ -449,7 +450,7 @@ impl EditorShell {
                 tracing::debug!(
                     target: "rge::editor-shell::menu",
                     command = %other.diagnostic_id(),
-                    "menu command not routed (File Open/Save/Save-As + Edit Undo/Redo/Select-All/Delete/Duplicate + Play Play/Pause/Stop/Step + View camera commands only)"
+                    "menu command not routed (File New/Open/Save/Save-As + Edit Undo/Redo/Select-All/Delete/Duplicate + Play Play/Pause/Stop/Step + View camera commands only)"
                 );
             }
         }

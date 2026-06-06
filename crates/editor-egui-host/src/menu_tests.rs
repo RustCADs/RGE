@@ -57,6 +57,11 @@ fn file_menu_registry_resolves_the_authoring_loop_commands() {
         file,
         vec![
             (
+                "New".to_owned(),
+                Some("Ctrl+N".to_owned()),
+                Command::NewFile
+            ),
+            (
                 "Open…".to_owned(),
                 Some("Ctrl+O".to_owned()),
                 Command::OpenFile,
@@ -68,7 +73,7 @@ fn file_menu_registry_resolves_the_authoring_loop_commands() {
                 Command::SaveAs,
             ),
         ],
-        "the MenuRegistry resolves the File menu to exactly Open / Save / \
+        "the MenuRegistry resolves the File menu to exactly New / Open / Save / \
          Save-As-new-project, in order — each with its real accelerator display"
     );
 }
@@ -111,7 +116,12 @@ fn file_menu_entries_round_trip_through_the_handoff_in_order() {
     }
     assert_eq!(
         handoff.drain(),
-        vec![Command::OpenFile, Command::Save, Command::SaveAs],
+        vec![
+            Command::NewFile,
+            Command::OpenFile,
+            Command::Save,
+            Command::SaveAs,
+        ],
         "each resolved File item enqueues its Command; they drain FIFO"
     );
 }
@@ -353,6 +363,7 @@ fn enablement_tracks_context() {
     let file = menu.file;
     let edit = menu.edit;
     let play = menu.play;
+    assert!(enabled_of(&file, &Command::NewFile));
     assert!(enabled_of(&file, &Command::Save));
     assert!(enabled_of(&file, &Command::OpenFile));
     assert!(enabled_of(&edit, &Command::SelectAll));
@@ -376,10 +387,14 @@ fn enablement_tracks_context() {
         !enabled_of(&file, &Command::Save),
         "Save greyed while playing"
     );
+    assert!(
+        !enabled_of(&file, &Command::NewFile),
+        "New greyed while playing"
+    );
     assert_eq!(
         file.len(),
-        3,
-        "disabled File items stay present (3), not hidden"
+        4,
+        "disabled File items stay present (4), not hidden"
     );
     assert!(
         !enabled_of(&edit, &Command::SelectAll),
@@ -403,7 +418,7 @@ fn file_and_edit_items_carry_accelerators_play_carries_passive_hints() {
     // The shortcut-display column (middle tuple element) is sourced from each
     // resolved executable `MenuEntry.shortcut`, falling back to passive
     // `shortcut_hint`. File + Edit carry the canonical executable accelerators
-    // (Ctrl+O/S/Shift+S, Ctrl+Z/Y/A/D/Delete) — the SAME definition editor-shell's live
+    // (Ctrl+N/O/S/Shift+S, Ctrl+Z/Y/A/D/Delete) — the SAME definition editor-shell's live
     // keystroke routing resolves through. Play carries display-only Space/Escape
     // hints for the separate playback route; View carries executable Home.
     let (file, edit, play, view) = menu_entries();
@@ -414,11 +429,12 @@ fn file_and_edit_items_carry_accelerators_play_carries_passive_hints() {
     assert_eq!(
         accel(&file),
         vec![
+            Some("Ctrl+N".to_owned()),
             Some("Ctrl+O".to_owned()),
             Some("Ctrl+S".to_owned()),
             Some("Ctrl+Shift+S".to_owned()),
         ],
-        "File items display Open=Ctrl+O, Save=Ctrl+S, Save-As=Ctrl+Shift+S"
+        "File items display New=Ctrl+N, Open=Ctrl+O, Save=Ctrl+S, Save-As=Ctrl+Shift+S"
     );
     assert_eq!(
         accel(&edit),
