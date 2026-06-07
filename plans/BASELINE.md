@@ -566,9 +566,10 @@ Until **at least one** of those fires, treat the reflection substrate as observe
 - `command_palette_selected_index()` normalizes filtered-row selection to an enabled row, preserving a still-valid current selection or falling back to the first enabled row.
 - `ArrowDown` / `ArrowUp` move through enabled filtered rows with wrap-around and skip disabled rows.
 - `Enter` activates the currently selected enabled row instead of always using the first enabled match; stale or disabled selection still falls back through the same normalization helper.
+- Editing the search filter restarts selection at the first enabled row in the new filtered result set, so a numeric row index from the prior filter is not preserved against different rows.
 - Opening the palette via `EguiHost::toggle_command_palette()` arms a one-shot search-field focus request. The search field consumes it on the next render, and close / activation / closed-window paths clear it so later frames do not steal focus.
 - The selected palette row now uses egui's selected button affordance and calls `scroll_to_me(Some(egui::Align::Center))` inside a bounded results scroll area so keyboard navigation keeps the active row visible.
-- Host tests pin selection normalization, ArrowUp / ArrowDown wrap + disabled skipping, selected-row Enter activation, one-shot focus consumption, and the selected-row enabled-only predicate.
+- Host tests pin selection normalization, filter-change reset, ArrowUp / ArrowDown wrap + disabled skipping, selected-row Enter activation, one-shot focus consumption, and the selected-row enabled-only predicate.
 
 **Still open - explicitly NOT closed here:** fuzzy matching/scoring, command history, a separate command model, plugin runtime/action execution beyond FIFO enqueue, host->shell FIFO replacement, keybinding editor, generalized conflict-resolution UI, Cargo, scheduler, dispatch automation, and task arming.
 

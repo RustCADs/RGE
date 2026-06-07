@@ -215,6 +215,20 @@ pub(crate) fn command_palette_selected_index(
     entries.iter().position(|entry| entry.enabled)
 }
 
+/// Return command-palette selection after a possible filter text edit.
+///
+/// A selected row index is meaningful only within one filtered result set. When
+/// the filter changes, restart from the first enabled row in the new result set
+/// instead of preserving the same numeric row position against different rows.
+pub(crate) fn command_palette_selected_index_for_filter_change(
+    entries: &[&ProjectedCommandPaletteEntry],
+    current_index: Option<usize>,
+    filter_changed: bool,
+) -> Option<usize> {
+    let current_index = if filter_changed { None } else { current_index };
+    command_palette_selected_index(entries, current_index)
+}
+
 /// Move command-palette keyboard selection through enabled filtered rows.
 ///
 /// Movement wraps at the ends. If `current_index` is absent or no longer points
@@ -386,12 +400,17 @@ pub(crate) fn command_palette_window(
             if take_command_palette_search_focus_request(search_focus_requested) {
                 search_response.request_focus();
             }
+            let filter_changed = search_response.changed();
             ui.separator();
             let filtered_entries = filter_command_palette_entries(entries, filter.as_str());
             if filtered_entries.is_empty() {
                 ui.label("No commands match");
             }
-            *selected_index = command_palette_selected_index(&filtered_entries, *selected_index);
+            *selected_index = command_palette_selected_index_for_filter_change(
+                &filtered_entries,
+                *selected_index,
+                filter_changed,
+            );
             if ui.input(|input| input.key_pressed(egui::Key::Escape)) {
                 close_command_palette = true;
             } else if ui.input(|input| input.key_pressed(egui::Key::ArrowDown)) {

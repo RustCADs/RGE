@@ -25,8 +25,9 @@ use rge_editor_ui::menus::{
 use super::MenuCommandHandoff;
 use crate::menu::{
     command_palette_entries, command_palette_row_is_selected, command_palette_selected_index,
-    filter_command_palette_entries, move_command_palette_selected_index, project_main_menu,
-    register_menu_entry, selected_command_palette_entry, take_command_palette_search_focus_request,
+    command_palette_selected_index_for_filter_change, filter_command_palette_entries,
+    move_command_palette_selected_index, project_main_menu, register_menu_entry,
+    selected_command_palette_entry, take_command_palette_search_focus_request,
     CommandPaletteSelectionDirection, ProjectedCommandPaletteEntry,
 };
 
@@ -599,18 +600,32 @@ fn command_palette_selection_uses_first_enabled_row_when_needed() {
         "disabled row is skipped",
     );
     assert_sel(&filtered_entries, Some(99), Some(1), "stale row is clamped");
+    assert_sel(
+        &filtered_entries,
+        Some(2),
+        Some(2),
+        "valid row is preserved",
+    );
 }
 
 #[test]
-fn command_palette_selection_preserves_still_valid_row() {
-    let entries = vec![toggle(true), open(true)];
+fn command_palette_selection_handles_filter_change_boundaries() {
+    let entries = vec![save(true), open(true), toggle(true)];
     let filtered_entries = refs(&entries);
 
-    assert_sel(
-        &filtered_entries,
-        Some(1),
-        Some(1),
-        "valid row is preserved",
+    assert_eq!(
+        command_palette_selected_index_for_filter_change(&filtered_entries, Some(2), true),
+        Some(0)
+    );
+    assert_eq!(
+        command_palette_selected_index_for_filter_change(&filtered_entries, Some(2), false),
+        Some(2)
+    );
+    let disabled_first = vec![save(false), open(true)];
+    let disabled_first_entries = refs(&disabled_first);
+    assert_eq!(
+        command_palette_selected_index_for_filter_change(&disabled_first_entries, Some(0), true),
+        Some(1)
     );
 }
 
