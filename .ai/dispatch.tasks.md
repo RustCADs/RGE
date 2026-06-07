@@ -7822,3 +7822,50 @@ is the only safeguard against selector drift.
    - `cargo test -p rge-editor-egui-host --lib`.
    - `cargo run -q -p rge-tool-architecture-lints -- all`.
    - `git diff --check`.
+
+81. **Full-automation first-batch readiness reconcile.**
+   Docs-only delegated-human auto-publish smoke task. Record the current
+   post-command-palette and automation-readiness state after tasks 74-80, so
+   the first guarded `-PublishMode main` batch stays on the lower-risk docs
+   surface while proving the autonomous selector / queue / guard path can run
+   against a real task.
+
+   **Allowed file surface**:
+   - MAY edit `Status.md`.
+   - MAY edit `HANDOFF.md`.
+   - MAY edit `change.md`.
+   - MAY edit `plans/BASELINE.md` only if needed to clarify the command-palette
+     or full-automation posture.
+   - MAY add this dispatch's own handoff packets, sidecars, queue log, and
+     ignored `.ai/dispatch-*` scratch.
+   - MUST NOT edit Rust source, tests, Cargo files, architecture lints, ADRs,
+     workflows, automation scripts, scheduler config, `.ai/dispatch.tasks.md`,
+     existing handoff/log artifacts, or registered Windows Scheduled Tasks.
+
+   **Required content**:
+   - State that command-palette keyboard navigation tasks 74-80 are complete
+     on `main`, including filter-edit selection reset.
+   - State that issue #319 was manually salvaged and closed after the work
+     landed, so it is no longer an open autonomous failure blocker.
+   - State that the next autonomous batch is intentionally bounded to one
+     docs-only task under delegated-human `-PublishMode main` authorization.
+   - Preserve open non-goals: fuzzy matching/scoring, command history, separate
+     command model, plugin runtime/action execution, host-shell FIFO replacement,
+     keybinding editor, generalized conflict UI, scheduler registration, and
+     standing/default `-PublishMode main` authorization.
+   - Do not claim scheduler registration or indefinite automation.
+
+   **Verbatim review-gate strings** - copy these into the filed issue body:
+
+   ```text
+   MUST keep this first full-automation batch docs-only
+   MUST state tasks 74-80 are complete on main including filter-edit selection reset
+   MUST state issue 319 was manually salvaged and is no longer an open autonomous failure blocker
+   MUST preserve scheduler registration and standing PublishMode main authorization as non-goals
+   MUST NOT edit Rust source tests Cargo lints ADRs workflows automation scripts scheduler config .ai/dispatch.tasks.md existing dispatch artifacts or registered Windows Scheduled Tasks
+   ```
+
+   **Verification required**:
+   - `git diff --check`.
+   - Static inspection confirming only allowed docs and this dispatch's own
+     generated artifacts changed.
