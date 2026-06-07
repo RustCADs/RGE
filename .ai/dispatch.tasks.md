@@ -7823,7 +7823,7 @@ is the only safeguard against selector drift.
    - `cargo run -q -p rge-tool-architecture-lints -- all`.
    - `git diff --check`.
 
-81. **Full-automation first-batch readiness reconcile.**
+81. **[DONE 2026-06-07 via auto-published commit `58ec48a`] Full-automation first-batch readiness reconcile.**
    Docs-only delegated-human auto-publish smoke task. Record the current
    post-command-palette and automation-readiness state after tasks 74-80, so
    the first guarded `-PublishMode main` batch stays on the lower-risk docs
