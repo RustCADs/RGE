@@ -780,6 +780,32 @@ function Get-MarkerValue {
     return $value
 }
 
+function Resolve-GateVerdictFallback {
+    param([string]$Text)
+
+    foreach ($line in ($Text -split "`r?`n")) {
+        $norm = ($line -replace '`', '').Trim()
+        $norm = ($norm -replace '^[>\-\*\+\#\s]+', '').Trim()
+        $norm = ($norm -replace '[\*_]+', '').Trim()
+        if ($norm -notmatch '^(?:Gate\s+)?Verdict\s*:\s*(.+)$') {
+            continue
+        }
+
+        $raw = $matches[1].Trim().ToLowerInvariant()
+        if ($raw -match '^(approve|approved|pass)\b') {
+            return 'approve'
+        }
+        if ($raw -match '^(needs[_\-\s]?changes?|changes[_\-\s]?needed)\b') {
+            return 'needs_changes'
+        }
+        if ($raw -match '^(block|blocked)\b') {
+            return 'block'
+        }
+    }
+
+    return $null
+}
+
 function Resolve-ExecStatusFromPacket {
     param([System.IO.FileInfo]$Packet)
 
@@ -874,8 +900,13 @@ function Invoke-ClaudeMarker {
         $allowed = $Markers[$name]
         $value = Get-MarkerValue -Text $tailText -Name $name
         if ($null -eq $value) {
+            if ($name -eq 'GATE_VERDICT') {
+                $value = Resolve-GateVerdictFallback -Text $resultText
+            }
             if ($allowed) {
-                Fail "claude response is missing the required '${name}:' marker line. See $OutputPath"
+                if ($null -eq $value) {
+                    Fail "claude response is missing the required '${name}:' marker line. See $OutputPath"
+                }
             }
         } elseif ($allowed -and ($allowed -notcontains $value)) {
             Fail "claude '${name}:' marker value '$value' is not one of: $($allowed -join ', '). See $OutputPath"
