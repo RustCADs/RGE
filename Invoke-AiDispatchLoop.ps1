@@ -1045,7 +1045,7 @@ in Markdown, quotes, or a code block.
 "@
     $res = Invoke-ClaudeMarker -Prompt $prompt `
         -Markers @{ 'GATE_VERDICT' = @('approve', 'needs_changes', 'block') } `
-        -OutputPath $out -PermissionMode 'plan'
+        -OutputPath $out -PermissionMode 'default'
     return [pscustomobject]@{ verdict = $res.Markers['GATE_VERDICT']; review = $res.Text }
 }
 
