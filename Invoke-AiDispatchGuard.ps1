@@ -19,9 +19,13 @@
                and is the safe way to exercise record -> assess -> terminate ->
                report offline. It is NOT the default: omit -DryRun and the guard
                enters the live path.
-      live     (default) launches the autonomous driver (-DriverCommand) as a
+    live     (default) launches the autonomous driver (-DriverCommand) as a
                supervised child, records its output, applies hard rules + a Claude
                assessment, and kills the child + writes an abort report on anomaly.
+               By default this is one driver tick. With -DriverTicks N, the
+               guard runs up to N sequential Auto ticks; each tick re-runs the
+               Codex selector against current issue/task state before draining
+               exactly one queue issue.
 
     The live path is implemented but launching a real autonomous run remains an
     explicit operator decision: pointing -DriverCommand at Invoke-AiDispatchAuto.ps1
@@ -47,6 +51,12 @@
     Live mode: passed to the driver. Defaults match the target model (Codex
     executor). NOTE: -PublishMode main is the auto-publish posture; choosing it is
     the explicit arming decision.
+
+.PARAMETER DriverTicks
+    Live mode: finite number of sequential autonomous driver ticks to supervise.
+    Default 1 preserves the historical one-selection / one-queue-run behavior.
+    Values above 1 make full automation select the next best task again after
+    each successful tick, stopping early on cap/no-work/ambiguous/lock states.
 
 .PARAMETER MockAssess
     Test seam: in live mode, return the scripted -MockVerdict instead of calling
@@ -80,6 +90,9 @@ param(
 
     [ValidateRange(1, 200)]
     [int]$MaxAutonomousTasks = 1,
+
+    [ValidateRange(1, 200)]
+    [int]$DriverTicks = 1,
 
     [ValidateRange(15, 3600)]
     [int]$AssessIntervalSec = 60,
@@ -120,6 +133,11 @@ $script:ReportPath = Join-Path $script:WatchDir 'abort-report.md'
 $script:Seq = 0
 $script:Utf8 = [System.Text.UTF8Encoding]::new($false)  # UTF-8, no BOM
 $script:StallLimit = $StallMinutes  # the stall limit Test-HardRule's numeric branch reads
+$script:LastDriverTickDecision = [pscustomobject]@{
+    ShouldContinue = $false
+    StopKind       = 'unset'
+    Reason         = 'no driver tick has completed yet'
+}
 
 # Hard-rule patterns are SOURCE-SCOPED so prose can never trip them (a TASK packet
 # or rubric line that merely *mentions* `git push origin main` is not an action).
@@ -228,6 +246,55 @@ function Test-HardRule {
         return "correction-rounds-exceeded: $CorrectionRounds > $MaxCorrectionRounds"
     }
     return $null
+}
+
+function Get-DriverTickContinuationDecision {
+    # Pure classifier for a completed Auto tick. The guard may launch another
+    # Auto tick only when the previous tick actually completed useful work or
+    # filed/drained a queue item. Benign no-op states stop the finite batch
+    # early so -DriverTicks never spins on "no work" or cap/lock conditions.
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][int]$ExitCode,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$RecentText
+    )
+
+    if ($ExitCode -ne 0) {
+        return [pscustomobject]@{
+            ShouldContinue = $false
+            StopKind       = 'failed'
+            Reason         = "driver exited non-zero ($ExitCode)"
+        }
+    }
+
+    $text = [string]$RecentText
+    $stopPatterns = @(
+        @{ Kind = 'lock-held';        Pattern = 'Another autonomous dispatch tick is already running'; Reason = 'another autonomous dispatch tick is already running' },
+        @{ Kind = 'halt-sentinel';    Pattern = 'HALTED: a prior tick recorded a fault';             Reason = 'auto halt sentinel is present' },
+        @{ Kind = 'failed-issue';     Pattern = 'HALTED: autonomous task #[0-9]+ .* is marked';       Reason = 'failed autonomous issue is open' },
+        @{ Kind = 'cap-reached';      Pattern = 'HALTED for review: autonomous task cap reached';      Reason = 'autonomous task cap reached' },
+        @{ Kind = 'queue-ambiguous';  Pattern = 'Queue state ambiguous after primary check and cross-check'; Reason = 'queue state ambiguous' },
+        @{ Kind = 'no-brief';         Pattern = 'No task brief at .* nothing to select';                Reason = 'no task brief exists' },
+        @{ Kind = 'empty-brief';      Pattern = 'Task brief .* is empty; nothing to select';            Reason = 'task brief is empty' },
+        @{ Kind = 'brief-unarmed';    Pattern = 'DISPATCH-TASKS-UNARMED marker';                       Reason = 'task brief is unarmed' },
+        @{ Kind = 'no-selection';     Pattern = 'Codex reports no real task to select';                 Reason = 'selector found no real task' },
+        @{ Kind = 'dry-run';          Pattern = 'DryRun: (queue not run|no issue created)';             Reason = 'driver was a dry run' }
+    )
+    foreach ($entry in $stopPatterns) {
+        if ($text -match $entry.Pattern) {
+            return [pscustomobject]@{
+                ShouldContinue = $false
+                StopKind       = $entry.Kind
+                Reason         = $entry.Reason
+            }
+        }
+    }
+
+    return [pscustomobject]@{
+        ShouldContinue = $true
+        StopKind       = 'continue'
+        Reason         = 'driver tick completed; run another fresh selector tick if the finite batch has capacity'
+    }
 }
 
 function Invoke-ClaudeAssess {
@@ -405,22 +472,23 @@ function Invoke-GuardDryRun {
 
 function Invoke-GuardLiveRun {
     [CmdletBinding()]
-    param()
+    param([int]$TickIndex = 1)
 
     # Launch the autonomous driver as a supervised child and monitor it:
     # record output -> classify -> hard rules + periodic Claude assessment ->
     # taskkill the child tree + write a report on any anomaly. Liveness is measured
     # by output growth + the child's process state (the .ai/dispatch-trace JSONL is
     # an additional progress signal a future revision can correlate by pid).
-    $driverOut = Join-Path $script:WatchDir 'driver.stdout.log'
-    $driverErr = Join-Path $script:WatchDir 'driver.stderr.log'
+    $logSuffix = if ($DriverTicks -gt 1) { ".tick$TickIndex" } else { '' }
+    $driverOut = Join-Path $script:WatchDir ('driver{0}.stdout.log' -f $logSuffix)
+    $driverErr = Join-Path $script:WatchDir ('driver{0}.stderr.log' -f $logSuffix)
     Set-Content -LiteralPath $driverOut -Value '' -NoNewline -Encoding utf8
     Set-Content -LiteralPath $driverErr -Value '' -NoNewline -Encoding utf8
 
     $driverArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $DriverCommand,
         '-Executor', $Executor, '-PublishMode', $PublishMode,
         '-MaxAutonomousTasks', $MaxAutonomousTasks)
-    Write-GuardLine -Kind 'LAUNCH' -Message ("driver: powershell.exe {0}" -f ($driverArgs -join ' '))
+    Write-GuardLine -Kind 'LAUNCH' -Message ("driver tick={0}/{1}: powershell.exe {2}" -f $TickIndex, $DriverTicks, ($driverArgs -join ' '))
     if ($PublishMode -eq 'main') {
         Write-GuardLine -Kind 'WARN' -Message 'PublishMode=main: driver may auto-publish to origin/main on a control pass'
     }
@@ -469,17 +537,19 @@ function Invoke-GuardLiveRun {
 
             # A final hard-rule sweep over drained output, then the exit code.
             $elapsedMin = ((Get-Date) - $startTime).TotalMinutes
+            $recentText = ($allRecent.ToArray() -join "`n")
             $rule = Test-HardRule -CommandText ($cmdRecent.ToArray() -join "`n") -SignalText ($sigRecent.ToArray() -join "`n") `
                 -ElapsedMinutes $elapsedMin -StallElapsed 0 -CorrectionRounds $rounds
             if ($rule) {
-                Stop-GuardRun -Trigger 'hard-rule' -Reason $rule -ChildPid 0 -RecentText ($allRecent.ToArray() -join "`n")
+                Stop-GuardRun -Trigger 'hard-rule' -Reason $rule -ChildPid 0 -RecentText $recentText
                 return 'aborted'
             }
             if ($exit -ne 0) {
-                Stop-GuardRun -Trigger 'driver-exit' -Reason "driver exited non-zero ($exit)" -ChildPid 0 -RecentText ($allRecent.ToArray() -join "`n")
+                Stop-GuardRun -Trigger 'driver-exit' -Reason "driver exited non-zero ($exit)" -ChildPid 0 -RecentText $recentText
                 return 'aborted'
             }
-            Write-GuardLine -Kind 'DONE' -Message 'driver completed exit=0; no anomaly detected'
+            $script:LastDriverTickDecision = Get-DriverTickContinuationDecision -ExitCode $exit -RecentText $recentText
+            Write-GuardLine -Kind 'DONE' -Message "driver completed exit=0; no anomaly detected; next=$($script:LastDriverTickDecision.StopKind) -- $($script:LastDriverTickDecision.Reason)"
             return 'completed'
         }
 
@@ -531,6 +601,31 @@ function Invoke-GuardLiveRun {
     }
 }
 
+function Invoke-GuardLiveBatch {
+    [CmdletBinding()]
+    param()
+
+    for ($tick = 1; $tick -le $DriverTicks; $tick++) {
+        Write-GuardLine -Kind 'TICK' -Message "starting driver tick $tick of $DriverTicks"
+        $disposition = Invoke-GuardLiveRun -TickIndex $tick
+        if ($disposition -eq 'aborted') {
+            return 'aborted'
+        }
+
+        if (-not $script:LastDriverTickDecision.ShouldContinue) {
+            Write-GuardLine -Kind 'DONE' -Message "stopping guarded batch after tick $($tick): $($script:LastDriverTickDecision.StopKind) -- $($script:LastDriverTickDecision.Reason)"
+            return 'completed'
+        }
+
+        if ($tick -lt $DriverTicks) {
+            Write-GuardLine -Kind 'NEXT' -Message "tick $tick completed; launching a fresh Auto selector tick"
+        }
+    }
+
+    Write-GuardLine -Kind 'DONE' -Message "guarded batch reached finite DriverTicks cap ($DriverTicks)"
+    return 'completed'
+}
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -540,13 +635,13 @@ function Invoke-GuardLiveRun {
 # a run. Mirrors the queue/auto SKIP_MAIN seams.
 if ($env:RGE_AI_DISPATCH_GUARD_SKIP_MAIN -eq '1') { return }
 
-Write-GuardLine -Kind 'START' -Message "guard start dispatch=$DispatchId dryRun=$($DryRun.IsPresent) outcome=$DryRunOutcome driver=$DriverCommand executor=$Executor publish=$PublishMode tasks=$MaxAutonomousTasks assessEvery=${AssessIntervalSec}s poll=${PollIntervalSec}s maxRun=${MaxRunMinutes}m stall=${StallMinutes}m mockAssess=$($MockAssess.IsPresent)"
+Write-GuardLine -Kind 'START' -Message "guard start dispatch=$DispatchId dryRun=$($DryRun.IsPresent) outcome=$DryRunOutcome driver=$DriverCommand executor=$Executor publish=$PublishMode tasks=$MaxAutonomousTasks driverTicks=$DriverTicks assessEvery=${AssessIntervalSec}s poll=${PollIntervalSec}s maxRun=${MaxRunMinutes}m stall=${StallMinutes}m mockAssess=$($MockAssess.IsPresent)"
 
 if ($DryRun) {
     $disposition = Invoke-GuardDryRun
 }
 else {
-    $disposition = Invoke-GuardLiveRun
+    $disposition = Invoke-GuardLiveBatch
 }
 
 Write-GuardLine -Kind 'END' -Message "guard end disposition=$disposition"

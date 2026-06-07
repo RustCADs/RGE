@@ -328,6 +328,16 @@ human-mediated default — automation handles the branch push and PR creation,
 but a human still reviews and merges the PR and decides whether to close the
 source issue.
 
+`Invoke-AiDispatchGuard.ps1` may supervise a **finite sequence** of Auto ticks
+with `-DriverTicks N` (default `1`). Each tick is a fresh invocation of
+`Invoke-AiDispatchAuto.ps1`, so Codex re-reads the current task brief and
+GitHub issue state before selecting the next best eligible task. The queue
+boundary is unchanged: each tick still drains at most one `ai-dispatch` issue
+through one isolated branch/worktree and one publish decision. The guarded
+sequence stops early when Auto reports cap reached, no selectable task,
+ambiguous queue state, another live Auto tick, a halt sentinel, or a failed
+issue.
+
 #### Queue-runner publish modes
 
 `Invoke-AiDispatchQueue.ps1` exposes the same three publish modes as a single
@@ -1672,6 +1682,10 @@ finite under delegated-human authorization. None of them may be raised to
 - **`-MaxAutonomousTasks`** (on `Invoke-AiDispatchAuto.ps1`) MUST remain a
   finite integer. The auto driver halts the batch after that many issues are
   filed and processed; the next batch requires a fresh human authorization.
+- **`-DriverTicks`** (on `Invoke-AiDispatchGuard.ps1`) MUST remain a finite
+  integer. It repeats complete Auto ticks under one guard, not queue issues
+  inside a single dispatch. Each tick re-selects from current state and stops
+  early on cap/no-work/ambiguous/lock/halt-sentinel/failed-issue states.
 - **`-MaxPlanRevisions`** (on `Invoke-AiDispatchLoop.ps1`, 0–5, default `1`)
   MUST remain finite. Once exhausted, the dispatch aborts rather than loop.
 - **`-MaxCorrectionRounds`** (on `Invoke-AiDispatchLoop.ps1`, 0–5, default

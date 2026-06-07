@@ -106,6 +106,32 @@ Describe 'Test-HardRule stall limit' {
     }
 }
 
+Describe 'Get-DriverTickContinuationDecision' {
+    It 'continues after a successful useful Auto tick' {
+        $decision = Get-DriverTickContinuationDecision -ExitCode 0 -RecentText @'
+Queue is empty; asking Codex to select the next task...
+Codex selected:
+Dispatch queue exited with code 0.
+Main mode: a passed task was fast-forwarded onto origin/main.
+'@
+
+        $decision.ShouldContinue | Should -BeTrue
+        $decision.StopKind | Should -Be 'continue'
+    }
+
+    It 'stops after selector no-work and cap states' -ForEach @(
+        @{ Text = 'Codex reports no real task to select (brief empty/placeholder, or all tasks done).'; Kind = 'no-selection' }
+        @{ Text = 'HALTED for review: autonomous task cap reached (140 of 140). Queue is empty; nothing to drain.'; Kind = 'cap-reached' }
+        @{ Text = 'Queue state ambiguous after primary check and cross-check; skipping this autonomous tick without filing new work.'; Kind = 'queue-ambiguous' }
+        @{ Text = 'HALTED: a prior tick recorded a fault in A:\rcad\rge\.ai\dispatch.auto-halt.'; Kind = 'halt-sentinel' }
+        @{ Text = "HALTED: autonomous task #123 ('Demo') is marked 'ai-dispatch-failed'."; Kind = 'failed-issue' }
+    ) {
+        $decision = Get-DriverTickContinuationDecision -ExitCode 0 -RecentText $Text
+        $decision.ShouldContinue | Should -BeFalse
+        $decision.StopKind | Should -Be $Kind
+    }
+}
+
 Describe 'Invoke-GuardLiveRun final-drain safety sweep' {
     It 'aborts when a forbidden command is emitted immediately before child exit' {
         $mockDriver = Join-Path $TestDrive 'instant-danger.ps1'
@@ -142,5 +168,66 @@ exit 0
         $proc.ExitCode | Should -Be 2
         Get-Content -LiteralPath (Join-Path $watchRoot 'FINAL-DRAIN\abort-report.md') -Raw |
             Should -Match 'forbidden-command'
+    }
+}
+
+Describe 'Invoke-GuardLiveBatch multi-tick selector loop' {
+    It 'launches a fresh second Auto tick and stops on no-selection' {
+        $mockDriver = Join-Path $TestDrive 'multi-tick-driver.ps1'
+        Set-Content -LiteralPath $mockDriver -Encoding utf8 -Value @'
+param(
+    [string]$Executor,
+    [string]$PublishMode,
+    [int]$MaxAutonomousTasks
+)
+$counterPath = Join-Path $PSScriptRoot 'multi-tick-count.txt'
+$count = 0
+if (Test-Path -LiteralPath $counterPath) {
+    $raw = Get-Content -Raw -LiteralPath $counterPath
+    if ($raw -match '^\d+$') { $count = [int]$raw }
+}
+$count++
+Set-Content -LiteralPath $counterPath -Value ([string]$count) -NoNewline -Encoding utf8
+if ($count -eq 1) {
+    Write-Output 'Queue is empty; asking Codex to select the next task...'
+    Write-Output 'Codex selected:'
+    Write-Output 'Dispatch queue exited with code 0.'
+    exit 0
+}
+Write-Output 'Codex reports no real task to select (brief empty/placeholder, or all tasks done).'
+exit 0
+'@
+
+        $guard = Join-Path $PSScriptRoot '..\..\Invoke-AiDispatchGuard.ps1'
+        $watchRoot = Join-Path $TestDrive 'watch-multi'
+        $oldSkipMain = $env:RGE_AI_DISPATCH_GUARD_SKIP_MAIN
+        Remove-Item Env:RGE_AI_DISPATCH_GUARD_SKIP_MAIN -ErrorAction SilentlyContinue
+        try {
+            $proc = Start-Process -FilePath 'powershell.exe' -ArgumentList @(
+                '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $guard,
+                '-DispatchId', 'MULTI-TICK',
+                '-DriverCommand', $mockDriver,
+                '-MockAssess',
+                '-DriverTicks', '5',
+                '-AssessIntervalSec', '120',
+                '-PollIntervalSec', '2',
+                '-WatchRoot', $watchRoot
+            ) -Wait -PassThru -NoNewWindow
+        }
+        finally {
+            if ($oldSkipMain) { $env:RGE_AI_DISPATCH_GUARD_SKIP_MAIN = $oldSkipMain }
+            else { Remove-Item Env:RGE_AI_DISPATCH_GUARD_SKIP_MAIN -ErrorAction SilentlyContinue }
+        }
+
+        $proc.ExitCode | Should -Be 0
+        Get-Content -LiteralPath (Join-Path $TestDrive 'multi-tick-count.txt') -Raw |
+            Should -Be '2'
+        $watchLog = Get-Content -LiteralPath (Join-Path $watchRoot 'MULTI-TICK\watch.log') -Raw
+        $watchLog | Should -Match 'launching a fresh Auto selector tick'
+        $watchLog | Should -Match 'stopping guarded batch after tick 2: no-selection'
+        Test-Path -LiteralPath (Join-Path $watchRoot 'MULTI-TICK\driver.tick1.stdout.log') |
+            Should -BeTrue
+        Test-Path -LiteralPath (Join-Path $watchRoot 'MULTI-TICK\driver.tick2.stdout.log') |
+            Should -BeTrue
     }
 }

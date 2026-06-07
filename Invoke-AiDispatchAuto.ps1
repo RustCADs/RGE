@@ -790,9 +790,12 @@ $brief
 AUTONOMOUS TASKS ALREADY FILED (do not repeat any of these):
 $doneList
 
-Choose exactly ONE next task to dispatch now. Prefer the brief's order, but
-pick an earlier-in-dependency task first if it is a prerequisite ("sequence
-necessity"). The task must be small, bounded, and independently shippable.
+Choose exactly ONE best next task to dispatch now. Re-evaluate current repo,
+issue, and task-brief state on every invocation. Treat the brief's order as the
+primary priority signal, but choose an earlier-in-dependency task first if it is
+a prerequisite ("sequence necessity") and skip any task already filed or marked
+DONE / DONE-SUPERSEDED. The task must be small, bounded, and independently
+shippable.
 
 If the brief contains no real tasks yet (only instructions, placeholders, or
 examples), or every real task is already filed/complete, respond with exactly

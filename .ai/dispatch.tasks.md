@@ -7927,3 +7927,38 @@ is the only safeguard against selector drift.
    - `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\compile-timing.ps1 -Mode build -Release -Iterations 1 -TimeoutSeconds 1200` with `CARGO_TARGET_DIR=B:\sdk\rge-clean-target-20260607-1855`.
    - Verified and removed isolated scratch target `B:\sdk\rge-clean-target-20260607-1855`.
    - `git diff --check`.
+
+84. **[DONE 2026-06-07 via manual guarded-loop task] Guarded multi-tick auto task selection.**
+   Let a guarded full-automation run select the next best task before each
+   sequential Auto tick without collapsing multiple queue dispatches into one
+   queue run.
+
+   **Allowed file surface**:
+   - MAY edit `Invoke-AiDispatchGuard.ps1`.
+   - MAY edit `Invoke-AiDispatchAuto.ps1`.
+   - MAY edit `tools/dispatch-tests/GuardSafetyMonitor.Tests.ps1`.
+   - MAY edit `AI_DISPATCH_AUTOMATION.md`.
+   - MAY edit `Status.md`.
+   - MAY edit `HANDOFF.md`.
+   - MAY edit `change.md`.
+   - MAY edit `.ai/dispatch.tasks.md` only to record this completed manual task.
+   - MUST NOT edit Rust source, tests, Cargo files, architecture lints, ADRs,
+     workflows, scheduler config, queue publish behavior, verification gates,
+     or registered Windows Scheduled Tasks.
+
+   **Required behavior**:
+   - Guard default behavior MUST remain one Auto tick.
+   - A finite opt-in guard parameter MUST allow sequential Auto ticks.
+   - Each tick MUST launch a fresh `Invoke-AiDispatchAuto.ps1` invocation so
+     Codex re-reads current task and issue state before selecting.
+   - Each tick MUST still drain at most one queue issue through the existing
+     queue boundary.
+   - The guarded sequence MUST stop early on
+     cap/no-work/ambiguous/lock/halt-sentinel/failed-issue states.
+
+   **Verification completed**:
+   - PowerShell parser validation for `Invoke-AiDispatchGuard.ps1`.
+   - PowerShell parser validation for `Invoke-AiDispatchAuto.ps1`.
+   - `Invoke-Pester -Path .\tools\dispatch-tests\GuardSafetyMonitor.Tests.ps1 -Output Detailed` (43/43).
+   - `Invoke-Pester -Path .\tools\dispatch-tests -Output Normal` (399/399).
+   - `git diff --check`.
