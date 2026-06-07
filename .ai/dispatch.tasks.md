@@ -7544,3 +7544,245 @@ is the only safeguard against selector drift.
      `change.md` files changed.
    - The appended section is clearly labelled Phase 9 PREFLIGHT and names the
      future implementation as branch-mode unless later human-authorized.
+
+74. **Command palette selection model helper.**
+   PR-mode editor-usability task. Add a small host-local command-palette
+   selection helper in `editor-egui-host` so the palette can track "which
+   enabled filtered row is selected" without changing current rendering yet.
+   This is the substrate task for arrow-key navigation; keep behavior changes
+   out of this slice except any private helper call needed by tests.
+
+   **Allowed file surface**:
+   - MAY edit `crates/editor-egui-host/src/menu.rs`.
+   - MAY edit `crates/editor-egui-host/src/menu_tests.rs`.
+   - MAY add this dispatch's own handoff packets, sidecars, queue log, and
+     ignored `.ai/dispatch-*` scratch.
+   - MUST NOT edit `crates/editor-ui/**`, `crates/editor-shell/**`,
+     `editor/rge-editor/**`, Cargo files, docs, workflows, automation scripts,
+     scheduler config, existing handoff/log artifacts, or this task brief.
+
+   **Required behavior**:
+   - Add a helper that receives the filtered palette entries and a current
+     selected index, then returns a valid selected index for the first enabled
+     row when needed.
+   - Disabled entries may remain visible but MUST NOT become the selected
+     keyboard target.
+   - Empty or disabled-only result sets MUST yield no selected target.
+   - Preserve the existing `first_enabled_command_palette_entry` behavior until
+     a later task explicitly changes Enter activation.
+
+   **Verbatim review-gate strings** - copy these into the filed issue body:
+
+   ```text
+   MUST add a command-palette selection helper without changing visible palette behavior
+   MUST keep disabled rows visible but ineligible as the selected keyboard target
+   MUST preserve existing Enter activation behavior in this dispatch
+   MUST NOT edit editor-ui editor-shell rge-editor Cargo docs workflows automation scripts scheduler config existing dispatch artifacts or this task brief
+   ```
+
+   **Verification required**:
+   - `cargo +nightly fmt --all -- --check`.
+   - `git diff --check`.
+   - Focused `editor-egui-host` tests covering first enabled selection,
+     disabled-only none, empty none, and preserving a still-valid selected row.
+
+75. **Command palette ArrowUp / ArrowDown navigation.**
+   PR-mode editor-usability task. Wire the helper from task 74 into the actual
+   command-palette window so ArrowDown and ArrowUp move a visible selection
+   cursor through enabled filtered rows.
+
+   **Allowed file surface**:
+   - MAY edit `crates/editor-egui-host/src/lib.rs`.
+   - MAY edit `crates/editor-egui-host/src/menu.rs`.
+   - MAY edit `crates/editor-egui-host/src/menu_tests.rs`.
+   - MAY add this dispatch's own handoff packets, sidecars, queue log, and
+     ignored `.ai/dispatch-*` scratch.
+   - MUST NOT edit `crates/editor-ui/**`, `crates/editor-shell/**`,
+     `editor/rge-editor/**`, Cargo files, docs, workflows, automation scripts,
+     scheduler config, existing handoff/log artifacts, or this task brief.
+
+   **Required behavior**:
+   - `EguiHost` may own a small selected-row state field if needed.
+   - ArrowDown moves to the next enabled filtered row.
+   - ArrowUp moves to the previous enabled filtered row.
+   - Navigation must skip disabled rows and do nothing for empty or
+     disabled-only result sets.
+   - Keep command execution on the existing `MenuCommandHandoff` path.
+   - Do not add fuzzy matching, command history, a separate command model, or
+     plugin action execution.
+
+   **Verbatim review-gate strings** - copy these into the filed issue body:
+
+   ```text
+   MUST wire ArrowDown and ArrowUp navigation inside the command-palette window
+   MUST skip disabled rows during keyboard navigation
+   MUST keep command execution on the existing MenuCommandHandoff path
+   MUST NOT add fuzzy matching command history a separate command model or plugin action execution
+   MUST NOT edit editor-ui editor-shell rge-editor Cargo docs workflows automation scripts scheduler config existing dispatch artifacts or this task brief
+   ```
+
+   **Verification required**:
+   - `cargo +nightly fmt --all -- --check`.
+   - `git diff --check`.
+   - Focused helper or host tests proving ArrowDown / ArrowUp movement, wrap or
+     boundary semantics as chosen by the implementation, and disabled-row skip.
+
+76. **Command palette Enter activates selected row.**
+   PR-mode editor-usability task. Change Enter activation from "first enabled
+   filtered row" to "currently selected enabled filtered row" now that the
+   palette has navigation state.
+
+   **Allowed file surface**:
+   - MAY edit `crates/editor-egui-host/src/lib.rs`.
+   - MAY edit `crates/editor-egui-host/src/menu.rs`.
+   - MAY edit `crates/editor-egui-host/src/menu_tests.rs`.
+   - MAY add this dispatch's own handoff packets, sidecars, queue log, and
+     ignored `.ai/dispatch-*` scratch.
+   - MUST NOT edit `crates/editor-ui/**`, `crates/editor-shell/**`,
+     `editor/rge-editor/**`, Cargo files, docs, workflows, automation scripts,
+     scheduler config, existing handoff/log artifacts, or this task brief.
+
+   **Required behavior**:
+   - Enter activates the selected enabled row, not always the first enabled row.
+   - If the selected row becomes invalid after filtering or enablement changes,
+     clamp or reset to a valid enabled row before Enter is evaluated.
+   - Empty or disabled-only result sets still dispatch nothing.
+   - Closing the palette or activating a command must clear transient selection
+     state along with the existing filter clear.
+
+   **Verbatim review-gate strings** - copy these into the filed issue body:
+
+   ```text
+   MUST make Enter activate the selected enabled command-palette row
+   MUST dispatch nothing for empty or disabled-only command-palette results
+   MUST clear transient selection state when the palette closes or activates a command
+   MUST NOT change menu registry semantics or editor-shell command routing
+   MUST NOT edit editor-ui editor-shell rge-editor Cargo docs workflows automation scripts scheduler config existing dispatch artifacts or this task brief
+   ```
+
+   **Verification required**:
+   - `cargo +nightly fmt --all -- --check`.
+   - `git diff --check`.
+   - Focused tests proving Enter uses selected row, selection clamps after
+     filtering, and disabled-only results dispatch nothing.
+
+77. **Command palette search-field focus on open.**
+   PR-mode editor-usability task. Make the command-palette search field receive
+   keyboard focus when the palette opens so users can type immediately after
+   `Ctrl+Shift+P`.
+
+   **Allowed file surface**:
+   - MAY edit `crates/editor-egui-host/src/lib.rs`.
+   - MAY edit `crates/editor-egui-host/src/menu.rs`.
+   - MAY edit `crates/editor-egui-host/src/menu_tests.rs` only if a practical
+     pure helper or public-state test can pin the behavior without brittle egui
+     internals.
+   - MAY add this dispatch's own handoff packets, sidecars, queue log, and
+     ignored `.ai/dispatch-*` scratch.
+   - MUST NOT edit `crates/editor-ui/**`, `crates/editor-shell/**`,
+     `editor/rge-editor/**`, Cargo files, docs, workflows, automation scripts,
+     scheduler config, existing handoff/log artifacts, or this task brief.
+
+   **Required behavior**:
+   - Opening the palette through `toggle_command_palette()` must mark the
+     search field for focus on the next render.
+   - Focus request state must be one-shot; it must not repeatedly steal focus
+     every frame while the palette remains open.
+   - Closing the palette without activation must clear the one-shot focus
+     request.
+
+   **Verbatim review-gate strings** - copy these into the filed issue body:
+
+   ```text
+   MUST request focus for the command-palette search field when the palette opens
+   MUST make the focus request one-shot rather than stealing focus every frame
+   MUST clear the focus request when the palette closes
+   MUST NOT change editor-shell accelerator routing or menu registry semantics
+   MUST NOT edit editor-ui editor-shell rge-editor Cargo docs workflows automation scripts scheduler config existing dispatch artifacts or this task brief
+   ```
+
+   **Verification required**:
+   - `cargo +nightly fmt --all -- --check`.
+   - `git diff --check`.
+   - Focused compile/tests where practical; if egui focus cannot be asserted
+     cleanly, record static inspection evidence in the EXEC packet and avoid
+     brittle UI tests.
+
+78. **Command palette selected-row visibility polish.**
+   PR-mode editor-usability task. Give the selected command-palette row a clear
+   visual affordance and keep it scrolled into view during keyboard navigation.
+
+   **Allowed file surface**:
+   - MAY edit `crates/editor-egui-host/src/menu.rs`.
+   - MAY edit `crates/editor-egui-host/src/menu_tests.rs` only for helper-level
+     tests that do not depend on pixel snapshots.
+   - MAY add this dispatch's own handoff packets, sidecars, queue log, and
+     ignored `.ai/dispatch-*` scratch.
+   - MUST NOT edit `crates/editor-ui/**`, `crates/editor-shell/**`,
+     `editor/rge-editor/**`, Cargo files, docs, workflows, automation scripts,
+     scheduler config, existing handoff/log artifacts, or this task brief.
+
+   **Required behavior**:
+   - Render a selected-row affordance using egui-native row/button styling.
+   - Keep the selected row visible when keyboard navigation moves through a
+     long filtered list.
+   - Do not introduce bitmap/screenshot tests or a new visual-test harness.
+   - Do not add fuzzy matching, command history, a separate command model, or
+     keybinding-editor behavior.
+
+   **Verbatim review-gate strings** - copy these into the filed issue body:
+
+   ```text
+   MUST add a visible selected-row affordance for command-palette keyboard navigation
+   MUST keep the selected row visible when navigating long command-palette result lists
+   MUST use egui-native styling and avoid bitmap screenshot tests
+   MUST NOT add fuzzy matching command history a separate command model or keybinding-editor behavior
+   MUST NOT edit editor-ui editor-shell rge-editor Cargo docs workflows automation scripts scheduler config existing dispatch artifacts or this task brief
+   ```
+
+   **Verification required**:
+   - `cargo +nightly fmt --all -- --check`.
+   - `git diff --check`.
+   - Static inspection of the selected-row render path plus any pure helper
+     tests that are practical.
+
+79. **Command palette keyboard-navigation documentation reconcile.**
+   PR-mode docs-only reconciliation task after tasks 74-78 land. Record the
+   shipped command-palette keyboard-navigation behavior in the live planning
+   docs using the existing forward-only pattern.
+
+   **Allowed file surface**:
+   - MAY edit `plans/BASELINE.md`.
+   - MAY edit `Status.md`.
+   - MAY edit `HANDOFF.md`.
+   - MAY edit `change.md`.
+   - MAY add this dispatch's own handoff packets, sidecars, queue log, and
+     ignored `.ai/dispatch-*` scratch.
+   - MUST NOT edit Rust source, tests, Cargo files, architecture lints, ADRs,
+     workflows, automation scripts, scheduler config, existing handoff/log
+     artifacts, or this task brief.
+
+   **Required content**:
+   - Add one forward-only subsection above the existing command-palette entries
+     in `plans/BASELINE.md`.
+   - State exactly what keyboard-navigation behavior exists after tasks 74-78.
+   - Keep historical command-palette subsections byte-preserved below the new
+     entry.
+   - Preserve open non-goals: fuzzy matching, command history, separate command
+     model, plugin runtime/action execution, keybinding editor, and host-shell
+     FIFO replacement unless a prior task explicitly closed one of them.
+
+   **Verbatim review-gate strings** - copy these into the filed issue body:
+
+   ```text
+   MUST add exactly one forward-only command-palette keyboard-navigation subsection to plans/BASELINE.md
+   MUST preserve older command-palette history byte-identical below the new subsection
+   MUST update Status HANDOFF and change consistently with the new current state
+   MUST preserve fuzzy matching command history separate command model plugin runtime keybinding editor and host-shell FIFO replacement as open non-goals unless already closed by a prior task
+   MUST NOT edit Rust source tests Cargo lints ADRs workflows automation scripts scheduler config existing dispatch artifacts or this task brief
+   ```
+
+   **Verification required**:
+   - `git diff --check`.
+   - Static inspection confirming only allowed docs and this dispatch's own
+     generated artifacts changed.
