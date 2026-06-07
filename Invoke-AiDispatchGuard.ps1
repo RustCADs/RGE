@@ -297,6 +297,36 @@ function Get-DriverTickContinuationDecision {
     }
 }
 
+function Convert-MonitorAssessmentResponse {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Text)
+
+    $text = ([string]$Text).Trim()
+    if ($text -match '^(?i:ok)$') {
+        return [pscustomobject]@{ verdict = 'ok'; reason = 'plain ok monitor response' }
+    }
+    if ($text -match '^(?i:abort)(?:\s*[:\-]\s*(.+))?$') {
+        $reason = if ($matches[1]) { [string]$matches[1] } else { 'plain abort monitor response' }
+        return [pscustomobject]@{ verdict = 'abort'; reason = $reason }
+    }
+
+    $jsonMatch = [regex]::Match($text, '\{.*\}')
+    if (-not $jsonMatch.Success) {
+        # Fail-safe: an unparseable monitor response is treated as a halt, not a pass.
+        return [pscustomobject]@{ verdict = 'abort'; reason = "unparseable monitor response: $text" }
+    }
+    try {
+        $obj = $jsonMatch.Value | ConvertFrom-Json
+        if ($obj.verdict -notin @('ok', 'abort')) {
+            return [pscustomobject]@{ verdict = 'abort'; reason = "invalid verdict field: $($obj.verdict)" }
+        }
+        return [pscustomobject]@{ verdict = $obj.verdict; reason = [string]$obj.reason }
+    }
+    catch {
+        return [pscustomobject]@{ verdict = 'abort'; reason = "monitor JSON parse error: $($_.Exception.Message)" }
+    }
+}
+
 function Invoke-ClaudeAssess {
     [CmdletBinding()]
     param([Parameter(Mandatory)][AllowEmptyString()][string]$RecentText)
@@ -328,21 +358,7 @@ $RecentText
     $ErrorActionPreference = 'SilentlyContinue'
     try { $raw = & $ClaudeBin -p $rubric 2>$null } catch { $raw = '' } finally { $ErrorActionPreference = $prevEap }
     $text = ($raw | Out-String).Trim()
-    $jsonMatch = [regex]::Match($text, '\{.*\}')
-    if (-not $jsonMatch.Success) {
-        # Fail-safe: an unparseable monitor response is treated as a halt, not a pass.
-        return [pscustomobject]@{ verdict = 'abort'; reason = "unparseable monitor response: $text" }
-    }
-    try {
-        $obj = $jsonMatch.Value | ConvertFrom-Json
-        if ($obj.verdict -notin @('ok', 'abort')) {
-            return [pscustomobject]@{ verdict = 'abort'; reason = "invalid verdict field: $($obj.verdict)" }
-        }
-        return [pscustomobject]@{ verdict = $obj.verdict; reason = [string]$obj.reason }
-    }
-    catch {
-        return [pscustomobject]@{ verdict = 'abort'; reason = "monitor JSON parse error: $($_.Exception.Message)" }
-    }
+    return Convert-MonitorAssessmentResponse -Text $text
 }
 
 function Stop-GuardRun {

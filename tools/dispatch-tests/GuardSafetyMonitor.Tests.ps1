@@ -132,6 +132,29 @@ Main mode: a passed task was fast-forwarded onto origin/main.
     }
 }
 
+Describe 'Convert-MonitorAssessmentResponse' {
+    It 'accepts exact plain ok from the monitor' {
+        $assessment = Convert-MonitorAssessmentResponse -Text 'ok'
+
+        $assessment.verdict | Should -Be 'ok'
+        $assessment.reason | Should -Match 'plain ok'
+    }
+
+    It 'parses the requested JSON monitor response' {
+        $assessment = Convert-MonitorAssessmentResponse -Text '{"verdict":"ok","reason":"healthy"}'
+
+        $assessment.verdict | Should -Be 'ok'
+        $assessment.reason | Should -Be 'healthy'
+    }
+
+    It 'fails closed on malformed non-ok text' {
+        $assessment = Convert-MonitorAssessmentResponse -Text 'healthy enough'
+
+        $assessment.verdict | Should -Be 'abort'
+        $assessment.reason | Should -Match 'unparseable'
+    }
+}
+
 Describe 'Invoke-GuardLiveRun final-drain safety sweep' {
     It 'aborts when a forbidden command is emitted immediately before child exit' {
         $mockDriver = Join-Path $TestDrive 'instant-danger.ps1'
