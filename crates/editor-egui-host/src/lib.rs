@@ -69,7 +69,7 @@
 //!     `Arc<SaveStatusHandoff>`; [`EguiHost::save_status_handoff`] exposes
 //!     the clone so editor-shell publishes a fresh save-status snapshot each
 //!     frame, the same way it publishes the inspector snapshot.
-//!   - [`EguiHost::render`] draws a bottom [`egui::TopBottomPanel`] (via
+//!   - [`EguiHost::render`] draws a bottom [`egui::Panel`] (via
 //!     [`rge_editor_ui::widgets::save_status::ui`]) BEFORE the
 //!     [`egui_dock::DockArea`], so the status bar sits below the dock; the
 //!     `render` signature is unchanged.
@@ -301,6 +301,12 @@ pub struct EguiHost {
 
     /// Host-local filter text for the command-palette window.
     command_palette_filter: String,
+
+    /// Transient selected filtered-row index for command-palette keyboard navigation.
+    command_palette_selected_index: Option<usize>,
+
+    /// One-shot request to focus the command-palette search field on open.
+    command_palette_search_focus_requested: bool,
 }
 
 impl EguiHost {
@@ -442,6 +448,8 @@ impl EguiHost {
             menu_registry,
             command_palette_open: false,
             command_palette_filter: String::new(),
+            command_palette_selected_index: None,
+            command_palette_search_focus_requested: false,
         }
     }
 
@@ -593,6 +601,8 @@ impl EguiHost {
     pub fn toggle_command_palette(&mut self) {
         self.command_palette_open = !self.command_palette_open;
         self.command_palette_filter.clear();
+        self.command_palette_selected_index = None;
+        self.command_palette_search_focus_requested = self.command_palette_open;
     }
 
     /// Whether the command-palette window is currently open.
@@ -695,7 +705,7 @@ impl EguiHost {
     /// caller drew before. The pass has no depth attachment (egui is a
     /// 2D overlay; depth tests don't apply).
     ///
-    /// The frame's UI is a bottom save-status [`egui::TopBottomPanel`]
+    /// The frame's UI is a bottom save-status [`egui::Panel`]
     /// (open save source name + dirty marker) plus the host's
     /// [`egui_dock::DockArea`] filling the remaining area above it —
     /// there is no caller-supplied UI closure (the dispatch-B `run_ui`
@@ -786,6 +796,9 @@ impl EguiHost {
         let command_palette_entries = command_palette_entries(&main_menu);
         let command_palette_open = &mut self.command_palette_open;
         let command_palette_filter = &mut self.command_palette_filter;
+        let command_palette_selected_index = &mut self.command_palette_selected_index;
+        let command_palette_search_focus_requested =
+            &mut self.command_palette_search_focus_requested;
         let dock_state = &mut self.dock_state;
         let full_output = self.context.run_ui(raw_input, |root_ui| {
             // Top menu bar — File ▸ Open / Save / Save As New Project, Edit ▸
@@ -870,6 +883,8 @@ impl EguiHost {
                 root_ui.ctx(),
                 command_palette_open,
                 command_palette_filter,
+                command_palette_selected_index,
+                command_palette_search_focus_requested,
                 &command_palette_entries,
             ) {
                 menu_commands.push(command);
@@ -877,7 +892,7 @@ impl EguiHost {
             // Bottom status bar — open save source file name + dirty marker. Added
             // BEFORE the DockArea so egui reserves the bottom strip and the
             // dock fills the remaining central rect.
-            egui::TopBottomPanel::bottom("rge_save_status_bar").show_inside(root_ui, |ui| {
+            egui::Panel::bottom("rge_save_status_bar").show_inside(root_ui, |ui| {
                 rge_editor_ui::widgets::save_status::ui(&save_status, ui);
             });
             let mut viewer = EditorTabViewer::with_viewport_rect_sink(Arc::clone(&viewport_sink));

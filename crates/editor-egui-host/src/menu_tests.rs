@@ -18,16 +18,20 @@
 //! `lib.rs` under the cap.
 
 use rge_editor_ui::menus::{
-    default_editor_menu, file_menu_point, Command, Key, MenuEntry, Modifiers, PredicateContext,
-    RegistryError, Shortcut,
+    default_editor_menu, file_menu_point, plugins_menu_point, Command, Key, MenuEntry, Modifiers,
+    PredicateContext, RegistryError, Shortcut,
 };
 
 use super::MenuCommandHandoff;
 use crate::menu::{
-    command_palette_entries, filter_command_palette_entries, first_enabled_command_palette_entry,
-    project_main_menu, register_menu_entry, register_plugin_menu_entry,
-    ProjectedCommandPaletteEntry,
+    command_palette_entries, command_palette_row_is_selected, command_palette_selected_index,
+    filter_command_palette_entries, move_command_palette_selected_index, project_main_menu,
+    register_menu_entry, selected_command_palette_entry, take_command_palette_search_focus_request,
+    CommandPaletteSelectionDirection, ProjectedCommandPaletteEntry,
 };
+
+type PaletteEntry = ProjectedCommandPaletteEntry;
+type Dir = CommandPaletteSelectionDirection;
 
 /// Project the canonical menu's four points to `(label, accel, command)` triples,
 /// dropping the resolved `enabled` flag — these tests pin labels / commands /
@@ -52,6 +56,57 @@ fn menu_entries() -> (
         strip(menu.play),
         strip(menu.view),
     )
+}
+
+fn pe(label: &str, shortcut: Option<&str>, command: Command, enabled: bool) -> PaletteEntry {
+    PaletteEntry {
+        label: label.to_owned(),
+        shortcut: shortcut.map(str::to_owned),
+        command,
+        enabled,
+    }
+}
+
+fn save(enabled: bool) -> PaletteEntry {
+    pe("File: Save", Some("Ctrl+S"), Command::Save, enabled)
+}
+
+fn open(enabled: bool) -> PaletteEntry {
+    pe("File: Open", Some("Ctrl+O"), Command::OpenFile, enabled)
+}
+
+fn toggle(enabled: bool) -> PaletteEntry {
+    pe(
+        "View: Command Palette",
+        Some("Ctrl+Shift+P"),
+        Command::ToggleCommandPalette,
+        enabled,
+    )
+}
+
+fn refs(entries: &[PaletteEntry]) -> Vec<&PaletteEntry> {
+    entries.iter().collect()
+}
+
+fn assert_sel(e: &[&PaletteEntry], current: Option<usize>, expected: Option<usize>, msg: &str) {
+    let actual = command_palette_selected_index(e, current);
+    assert_eq!(actual, expected, "{msg}");
+}
+
+fn assert_move(
+    entries: &[&PaletteEntry],
+    current: Option<usize>,
+    direction: Dir,
+    expected: Option<usize>,
+    msg: &str,
+) {
+    let actual = move_command_palette_selected_index(entries, current, direction);
+    assert_eq!(actual, expected, "{msg}");
+}
+
+fn assert_cmd(e: &[&PaletteEntry], selected: Option<usize>, expected: Option<Command>, msg: &str) {
+    let actual = selected_command_palette_entry(e, selected);
+    assert_eq!(actual, expected, "{msg}");
 }
 
 #[test]
@@ -376,8 +431,9 @@ fn plugins_menu_projects_registered_entries_and_round_trips() {
         plugin_id: "com.example.mesh-audit".to_owned(),
         action_id: "open-panel".to_owned(),
     };
-    register_plugin_menu_entry(
+    register_menu_entry(
         &mut registry,
+        &plugins_menu_point(),
         MenuEntry::new("plugin.mesh_audit.open", "Mesh Audit", command.clone()).with_shortcut(
             Shortcut::new(Modifiers::CTRL | Modifiers::ALT, Key::Char('M')),
         ),
@@ -414,8 +470,9 @@ fn command_palette_entries_flatten_current_menu_projection() {
         plugin_id: "com.example.mesh-audit".to_owned(),
         action_id: "open-panel".to_owned(),
     };
-    register_plugin_menu_entry(
+    register_menu_entry(
         &mut registry,
+        &plugins_menu_point(),
         MenuEntry::new(
             "plugin.mesh_audit.open",
             "Mesh Audit",
@@ -503,24 +560,14 @@ fn command_palette_filter_matches_label_shortcut_and_command_id() {
 #[test]
 fn command_palette_filter_orders_exact_word_matches_before_longer_matches() {
     let entries = vec![
-        ProjectedCommandPaletteEntry {
-            label: "File: Save As New Project".to_owned(),
-            shortcut: Some("Ctrl+Shift+S".to_owned()),
-            command: Command::SaveAs,
-            enabled: true,
-        },
-        ProjectedCommandPaletteEntry {
-            label: "File: Save".to_owned(),
-            shortcut: Some("Ctrl+S".to_owned()),
-            command: Command::Save,
-            enabled: true,
-        },
-        ProjectedCommandPaletteEntry {
-            label: "File: Open".to_owned(),
-            shortcut: Some("Ctrl+O".to_owned()),
-            command: Command::OpenFile,
-            enabled: true,
-        },
+        pe(
+            "File: Save As New Project",
+            Some("Ctrl+Shift+S"),
+            Command::SaveAs,
+            true,
+        ),
+        save(true),
+        open(true),
     ];
 
     let labels: Vec<&str> = filter_command_palette_entries(&entries, "save")
@@ -535,44 +582,190 @@ fn command_palette_filter_orders_exact_word_matches_before_longer_matches() {
 }
 
 #[test]
-fn command_palette_enter_activation_uses_first_enabled_filtered_entry() {
-    let entries = vec![
-        ProjectedCommandPaletteEntry {
-            label: "File: Save".to_owned(),
-            shortcut: Some("Ctrl+S".to_owned()),
-            command: Command::Save,
-            enabled: false,
-        },
-        ProjectedCommandPaletteEntry {
-            label: "View: Command Palette".to_owned(),
-            shortcut: Some("Ctrl+Shift+P".to_owned()),
-            command: Command::ToggleCommandPalette,
-            enabled: true,
-        },
-    ];
-    let filtered_entries: Vec<&ProjectedCommandPaletteEntry> = entries.iter().collect();
+fn command_palette_selection_uses_first_enabled_row_when_needed() {
+    let entries = vec![save(false), toggle(true), open(true)];
+    let filtered_entries = refs(&entries);
 
-    assert_eq!(
-        first_enabled_command_palette_entry(&filtered_entries),
-        Some(Command::ToggleCommandPalette),
-        "Enter skips disabled palette rows and activates the first enabled command"
+    assert_sel(
+        &filtered_entries,
+        None,
+        Some(1),
+        "missing selects first enabled",
+    );
+    assert_sel(
+        &filtered_entries,
+        Some(0),
+        Some(1),
+        "disabled row is skipped",
+    );
+    assert_sel(&filtered_entries, Some(99), Some(1), "stale row is clamped");
+}
+
+#[test]
+fn command_palette_selection_preserves_still_valid_row() {
+    let entries = vec![toggle(true), open(true)];
+    let filtered_entries = refs(&entries);
+
+    assert_sel(
+        &filtered_entries,
+        Some(1),
+        Some(1),
+        "valid row is preserved",
     );
 }
 
 #[test]
-fn command_palette_enter_activation_returns_none_when_every_match_is_disabled() {
-    let entries = vec![ProjectedCommandPaletteEntry {
-        label: "File: Save".to_owned(),
-        shortcut: Some("Ctrl+S".to_owned()),
-        command: Command::Save,
-        enabled: false,
-    }];
-    let filtered_entries: Vec<&ProjectedCommandPaletteEntry> = entries.iter().collect();
+fn command_palette_selection_returns_none_without_enabled_rows() {
+    let disabled = vec![save(false)];
+    let disabled_entries = refs(&disabled);
+    let empty_entries: Vec<&ProjectedCommandPaletteEntry> = Vec::new();
 
-    assert_eq!(
-        first_enabled_command_palette_entry(&filtered_entries),
+    assert_sel(&disabled_entries, None, None, "disabled-only selects none");
+    assert_sel(&empty_entries, Some(0), None, "empty results select none");
+}
+
+#[test]
+fn command_palette_navigation_moves_down_through_enabled_rows() {
+    let entries = vec![save(false), toggle(true), open(true)];
+    let filtered_entries = refs(&entries);
+    let next = CommandPaletteSelectionDirection::Next;
+
+    assert_move(&filtered_entries, None, next, Some(1), "down from none");
+    assert_move(&filtered_entries, Some(1), next, Some(2), "down to next");
+    assert_move(&filtered_entries, Some(2), next, Some(1), "down wraps");
+}
+
+#[test]
+fn command_palette_navigation_moves_up_through_enabled_rows() {
+    let entries = vec![save(false), toggle(true), open(true)];
+    let filtered_entries = refs(&entries);
+    let previous = CommandPaletteSelectionDirection::Previous;
+
+    assert_move(&filtered_entries, None, previous, Some(1), "up from none");
+    assert_move(
+        &filtered_entries,
+        Some(2),
+        previous,
+        Some(1),
+        "up to previous",
+    );
+    assert_move(&filtered_entries, Some(1), previous, Some(2), "up wraps");
+}
+
+#[test]
+fn command_palette_navigation_skips_disabled_rows_and_disabled_only_stays_none() {
+    let entries = vec![save(true), toggle(false), open(true)];
+    let filtered_entries = refs(&entries);
+    let next = CommandPaletteSelectionDirection::Next;
+    let previous = CommandPaletteSelectionDirection::Previous;
+
+    assert_move(
+        &filtered_entries,
+        Some(0),
+        next,
+        Some(2),
+        "down skips disabled",
+    );
+    assert_move(
+        &filtered_entries,
+        Some(2),
+        previous,
+        Some(0),
+        "up skips disabled",
+    );
+
+    let disabled_only = vec![save(false)];
+    let disabled_entries = refs(&disabled_only);
+    assert_move(
+        &disabled_entries,
         None,
-        "Enter does not dispatch disabled-only palette results"
+        next,
+        None,
+        "disabled-only has no target",
+    );
+}
+
+#[test]
+fn command_palette_selected_enter_activates_selected_row() {
+    let entries = vec![save(true), open(true)];
+    let filtered_entries = refs(&entries);
+
+    assert_cmd(
+        &filtered_entries,
+        Some(1),
+        Some(Command::OpenFile),
+        "enter uses selected row",
+    );
+}
+
+#[test]
+fn command_palette_selected_enter_clamps_stale_selection() {
+    let entries = vec![save(false), toggle(true)];
+    let filtered_entries = refs(&entries);
+
+    assert_cmd(
+        &filtered_entries,
+        Some(99),
+        Some(Command::ToggleCommandPalette),
+        "stale selection is clamped",
+    );
+    assert_cmd(
+        &filtered_entries,
+        Some(0),
+        Some(Command::ToggleCommandPalette),
+        "disabled selection is skipped",
+    );
+}
+
+#[test]
+fn command_palette_selected_enter_dispatches_nothing_without_enabled_rows() {
+    let disabled = vec![save(false)];
+    let disabled_entries = refs(&disabled);
+    let empty_entries: Vec<&ProjectedCommandPaletteEntry> = Vec::new();
+
+    assert_cmd(
+        &disabled_entries,
+        Some(0),
+        None,
+        "disabled-only dispatches none",
+    );
+    assert_cmd(&empty_entries, None, None, "empty dispatches none");
+}
+
+#[test]
+fn command_palette_search_focus_request_is_one_shot() {
+    let mut focus_requested = true;
+
+    assert!(
+        take_command_palette_search_focus_request(&mut focus_requested),
+        "the first palette frame consumes the pending search-focus request"
+    );
+    assert!(
+        !focus_requested,
+        "focus request state clears after the first consumption"
+    );
+    assert!(
+        !take_command_palette_search_focus_request(&mut focus_requested),
+        "later frames do not keep stealing focus"
+    );
+}
+
+#[test]
+fn command_palette_selected_row_affordance_tracks_enabled_selected_row() {
+    let enabled_entry = open(true);
+    let disabled_entry = save(false);
+
+    assert!(
+        command_palette_row_is_selected(&enabled_entry, 1, Some(1)),
+        "enabled row at the selected filtered index renders selected"
+    );
+    assert!(
+        !command_palette_row_is_selected(&enabled_entry, 0, Some(1)),
+        "other enabled rows are not rendered selected"
+    );
+    assert!(
+        !command_palette_row_is_selected(&disabled_entry, 1, Some(1)),
+        "disabled rows stay visible but never receive the selected-row affordance"
     );
 }
 
@@ -585,9 +778,9 @@ fn plugins_menu_registration_rejects_duplicate_entry_ids() {
     };
     let entry = MenuEntry::new("plugin.mesh_audit.open", "Mesh Audit", command);
 
-    register_plugin_menu_entry(&mut registry, entry.clone())
+    register_menu_entry(&mut registry, &plugins_menu_point(), entry.clone())
         .expect("first plugin menu entry registers");
-    let err = register_plugin_menu_entry(&mut registry, entry)
+    let err = register_menu_entry(&mut registry, &plugins_menu_point(), entry)
         .expect_err("duplicate plugin menu entry id is rejected");
 
     assert_eq!(

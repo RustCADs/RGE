@@ -38,6 +38,15 @@ pub(crate) struct ProjectedCommandPaletteEntry {
     pub enabled: bool,
 }
 
+/// Direction for command-palette keyboard selection movement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CommandPaletteSelectionDirection {
+    /// Move to the previous enabled filtered row.
+    Previous,
+    /// Move to the next enabled filtered row.
+    Next,
+}
+
 /// Host-owned shortcut-conflict diagnostic.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ProjectedShortcutConflict {
@@ -189,17 +198,91 @@ pub(crate) fn filter_command_palette_entries<'a>(
     matches.into_iter().map(|(_, _, entry)| entry).collect()
 }
 
-/// Return the command Enter should activate for a filtered palette result set.
+/// Return a valid filtered-row index for command-palette keyboard selection.
 ///
-/// Disabled entries stay visible but are not executable, so keyboard activation
-/// skips them exactly like clicking through [`menu_item`].
-pub(crate) fn first_enabled_command_palette_entry(
+/// Disabled entries stay visible in the palette, but they are never a keyboard
+/// target. If `current_index` already points at an enabled row in `entries`, it
+/// is preserved; otherwise selection falls back to the first enabled row.
+pub(crate) fn command_palette_selected_index(
     entries: &[&ProjectedCommandPaletteEntry],
-) -> Option<Command> {
-    entries
+    current_index: Option<usize>,
+) -> Option<usize> {
+    if let Some(index) = current_index {
+        if entries.get(index).is_some_and(|entry| entry.enabled) {
+            return Some(index);
+        }
+    }
+    entries.iter().position(|entry| entry.enabled)
+}
+
+/// Move command-palette keyboard selection through enabled filtered rows.
+///
+/// Movement wraps at the ends. If `current_index` is absent or no longer points
+/// at an enabled row, the first enabled row becomes selected instead of moving
+/// past it.
+pub(crate) fn move_command_palette_selected_index(
+    entries: &[&ProjectedCommandPaletteEntry],
+    current_index: Option<usize>,
+    direction: CommandPaletteSelectionDirection,
+) -> Option<usize> {
+    let normalized = command_palette_selected_index(entries, current_index);
+    if normalized != current_index {
+        return normalized;
+    }
+
+    let current = normalized?;
+    let enabled_indices: Vec<usize> = entries
         .iter()
-        .find(|entry| entry.enabled)
-        .map(|entry| entry.command.clone())
+        .enumerate()
+        .filter_map(|(index, entry)| entry.enabled.then_some(index))
+        .collect();
+    let position = enabled_indices
+        .iter()
+        .position(|index| *index == current)
+        .expect("normalized selection must point at an enabled row");
+    let next_position = match direction {
+        CommandPaletteSelectionDirection::Next => (position + 1) % enabled_indices.len(),
+        CommandPaletteSelectionDirection::Previous => {
+            if position == 0 {
+                enabled_indices.len() - 1
+            } else {
+                position - 1
+            }
+        }
+    };
+    Some(enabled_indices[next_position])
+}
+
+/// Return the command for the selected enabled filtered row.
+///
+/// If `selected_index` is absent, stale, or disabled, it is resolved the same
+/// way as [`command_palette_selected_index`]: fall back to the first enabled
+/// filtered row. Empty or disabled-only result sets return `None`.
+pub(crate) fn selected_command_palette_entry(
+    entries: &[&ProjectedCommandPaletteEntry],
+    selected_index: Option<usize>,
+) -> Option<Command> {
+    let index = command_palette_selected_index(entries, selected_index)?;
+    entries.get(index).map(|entry| entry.command.clone())
+}
+
+/// Consume a pending command-palette search-field focus request.
+///
+/// The host arms this when the palette opens. The window consumes it once after
+/// creating the search field so later frames keep user-directed focus changes.
+pub(crate) fn take_command_palette_search_focus_request(focus_requested: &mut bool) -> bool {
+    let request_focus = *focus_requested;
+    *focus_requested = false;
+    request_focus
+}
+
+/// Return whether a filtered palette row should render as the selected row.
+pub(crate) fn command_palette_row_is_selected(
+    entry: &ProjectedCommandPaletteEntry,
+    row_index: usize,
+    selected_index: Option<usize>,
+) -> bool {
+    entry.enabled && selected_index == Some(row_index)
 }
 
 fn command_palette_match_score(
@@ -259,22 +342,6 @@ pub(crate) fn register_menu_entry(
     registry.register_entry(point, entry)
 }
 
-/// Register a plugin-provided entry against the optional Plugins main-menu
-/// extension point.
-///
-/// # Errors
-///
-/// Forwards [`RegistryError::DuplicateEntryId`] from the registry when another
-/// entry with the same id already exists in Plugins. The default editor menu
-/// declares the Plugins point, so [`RegistryError::UnknownExtensionPoint`] would
-/// indicate a caller supplied a non-canonical registry.
-pub(crate) fn register_plugin_menu_entry(
-    registry: &mut MenuRegistry,
-    entry: MenuEntry,
-) -> Result<(), RegistryError> {
-    register_menu_entry(registry, &plugins_menu_point(), entry)
-}
-
 /// Add one main-menu item: its `label`, plus — when the entry carries an
 /// accelerator — that hint rendered as egui's right-aligned `shortcut_text`.
 /// `enabled` greys the item out — every caller passes the item's resolved
@@ -293,9 +360,12 @@ pub(crate) fn command_palette_window(
     ctx: &egui::Context,
     open: &mut bool,
     filter: &mut String,
+    selected_index: &mut Option<usize>,
+    search_focus_requested: &mut bool,
     entries: &[ProjectedCommandPaletteEntry],
 ) -> Option<Command> {
     if !*open {
+        *search_focus_requested = false;
         return None;
     }
 
@@ -308,43 +378,81 @@ pub(crate) fn command_palette_window(
         .default_width(360.0)
         .open(open)
         .show(ctx, |ui| {
-            ui.add(egui::TextEdit::singleline(filter).hint_text("Search commands"));
+            let search_response = ui.add(
+                egui::TextEdit::singleline(filter)
+                    .id(egui::Id::new("rge_command_palette_search"))
+                    .hint_text("Search commands"),
+            );
+            if take_command_palette_search_focus_request(search_focus_requested) {
+                search_response.request_focus();
+            }
             ui.separator();
             let filtered_entries = filter_command_palette_entries(entries, filter.as_str());
             if filtered_entries.is_empty() {
                 ui.label("No commands match");
             }
+            *selected_index = command_palette_selected_index(&filtered_entries, *selected_index);
             if ui.input(|input| input.key_pressed(egui::Key::Escape)) {
                 close_command_palette = true;
+            } else if ui.input(|input| input.key_pressed(egui::Key::ArrowDown)) {
+                *selected_index = move_command_palette_selected_index(
+                    &filtered_entries,
+                    *selected_index,
+                    CommandPaletteSelectionDirection::Next,
+                );
+            } else if ui.input(|input| input.key_pressed(egui::Key::ArrowUp)) {
+                *selected_index = move_command_palette_selected_index(
+                    &filtered_entries,
+                    *selected_index,
+                    CommandPaletteSelectionDirection::Previous,
+                );
             } else if ui.input(|input| input.key_pressed(egui::Key::Enter)) {
-                selected_command = first_enabled_command_palette_entry(&filtered_entries);
+                selected_command =
+                    selected_command_palette_entry(&filtered_entries, *selected_index);
             }
-            for entry in filtered_entries {
-                if menu_item(
-                    ui,
-                    entry.enabled,
-                    entry.label.as_str(),
-                    entry.shortcut.as_deref(),
-                )
-                .clicked()
-                {
-                    selected_command = Some(entry.command.clone());
-                }
-            }
+            egui::ScrollArea::vertical()
+                .id_salt("rge_command_palette_results")
+                .max_height(360.0)
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    for (index, entry) in filtered_entries.into_iter().enumerate() {
+                        let row_selected =
+                            command_palette_row_is_selected(entry, index, *selected_index);
+                        let response = command_palette_menu_item(
+                            ui,
+                            entry.enabled,
+                            entry.label.as_str(),
+                            entry.shortcut.as_deref(),
+                            row_selected,
+                        );
+                        if row_selected {
+                            response.scroll_to_me(Some(egui::Align::Center));
+                        }
+                        if response.clicked() {
+                            selected_command = Some(entry.command.clone());
+                        }
+                    }
+                });
         });
 
     if close_command_palette {
         *open = false;
         filter.clear();
+        *selected_index = None;
+        *search_focus_requested = false;
         return None;
     }
     if let Some(command) = selected_command {
         *open = false;
         filter.clear();
+        *selected_index = None;
+        *search_focus_requested = false;
         return Some(command);
     }
     if !*open {
         filter.clear();
+        *selected_index = None;
+        *search_focus_requested = false;
     }
     None
 }
@@ -356,6 +464,20 @@ pub(crate) fn menu_item(
     shortcut: Option<&str>,
 ) -> egui::Response {
     let mut button = egui::Button::new(label);
+    if let Some(text) = shortcut {
+        button = button.shortcut_text(text);
+    }
+    ui.add_enabled(enabled, button)
+}
+
+fn command_palette_menu_item(
+    ui: &mut egui::Ui,
+    enabled: bool,
+    label: &str,
+    shortcut: Option<&str>,
+    selected: bool,
+) -> egui::Response {
+    let mut button = egui::Button::new(label).selected(selected);
     if let Some(text) = shortcut {
         button = button.shortcut_text(text);
     }
