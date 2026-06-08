@@ -1,3 +1,8 @@
+// SPLIT-EXEMPTION: cohesive editor-egui-host menu and command-palette test
+// module. The command-palette filter, keyboard selection, projection, and
+// menu-command FIFO tests share local palette-entry helpers and synthetic menu
+// fixtures; splitting would duplicate setup or make the cross-behavior
+// assertions harder to audit.
 //! Unit tests for the host's main-menu wiring: that
 //! [`crate::menu::project_main_menu`] resolves each extension point
 //! (File / Edit / Play / View / optional Plugins) to the expected
