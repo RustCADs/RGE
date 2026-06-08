@@ -8301,7 +8301,7 @@ is the only safeguard against selector drift.
    - Run any newly added focused Pester tests.
    - `git diff --check`.
 
-94. **Measure default clean-release package-set build time.**
+94. **[DONE 2026-06-08 via ISSUE-337 manual salvage - DefaultCleanRelease clean build 125.467s MISS vs <=120s] Measure default clean-release package-set build time.**
    Task 93 implemented the resolver-backed `DefaultCleanRelease` package set
    but intentionally did not run a fresh isolated-target measurement. Run the
    documented measurement now and record whether the default release package set

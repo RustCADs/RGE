@@ -455,14 +455,16 @@ This fresh isolated-target run **supersedes the earlier 156.591 s** figure as th
 - Existing `tools/compile-timing.ps1` invocations remain workspace timing by default (`-PackageSet Workspace`), so warm/full workspace check/build measurements are still available.
 - `.ai/dispatch.verify.ps1`, `.github/workflows/tests.yml`, and `.github/workflows/bench.yml` were not narrowed. The repository's normal verify/workflow test coverage remains workspace-wide, and the explicit wasm/script opt-in bench compile remains visible as `cargo bench -p rge-script-bench --no-run`.
 
-**Default clean-release command to run next:** a fresh isolated-target measurement was not run in ISSUE-335, so the <=120s budget is **not closed** by this entry. The next measurement should use:
+**Default clean-release measurement result (2026-06-08 / ISSUE-337 manual salvage):** the follow-up measurement was run from a fresh isolated target with the `DefaultCleanRelease` package set:
 
 ```
-$env:CARGO_TARGET_DIR = 'B:\sdk\rge-clean-default-ISSUE-335-next'
+$env:CARGO_TARGET_DIR = 'B:\sdk\rge-clean-default-ISSUE-337-manual-20260608'
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\compile-timing.ps1 -Mode build -Release -PackageSet DefaultCleanRelease -Iterations 1 -TimeoutSeconds 1200
 ```
 
-Before running it, ensure the target path is fresh and empty; do not run `cargo clean` and do not delete the shared `A:\RustCache\target`. After recording wall time, Cargo `Finished`, and pass/miss against the <=120s clean-build budget, remove only that isolated scratch target.
+Result: exit 0, wall **125.467s**, Cargo `Finished` **2m 05s**. This is a **MISS** vs the <=120s clean-build budget by **5.467s**. The generated command was an explicit `cargo build --release -p ...` package list and did **not** contain `--workspace`; the resolver reported **92 included** packages and **5 excluded** packages (`rge-runtime-wasmtime`, `rge-runtime-wasmtime-engine`, `rge-script-host`, `rge-expr-wasm`, `rge-script-bench`), with `rge-tool-wasm-bench` included. The run emitted the pre-existing `rge-ui-theme` missing-docs warnings. The isolated scratch target was verified under `B:\sdk` and removed after recording; shared `A:\RustCache\target` was not deleted and `cargo clean` was not run.
+
+**Current verdict:** candidate C materially improved the clean-release selector relative to the full-workspace Wasmtime/Cranelift build, but it does **not** close the clean-build gate yet. The Phase 9 clean-build budget remains open.
 
 **What would prove improvement later:** for candidates that keep the full workspace release selector, re-run this exact `cargo build --workspace --release --timings` from a fresh isolated `B:\sdk\rge-clean-hotspots-ISSUE-322-*` target after a candidate lands and confirm (1) the new `Total time` <= 120 s and (2) `cranelift-codegen` is no longer the critical-path tail in `UNIT_DATA`. For the selected candidate C follow-up, the proof command must instead be the documented default package-set release build that replaces the current `--workspace` selector, with a separate explicit wasm-stack opt-in verification command.
 
