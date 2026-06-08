@@ -8618,3 +8618,69 @@ is the only safeguard against selector drift.
    non-blank fuzzy ordering unchanged; `cargo +nightly fmt --all -- --check`;
    `cargo test -p rge-editor-egui-host --lib`; `cargo check -p
    rge-editor-egui-host --lib`; `git diff --check`.
+
+101. **Phase 9 editor-usability next-task selection audit.**
+   Queue is empty after task 100. Run a docs/source-read selection pass and
+   choose exactly one bounded Phase 9/editor-usability implementation follow-up
+   for task 102, or record `NEEDS_HUMAN` if the evidence does not support a
+   safe bounded task.
+
+   **Purpose:** inspect the current plan/status docs and current source before
+   deciding the next automation item. Do not infer the next task from stale
+   summary text alone. Use `plans/BASELINE.md`, `Status.md`, `HANDOFF.md`,
+   `change.md`, `.ai/dispatch.tasks.md`, and source searches under the relevant
+   editor/plugin crates to prove what is actually open.
+
+   **Scope / MAY edit:**
+   - `plans/BASELINE.md`
+   - `Status.md`
+   - `HANDOFF.md`
+   - `change.md`
+   - `.ai/dispatch.tasks.md`
+   - generated ISSUE-101 handoff/audit/log artifacts for this dispatch only
+
+   **MAY read/search:** `crates/editor-*`, `editor/`, `crates/plugin-*`,
+   `plugins/`, `crates/cad-*`, `crates/kernel-*`, and other source paths needed
+   to falsify current claims with `rg` / `git grep`. Reads/searches are allowed;
+   source edits are not.
+
+   **MUST NOT edit:** Rust source/tests, Cargo manifests/lockfiles, workflows,
+   scheduler/dispatch automation scripts, architecture-lint rules/config,
+   schemas, plugin runtime/discovery/loading code, existing handoff/log
+   artifacts from other dispatches, or unrelated generated scratch files.
+
+   **Audit requirements:**
+   - Record the remaining Phase 9/editor-usability gaps using current source
+     evidence, not just historical docs.
+   - Include falsifying searches for stale or risky claims.
+   - Compare at least these candidate classes:
+     1. plugin/extension command execution policy beyond command capture,
+     2. host-shell FIFO/menu-click replacement and generalized registry
+        execution,
+     3. conflict resolution, keybinding editor, and fatal gating,
+     4. persistent command-palette history/favorites,
+     5. unsaved-changes prompt and graceful quit,
+     6. OS clipboard / typed clipboard,
+     7. authoritative CAD deletion/duplication/undo integration,
+     8. broader camera UI.
+   - Select exactly one next implementation task and append it as task 102 with
+     explicit `MAY edit`, `MUST NOT edit`, done criteria, and verification.
+     If no candidate can be safely bounded from evidence, append no
+     implementation task and record `NEEDS_HUMAN`.
+
+   **Strong suggested prior:** plugin/extension command execution policy beyond
+   command capture is likely the best next item because `Command::Custom` and
+   `Command::Plugin` have recent capture/queue work but may still lack a
+   bounded execution/routing policy. The audit must verify that premise and may
+   choose a different candidate if the evidence is stronger.
+
+   **Verification:** `git diff --check`; final
+   `git status --short --untracked-files=all`; recorded source/doc search
+   commands and results sufficient to support the selected task. No Rust build
+   or test is expected unless the audit changes a verifier/tooling file, which
+   this task should not do.
+
+   **Halt condition:** if selecting task 102 would require implementation edits
+   during task 101, or current docs/source contradict the premise enough that a
+   bounded follow-up cannot be defended, record `NEEDS_HUMAN` with evidence
+   instead of manufacturing an unsafe task.
