@@ -8109,3 +8109,50 @@ is the only safeguard against selector drift.
    - `cargo test -p rge-physics` if physics source/tests change.
    - `cargo +nightly fmt --all -- --check` if Rust files change.
    - `git diff --check`.
+
+90. **Phase 9 clean release `cranelift-codegen` package opt-level experiment.**
+   Execute remediation candidate A from the ISSUE-322 clean-release hotspot
+   attribution: test whether lowering only the release profile for
+   `cranelift-codegen` removes the 125.64s critical-path long pole enough to
+   satisfy the PLAN Section 13.3 clean-build budget, without changing source
+   behavior or widening the wasm runtime dependency graph.
+
+   **Allowed file surface**:
+   - MAY edit root `Cargo.toml` only to add a minimal
+     `[profile.release.package."cranelift-codegen"]` override.
+   - MAY edit `plans/BASELINE.md`, `Status.md`, `HANDOFF.md`, and `change.md`
+     to record the experiment result.
+   - MAY edit `.ai/dispatch.tasks.md` only to mark this task done or
+     done-blocked after the experiment is recorded.
+   - MAY create and remove an isolated scratch target under `B:\sdk`.
+   - MAY write throw-away timing artifacts under `.ai/` or `B:\sdk`; do not
+     commit them unless an existing documented convention requires it.
+   - MUST NOT edit Rust source/tests, dependency features, `Cargo.lock`,
+     workflows, scheduler config, dispatch automation scripts, architecture
+     lints, or shared `A:\RustCache\target` contents.
+   - MUST NOT run `cargo clean`.
+
+   **Required behavior**:
+   - Prefer the least risky useful override first: `opt-level = 1` for
+     `cranelift-codegen` under release package profiles. Do not change global
+     release settings.
+   - Re-run a true clean release build from a fresh isolated target under
+     `B:\sdk` with Cargo `--timings` after the override.
+   - Record the new wall time, Cargo "Finished" time, `--timings` total, and
+     whether `cranelift-codegen` remains the critical-path tail.
+   - Run a focused release-mode wasm/script smoke/perf check so an obvious
+     Cranelift runtime-compiler regression is visible before keeping the
+     profile override.
+   - Keep the `Cargo.toml` override only if the clean release build improves
+     materially and the focused wasm/script check remains within its documented
+     assertions. If the experiment misses the budget or shows a catastrophic
+     regression, revert the `Cargo.toml` change and record a docs-only failed
+     experiment instead of landing a harmful profile change.
+
+   **Verification required**:
+   - `cargo build --workspace --release --timings` from a fresh isolated
+     `B:\sdk` target.
+   - `cargo test -p rge-script-bench --release --lib wasmtime_cranelift::tests -- --nocapture`.
+   - `cargo +nightly fmt --all -- --check` if any manifest formatting command
+     or Rust formatting-relevant change is made.
+   - `git diff --check`.
