@@ -1,0 +1,26 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-333",
+    "packet_type": "TASK",
+    "author": "Planner / OpenAI Codex",
+    "timestamp": "2026-06-08_08-08-29+0300",
+    "related_files": [
+                          "Cargo.toml",
+                          "Cargo.lock",
+                          "crates/expr-wasm/**",
+                          "crates/runtime-wasmtime/**",
+                          "crates/runtime-wasmtime-engine/**",
+                          "crates/script-host/**",
+                          "crates/script-bench/**",
+                          "plans/BASELINE.md",
+                          "Status.md",
+                          "HANDOFF.md",
+                          "change.md",
+                          ".ai/dispatch.tasks.md",
+                          ".ai/dispatch-ISSUE-333/**"
+                      ],
+    "status": "OPEN",
+    "handoff_status": "COMPLETE",
+    "next_role": "EXECUTOR_AI",
+    "exit_code": 0
+}

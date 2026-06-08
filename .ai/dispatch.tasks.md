@@ -8195,7 +8195,7 @@ is the only safeguard against selector drift.
    - Full `Invoke-Pester -Path .\tools\dispatch-tests` if practical.
    - `git diff --check`.
 
-92. **Audit Pulley / wasm-stack feature-gate feasibility across all direct `wasmtime` dependents.**
+92. **[DONE 2026-06-08 via ISSUE-333 dispatch - selected candidate C default package-set follow-up] Audit Pulley / wasm-stack feature-gate feasibility across all direct `wasmtime` dependents.**
    Convert the remaining PLAN Section 13.3 clean-release remediation options
    from high-level candidates into one concrete next implementation choice.
    Candidate A (`cranelift-codegen` package opt-level) has already been
