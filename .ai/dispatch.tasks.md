@@ -8573,3 +8573,40 @@ is the only safeguard against selector drift.
    next planner prompt. The task goal, TASK packet, gate verdict semantics,
    same-phase retry behavior, execution, control review, queue publish modes,
    scheduler config, and sandbox routing are unchanged.
+
+100. **Add host-local recent-command ordering to the command palette.**
+   Implement the smallest command-history slice for the existing
+   `editor-egui-host` command palette. The history is host-local, in-memory,
+   and derived from the current projected menu entries; it must not introduce a
+   second command model or persistent storage.
+
+   **Scope / MAY edit:**
+   - `crates/editor-egui-host/src/lib.rs`
+   - `crates/editor-egui-host/src/menu.rs`
+   - `crates/editor-egui-host/src/menu_tests.rs`
+   - `plans/BASELINE.md`
+   - `Status.md`
+   - `HANDOFF.md`
+   - `change.md`
+   - `.ai/dispatch.tasks.md`
+
+   **MUST NOT edit:** `editor-shell`, `editor-ui`, plugin runtime/discovery,
+   Cargo manifests/lockfiles, workflows, scheduler/dispatch automation scripts,
+   architecture-lint rules/config, or any generated handoff sidecars.
+
+   **Done-criterion:** `EguiHost` records successful command-palette
+   activations by stable `Command::diagnostic_id()` into a bounded
+   most-recent-first list (capacity 8 is enough), de-duplicates by moving an
+   existing id to the front, and uses only the current
+   `command_palette_entries(&main_menu)` projection to render/activate entries.
+   Blank-filter palette ordering should place currently available recent
+   enabled commands first, in most-recent order, then all remaining entries in
+   their existing projected order. Non-blank fuzzy filtering/scoring from task
+   98 must remain unchanged. Stale history ids not present in the current
+   projection are ignored, not rendered as phantom commands.
+
+   **Verification:** focused command-palette host/menu tests proving bounded
+   de-duplication, stale-id ignoring, blank-filter recent ordering, and
+   non-blank fuzzy ordering unchanged; `cargo +nightly fmt --all -- --check`;
+   `cargo test -p rge-editor-egui-host --lib`; `cargo check -p
+   rge-editor-egui-host --lib`; `git diff --check`.
