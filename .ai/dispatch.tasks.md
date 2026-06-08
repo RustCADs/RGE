@@ -8891,7 +8891,7 @@ is the only safeguard against selector drift.
    bounded follow-up cannot be defended, record `NEEDS_HUMAN` with evidence
    instead of manufacturing an unsafe task.
 
-104. **Persist command-palette recent activations across editor sessions.**
+104. **[DONE 2026-06-09 via PR #354 / commit `876f184`] Persist command-palette recent activations across editor sessions.**
    Add a bounded persistence layer for the existing `editor-egui-host`
    command-palette recent activation ids. The current source already records
    successful command-palette activations in memory via
@@ -8990,6 +8990,15 @@ is the only safeguard against selector drift.
    - `cargo test -p rge-editor-egui-host --lib`
    - `cargo check -p rge-editor-egui-host --lib`
    - `git diff --check`
+
+   **Result:** implemented in ISSUE-353 / PR #354. The editor-egui-host now
+   persists command-palette recent activation ids as capped, de-duplicated
+   newline-delimited `Command::diagnostic_id()` values under the per-user RGE
+   config path; loads them during `EguiHost` construction; keeps load/save
+   failures non-fatal; and leaves main-menu activations out of
+   command-palette recent recording. Local recovery ran the focused
+   editor-egui-host tests plus the canonical dispatch verifier, and GitHub
+   Actions for PR #354 completed successfully before merge.
 
    **Halt conditions:**
    - The implementation requires adding Cargo dependencies or editing any Cargo
