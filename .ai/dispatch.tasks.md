@@ -8156,3 +8156,41 @@ is the only safeguard against selector drift.
    - `cargo +nightly fmt --all -- --check` if any manifest formatting command
      or Rust formatting-relevant change is made.
    - `git diff --check`.
+
+91. **Harden guarded automation monitor-response parsing.**
+   Close the false-abort gap observed during ISSUE-329, where
+   `Invoke-AiDispatchGuard.ps1` killed an otherwise scoped run after Claude's
+   monitor response tripped `ConvertFrom-Json` with `Invalid JSON primitive:
+   ok`. The guard already handles bare `ok` / `abort` and an unquoted verdict
+   token; this task should make the parser tolerate a recognizable verdict even
+   when another field, especially `reason`, is malformed.
+
+   **Allowed file surface**:
+   - MAY edit `Invoke-AiDispatchGuard.ps1`.
+   - MAY edit `tools/dispatch-tests/GuardSafetyMonitor.Tests.ps1`.
+   - MAY edit `AI_DISPATCH_AUTOMATION.md` only if a short operator-facing note
+     is useful.
+   - MAY edit `Status.md`, `HANDOFF.md`, and `change.md`.
+   - MAY edit `.ai/dispatch.tasks.md` only to mark this task done.
+   - MUST NOT edit Rust source/tests, Cargo manifests, workflows, scheduler
+     config, queue/loop/auto publish semantics, architecture lints, or
+     unrelated automation scripts.
+
+   **Required behavior**:
+   - Preserve strict JSON parsing for valid monitor responses.
+   - Preserve existing fail-safe abort behavior for truly unrecognizable
+     malformed monitor output.
+   - Accept and normalize object-like responses that contain a recognizable
+     `verdict` of `ok` or `abort` even if `ConvertFrom-Json` fails because a
+     non-verdict field is malformed, such as a quoted verdict with an unquoted
+     primitive `reason`.
+   - Keep `abort` verdicts authoritative; do not accidentally convert malformed
+     abort responses into ok.
+   - Add focused Pester coverage for strict JSON ok/abort, bare ok/abort,
+     unquoted verdict token, quoted verdict with malformed reason, and
+     unrecognizable malformed output.
+
+   **Verification required**:
+   - Focused `Invoke-Pester` for `GuardSafetyMonitor.Tests.ps1`.
+   - Full `Invoke-Pester -Path .\tools\dispatch-tests` if practical.
+   - `git diff --check`.
