@@ -583,6 +583,95 @@ fn command_palette_filter_orders_exact_word_matches_before_longer_matches() {
 }
 
 #[test]
+fn command_palette_filter_fuzzy_matches_label_shortcut_and_command_id() {
+    let entries = vec![
+        pe(
+            "File: Save As New Project",
+            Some("Ctrl+Shift+S"),
+            Command::SaveAs,
+            true,
+        ),
+        toggle(true),
+        open(true),
+    ];
+    let labels = |filter: &str| -> Vec<&str> {
+        filter_command_palette_entries(&entries, filter)
+            .into_iter()
+            .map(|entry| entry.label.as_str())
+            .collect()
+    };
+
+    assert_eq!(
+        labels("snp"),
+        vec!["File: Save As New Project"],
+        "ordered-subsequence matching works over labels"
+    );
+    assert_eq!(
+        labels("csp"),
+        vec!["View: Command Palette"],
+        "ordered-subsequence matching works over shortcut display"
+    );
+    assert_eq!(
+        labels("tgcp"),
+        vec!["View: Command Palette"],
+        "ordered-subsequence matching works over command diagnostic ids"
+    );
+}
+
+#[test]
+fn command_palette_filter_keeps_exact_prefix_and_substring_before_fuzzy() {
+    let entries = vec![
+        pe("Tools: Smart Vector", None, Command::OpenFile, true),
+        pe("Tools: Autosave", None, Command::OpenFile, true),
+        pe("Tools: Saver Options", None, Command::OpenFile, true),
+        save(true),
+    ];
+
+    let labels: Vec<&str> = filter_command_palette_entries(&entries, "save")
+        .into_iter()
+        .map(|entry| entry.label.as_str())
+        .collect();
+    assert_eq!(
+        labels,
+        vec![
+            "File: Save",
+            "Tools: Saver Options",
+            "Tools: Autosave",
+            "Tools: Smart Vector",
+        ],
+        "exact, prefix, and substring matches stay ahead of fuzzy-only matches"
+    );
+}
+
+#[test]
+fn command_palette_filter_orders_fuzzy_matches_by_compactness() {
+    let entries = vec![
+        pe("A: Sample Value", None, Command::OpenFile, true),
+        pe("A: S Value", None, Command::OpenFile, true),
+    ];
+
+    let labels: Vec<&str> = filter_command_palette_entries(&entries, "sv")
+        .into_iter()
+        .map(|entry| entry.label.as_str())
+        .collect();
+    assert_eq!(
+        labels,
+        vec!["A: S Value", "A: Sample Value"],
+        "more compact fuzzy matches sort first before original-order fallback"
+    );
+}
+
+#[test]
+fn command_palette_filter_keeps_unmatched_fuzzy_queries_empty() {
+    let entries = vec![save(true), open(true), toggle(true)];
+
+    assert!(
+        filter_command_palette_entries(&entries, "zzzzzz").is_empty(),
+        "a query still needs every term to match at least one searchable field"
+    );
+}
+
+#[test]
 fn command_palette_selection_uses_first_enabled_row_when_needed() {
     let entries = vec![save(false), toggle(true), open(true)];
     let filtered_entries = refs(&entries);

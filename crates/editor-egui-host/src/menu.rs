@@ -174,7 +174,8 @@ pub(crate) fn command_palette_entries(
 /// or change command execution. Each whitespace-separated term must match the
 /// menu-path label, shortcut display, or command diagnostic id. Matching entries
 /// are ordered by deterministic, simple relevance: exact word/field match,
-/// prefix match, substring match, then original menu order.
+/// prefix match, substring match, fuzzy ordered-subsequence match, then
+/// original menu order.
 pub(crate) fn filter_command_palette_entries<'a>(
     entries: &'a [ProjectedCommandPaletteEntry],
     filter: &str,
@@ -187,7 +188,11 @@ pub(crate) fn filter_command_palette_entries<'a>(
         return entries.iter().collect();
     }
 
-    let mut matches: Vec<(usize, usize, &ProjectedCommandPaletteEntry)> = entries
+    let mut matches: Vec<(
+        CommandPaletteMatchScore,
+        usize,
+        &ProjectedCommandPaletteEntry,
+    )> = entries
         .iter()
         .enumerate()
         .filter_map(|(index, entry)| {
@@ -302,41 +307,123 @@ pub(crate) fn command_palette_row_is_selected(
 fn command_palette_match_score(
     entry: &ProjectedCommandPaletteEntry,
     terms: &[String],
-) -> Option<usize> {
+) -> Option<CommandPaletteMatchScore> {
     let diagnostic_id = entry.command.diagnostic_id();
     let fields = [
-        entry.label.as_str(),
-        entry.shortcut.as_deref().unwrap_or_default(),
-        diagnostic_id.as_str(),
+        (0, entry.label.as_str()),
+        (1, entry.shortcut.as_deref().unwrap_or_default()),
+        (2, diagnostic_id.as_str()),
     ];
-    let mut score = entry.label.len();
+    let mut worst_class = 0;
+    let mut class_sum = 0;
+    let mut gap_sum = 0;
+    let mut span_sum = 0;
+    let mut field_sum = 0;
     for term in terms {
         let best = fields
             .iter()
-            .filter_map(|field| command_palette_field_match_rank(field, term))
+            .filter_map(|(priority, field)| {
+                command_palette_field_match_score(field, term, *priority)
+            })
             .min()?;
-        score += best * 100;
+        worst_class = worst_class.max(best.match_class);
+        class_sum += best.match_class;
+        gap_sum += best.gap_count;
+        span_sum += best.span_len;
+        field_sum += best.field_priority;
     }
-    Some(score)
+    Some(CommandPaletteMatchScore {
+        worst_class,
+        class_sum,
+        gap_sum,
+        span_sum,
+        field_sum,
+        label_len: entry.label.len(),
+    })
 }
 
-fn command_palette_field_match_rank(field: &str, term: &str) -> Option<usize> {
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct CommandPaletteMatchScore {
+    worst_class: usize,
+    class_sum: usize,
+    gap_sum: usize,
+    span_sum: usize,
+    field_sum: usize,
+    label_len: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct CommandPaletteTermScore {
+    match_class: usize,
+    gap_count: usize,
+    span_len: usize,
+    field_priority: usize,
+}
+
+fn command_palette_field_match_score(
+    field: &str,
+    term: &str,
+    field_priority: usize,
+) -> Option<CommandPaletteTermScore> {
     let field = field.to_ascii_lowercase();
     if field == term
         || field
             .split(|ch: char| !ch.is_ascii_alphanumeric())
             .any(|word| word == term)
     {
-        return Some(0);
+        return Some(CommandPaletteTermScore {
+            match_class: 0,
+            gap_count: 0,
+            span_len: 0,
+            field_priority,
+        });
     }
     if field.starts_with(term)
         || field
             .split(|ch: char| !ch.is_ascii_alphanumeric())
             .any(|word| word.starts_with(term))
     {
-        return Some(1);
+        return Some(CommandPaletteTermScore {
+            match_class: 1,
+            gap_count: 0,
+            span_len: 0,
+            field_priority,
+        });
     }
-    field.contains(term).then_some(2)
+    if field.contains(term) {
+        return Some(CommandPaletteTermScore {
+            match_class: 2,
+            gap_count: 0,
+            span_len: 0,
+            field_priority,
+        });
+    }
+    let (gap_count, span_len) = command_palette_fuzzy_span(&field, term)?;
+    Some(CommandPaletteTermScore {
+        match_class: 3,
+        gap_count,
+        span_len,
+        field_priority,
+    })
+}
+
+fn command_palette_fuzzy_span(field: &str, term: &str) -> Option<(usize, usize)> {
+    let mut first = None;
+    let mut last = 0;
+    let mut search_start = 0;
+    for term_byte in term.bytes() {
+        let field_tail = field.as_bytes().get(search_start..)?;
+        let offset = field_tail
+            .iter()
+            .position(|field_byte| *field_byte == term_byte)?;
+        let index = search_start + offset;
+        first.get_or_insert(index);
+        last = index;
+        search_start = index + 1;
+    }
+    let first = first?;
+    let span_len = last - first + 1;
+    Some((span_len.saturating_sub(term.len()), span_len))
 }
 
 /// Register an extension-provided entry against any declared main-menu extension
