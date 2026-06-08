@@ -749,6 +749,23 @@ Until **at least one** of those fires, treat the reflection substrate as observe
 
 **Non-goals preserved.** This reconciliation does not register, arm, or modify scheduler state; does not create a standing `PublishMode main` authorization; does not change default publish mode, queue policy, guard policy, task selection, or `.ai/dispatch.tasks.md`; and does not change source, Cargo, workflow, automation, schema, or scheduler files.
 
+### 2026-06-08 - Command palette fuzzy matching
+
+**Forward-only follow-up (MENU-COMMAND-PALETTE-FUZZY).** Closes the command-palette fuzzy matching/scoring gap in the existing `editor-egui-host` palette filter without inventing a second command model or changing activation routing. The palette still filters the already-projected menu rows and still returns commands for host-side `MenuCommandHandoff` enqueueing.
+
+**Now shipped - deterministic fuzzy search.**
+- `filter_command_palette_entries()` still returns blank filters in original projected menu order.
+- Non-blank filters still require every whitespace-separated term to match the same row across menu-path label, shortcut display, or `Command::diagnostic_id()`.
+- Exact word/field, prefix, and substring matches remain ranked ahead of fuzzy ordered-subsequence matches.
+- Fuzzy matches use a deterministic score key based on match class, fuzzy gap/span compactness, matched field priority, label length, and original menu order.
+- Fuzzy matching covers label text, shortcut display such as `Ctrl+Shift+P`, and diagnostic ids such as `toggle_command_palette`.
+- Host tests pin label/shortcut/diagnostic-id fuzzy-only matches, exact/prefix/substring outranking fuzzy-only matches, stable fuzzy compactness ordering, and no-match behavior.
+- The cohesive host-menu test module now carries a file-local `// SPLIT-EXEMPTION:` annotation because the added palette coverage takes it past the 1000-line architecture-lint threshold; no architecture-lint rule/config behavior changed.
+
+**Still open - explicitly NOT closed here:** command history, a separate command model, plugin runtime/action execution beyond FIFO enqueue, host->shell FIFO replacement, keybinding editor, generalized conflict-resolution UI, Cargo, scheduler, architecture-lint rule/config behavior, dispatch automation behavior, and task arming.
+
+**Scope:** `editor-egui-host` palette filter helpers/tests plus top-level status docs and task-list bookkeeping; no `editor-ui`, no `editor-shell`, no plugin runtime, no Cargo/workflow/scheduler/automation behavior.
+
 ### 2026-06-07 - Command palette keyboard navigation polish
 
 **Forward-only follow-up (MENU-COMMAND-PALETTE-KEYBOARD-NAV).** Narrows the remaining command-palette keyboard usability gap without introducing fuzzy scoring, command history, a separate command model, or a new execution path. The palette still operates over the already-projected menu rows and still returns commands for `MenuCommandHandoff` enqueueing by the host.
