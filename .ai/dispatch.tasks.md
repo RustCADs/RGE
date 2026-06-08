@@ -8240,3 +8240,63 @@ is the only safeguard against selector drift.
    - `git diff --check`.
    - Confirm the tracked diff contains no Rust source/test changes and no
      `Cargo.toml` / `Cargo.lock` changes.
+
+93. **Implement explicit default clean-release package-set gate (candidate C from ISSUE-333).**
+   Candidate C from the ISSUE-333 audit is now the next clean-release
+   remediation. Implement a documented, machine-readable default release
+   package set for the clean-release measurement path so the default release
+   build excludes the wasm scripting stack while wasm/script coverage remains
+   explicitly visible.
+
+   **Allowed file surface**:
+   - MAY edit `tools/compile-timing.ps1`.
+   - MAY add one small helper under `tools/` if a separate package-set helper is
+     cleaner than embedding the list directly in `compile-timing.ps1`.
+   - MAY edit `.ai/dispatch.verify.ps1`, `.github/workflows/tests.yml`, and
+     `.github/workflows/bench.yml` only if needed to keep default-package-set
+     and explicit wasm/script opt-in coverage consistent.
+   - MAY edit `plans/BASELINE.md`, `Status.md`, `HANDOFF.md`, and `change.md`.
+   - MAY edit `.ai/dispatch.tasks.md` only to mark this task done or
+     done-blocked after the result is recorded.
+   - MAY create and remove an isolated scratch target under `B:\sdk`.
+   - MUST NOT edit Rust source/tests, `Cargo.toml`, `Cargo.lock`, dependency
+     feature flags, architecture lints, scheduler config, queue/loop publish
+     semantics, or shared `A:\RustCache\target` contents.
+   - MUST NOT run `cargo clean`.
+
+   **Required behavior**:
+   - Define a default release package set for clean-release measurements that
+     excludes exactly these wasm scripting packages from the default release
+     build: `rge-runtime-wasmtime`, `rge-runtime-wasmtime-engine`,
+     `rge-script-host`, `rge-expr-wasm`, and `rge-script-bench`.
+   - Make an explicit include/exclude decision for `rge-tool-wasm-bench`; record
+     the rationale. It currently has an empty dependency table and does not pull
+     `wasmtime`, but the wasm-named tool must not be left implicit.
+   - Do not rely on Cargo workspace `default-members` as the only mechanism:
+     `cargo build --workspace --release` still selects every workspace member.
+     The clean-release command must become an explicit package-set build or a
+     documented equivalent that actually excludes the wasm scripting packages.
+   - Update the documented Phase 9 clean-release measurement command away from
+     `cargo build --workspace --release` to the new default package-set command.
+   - Preserve explicit opt-in coverage for the excluded wasm stack. If any
+     verify or workflow command is narrowed from full workspace to the default
+     package set, add explicit checks for the excluded packages and keep
+     `cargo bench -p rge-script-bench --no-run` visible.
+   - Record whether the new default package-set clean release measurement
+     passes or misses the section 13.3 <=120s clean-build budget if a fresh
+     isolated-target measurement is run. If the measurement cannot be run within
+     this dispatch, record the exact command that must be run next and do not
+     claim budget closure.
+
+   **Verification required**:
+   - PowerShell parser validation for every edited `.ps1` file.
+   - A command-level proof that the default package set excludes the five wasm
+     scripting packages and resolves every included package name against
+     `cargo metadata --format-version 1 --no-deps`.
+   - If the implementation adds or changes a dry-run/list mode, run it and show
+     the generated `cargo build --release -p ...` command.
+   - If a fresh isolated-target measurement is run, use a target under `B:\sdk`,
+     do not wipe shared caches, and remove the scratch target after recording
+     the result.
+   - Run any newly added focused Pester tests.
+   - `git diff --check`.
