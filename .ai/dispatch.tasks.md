@@ -8110,7 +8110,7 @@ is the only safeguard against selector drift.
    - `cargo +nightly fmt --all -- --check` if Rust files change.
    - `git diff --check`.
 
-90. **Phase 9 clean release `cranelift-codegen` package opt-level experiment.**
+90. **[DONE-BLOCKED 2026-06-08 via ISSUE-329 failed experiment - `opt-level = 1` worsened clean release to `178.4s` total / Cargo `2m 58s`, with `cranelift-codegen` still the critical-path tail at `148.38s`; override reverted, clean-build gate remains MISS] Phase 9 clean release `cranelift-codegen` package opt-level experiment.**
    Execute remediation candidate A from the ISSUE-322 clean-release hotspot
    attribution: test whether lowering only the release profile for
    `cranelift-codegen` removes the 125.64s critical-path long pole enough to

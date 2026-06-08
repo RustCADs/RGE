@@ -1,0 +1,19 @@
+{
+  "schema_version": "handoff-sidecar-v1",
+  "dispatch_id": "ISSUE-329",
+  "packet_type": "EXEC",
+  "author": "Executor / Codex salvage after guard abort",
+  "timestamp": "2026-06-08_05-14-06+0300",
+  "related_files": [
+    "plans/BASELINE.md",
+    "Status.md",
+    "HANDOFF.md",
+    "change.md",
+    ".ai/dispatch.tasks.md",
+    "Cargo.toml"
+  ],
+  "status": "COMPLETE",
+  "handoff_status": "COMPLETE",
+  "next_role": "CONTROL_AI",
+  "exit_code": 0
+}
