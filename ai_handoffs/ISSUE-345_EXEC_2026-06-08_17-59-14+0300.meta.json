@@ -1,0 +1,23 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-345",
+    "packet_type": "EXEC",
+    "author": "Executor / Codex",
+    "timestamp": "2026-06-08_17-59-14+0300",
+    "related_files": [
+                          "crates/editor-egui-host/src/lib.rs - added host-local recent id storage and records palette activations at the existing enqueue point.",
+                          "crates/editor-egui-host/src/menu.rs - added the recent-list cap/recorder and recent-aware blank-filter ordering.",
+                          "crates/editor-egui-host/src/menu_tests.rs - added focused `command_palette_recent_*` tests.",
+                          "plans/BASELINE.md - added the forward ISSUE-345 recent-ordering baseline section.",
+                          "Status.md - prepended the ISSUE-345 implementation snapshot.",
+                          "HANDOFF.md - prepended the ISSUE-345 implementation snapshot.",
+                          "change.md - appended the ISSUE-345 chronological change and verification entry.",
+                          ".ai/dispatch.tasks.md - marked task 100 done and recorded the implemented cap/behavior.",
+                          "ai_handoffs/ISSUE-345_EXEC_2026-06-08_17-59-14+0300.md - this execution report.",
+                          "ai_handoffs/ISSUE-345_EXEC_2026-06-08_17-59-14+0300.meta.json - finalize sidecar for this execution report."
+                      ],
+    "status": "AWAITING_REVIEW",
+    "handoff_status": "COMPLETE",
+    "next_role": "REVIEWER_AI",
+    "exit_code": 0
+}

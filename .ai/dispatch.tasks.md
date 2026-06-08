@@ -8574,11 +8574,19 @@ is the only safeguard against selector drift.
    same-phase retry behavior, execution, control review, queue publish modes,
    scheduler config, and sandbox routing are unchanged.
 
-100. **Add host-local recent-command ordering to the command palette.**
+100. **[x] DONE - Add host-local recent-command ordering to the command palette.**
    Implement the smallest command-history slice for the existing
    `editor-egui-host` command palette. The history is host-local, in-memory,
    and derived from the current projected menu entries; it must not introduce a
    second command model or persistent storage.
+
+   Completed via ISSUE-345. `EguiHost` now records successful command-palette
+   activations by `Command::diagnostic_id()` into a host-local, in-memory,
+   most-recent-first list capped at 16 ids. Blank or whitespace-only filters
+   promote currently projected, enabled recent commands first, then append all
+   remaining projected rows in their existing order. Stale ids are ignored,
+   disabled recent rows are not promoted, and non-blank task-98 fuzzy scoring is
+   unchanged.
 
    **Scope / MAY edit:**
    - `crates/editor-egui-host/src/lib.rs`
@@ -8596,7 +8604,7 @@ is the only safeguard against selector drift.
 
    **Done-criterion:** `EguiHost` records successful command-palette
    activations by stable `Command::diagnostic_id()` into a bounded
-   most-recent-first list (capacity 8 is enough), de-duplicates by moving an
+   most-recent-first list (capacity 16), de-duplicates by moving an
    existing id to the front, and uses only the current
    `command_palette_entries(&main_menu)` projection to render/activate entries.
    Blank-filter palette ordering should place currently available recent

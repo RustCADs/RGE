@@ -749,6 +749,23 @@ Until **at least one** of those fires, treat the reflection substrate as observe
 
 **Non-goals preserved.** This reconciliation does not register, arm, or modify scheduler state; does not create a standing `PublishMode main` authorization; does not change default publish mode, queue policy, guard policy, task selection, or `.ai/dispatch.tasks.md`; and does not change source, Cargo, workflow, automation, schema, or scheduler files.
 
+### 2026-06-08 - Command palette recent ordering
+
+**Forward-only follow-up (MENU-COMMAND-PALETTE-RECENT).** Closes the smallest command-history slice for the existing `editor-egui-host` command palette without persisting state, adding a second command model, or changing activation routing. The palette still operates over current menu projection rows and still returns commands for host-side `MenuCommandHandoff` enqueueing.
+
+**Now shipped - host-local recent ordering for blank filters.**
+- `EguiHost` owns an in-memory most-recent-first list of command-palette activation ids, stored as `Command::diagnostic_id()` strings and capped at 16.
+- Successful command-palette activations record the id at the existing palette return -> `MenuCommandHandoff` enqueue point. Main-menu activations do not update palette recents.
+- Re-recording an existing id moves it to the front without duplication, then the list is truncated to the cap.
+- Blank or whitespace-only filters promote currently projected, enabled recent commands first, in recent-list order, then append every remaining projected row in original order.
+- Stale recent ids are ignored. Disabled recent rows are not promoted, but remain visible in the original-order remainder when still projected.
+- Non-blank filters ignore recency and keep the task-98 exact word/field, prefix, substring, fuzzy ordered-subsequence score ordering and original-order tie-breaks.
+- Host tests pin bounded de-duplication, stale-id ignoring, blank-filter recent ordering, disabled-row remainder behavior, and unchanged non-blank fuzzy ordering with recents present.
+
+**Still open - explicitly NOT closed here:** persistent command history/favorites, a second command model, plugin runtime/action execution beyond FIFO enqueue, host->shell FIFO replacement, keybinding editor, generalized conflict-resolution UI, Cargo, scheduler, architecture-lint rule/config behavior, dispatch automation behavior, and task arming.
+
+**Scope:** `editor-egui-host` palette state/filter helpers/tests plus top-level status docs and task-list bookkeeping; no `editor-ui`, no `editor-shell`, no plugin runtime, no persistence, no Cargo/workflow/scheduler/automation behavior.
+
 ### 2026-06-08 - Command palette fuzzy matching
 
 **Forward-only follow-up (MENU-COMMAND-PALETTE-FUZZY).** Closes the command-palette fuzzy matching/scoring gap in the existing `editor-egui-host` palette filter without inventing a second command model or changing activation routing. The palette still filters the already-projected menu rows and still returns commands for host-side `MenuCommandHandoff` enqueueing.
