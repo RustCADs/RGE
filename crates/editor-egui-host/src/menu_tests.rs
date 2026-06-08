@@ -22,6 +22,9 @@
 //! into the `menu` submodule (hence the `crate::menu::` paths below), keeping
 //! `lib.rs` under the cap.
 
+use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use rge_editor_ui::menus::{
     default_editor_menu, file_menu_point, plugins_menu_point, Command, Key, MenuEntry, Modifiers,
     PredicateContext, RegistryError, Shortcut,
@@ -36,6 +39,10 @@ use crate::menu::{
     selected_command_palette_entry, take_command_palette_search_focus_request,
     CommandPaletteSelectionDirection, ProjectedCommandPaletteEntry,
     COMMAND_PALETTE_RECENT_COMMAND_LIMIT,
+};
+use crate::palette_recent::{
+    enqueue_command_palette_activation, load_command_palette_recent_command_ids,
+    load_command_palette_recent_command_ids_or_empty, save_command_palette_recent_command_ids,
 };
 
 type PaletteEntry = ProjectedCommandPaletteEntry;
@@ -94,6 +101,18 @@ fn toggle(enabled: bool) -> PaletteEntry {
 
 fn refs(entries: &[PaletteEntry]) -> Vec<&PaletteEntry> {
     entries.iter().collect()
+}
+
+fn command_palette_recent_temp_root(test_name: &str) -> PathBuf {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time should be after UNIX_EPOCH")
+        .as_nanos();
+    std::env::temp_dir().join(format!(
+        "rge_editor_egui_host_{test_name}_{}_{}",
+        std::process::id(),
+        stamp
+    ))
 }
 
 fn assert_sel(e: &[&PaletteEntry], current: Option<usize>, expected: Option<usize>, msg: &str) {
@@ -596,6 +615,181 @@ fn command_palette_recent_records_most_recent_ids_with_cap_and_deduplication() {
         !recent.contains(&"cmd_02".to_owned()),
         "recording a fresh id beyond the cap drops the oldest retained id"
     );
+}
+
+#[test]
+fn command_palette_recent_persistence_round_trips_ids_only() {
+    let root = command_palette_recent_temp_root("round_trips");
+    let path = root.join("recent.txt");
+    let recent = vec![
+        Command::Save.diagnostic_id(),
+        Command::OpenFile.diagnostic_id(),
+        Command::ToggleCommandPalette.diagnostic_id(),
+    ];
+
+    save_command_palette_recent_command_ids(&path, &recent).expect("save recents");
+
+    assert_eq!(
+        std::fs::read_to_string(&path).expect("read persisted recents"),
+        "save\nopen_file\ntoggle_command_palette\n",
+        "the file stores only diagnostic id strings, one per line"
+    );
+    assert_eq!(
+        load_command_palette_recent_command_ids(&path).expect("load recents"),
+        recent
+    );
+
+    drop(std::fs::remove_dir_all(root));
+}
+
+#[test]
+fn command_palette_recent_persistence_caps_and_deduplicates_ids() {
+    let root = command_palette_recent_temp_root("caps_and_deduplicates");
+    let path = root.join("recent.txt");
+    let mut recent: Vec<String> = (0..(COMMAND_PALETTE_RECENT_COMMAND_LIMIT + 4))
+        .map(|index| format!("cmd_{index:02}"))
+        .collect();
+    recent.insert(2, "cmd_00".to_owned());
+
+    save_command_palette_recent_command_ids(&path, &recent).expect("save recents");
+    let loaded = load_command_palette_recent_command_ids(&path).expect("load recents");
+    let expected: Vec<String> = (0..COMMAND_PALETTE_RECENT_COMMAND_LIMIT)
+        .map(|index| format!("cmd_{index:02}"))
+        .collect();
+
+    assert_eq!(
+        loaded, expected,
+        "persisted recents keep first-seen most-recent order, dedupe, and stay capped"
+    );
+
+    drop(std::fs::remove_dir_all(root));
+}
+
+#[test]
+fn command_palette_recent_missing_unreadable_or_corrupt_persistence_is_nonfatal() {
+    let root = command_palette_recent_temp_root("nonfatal_load");
+    let missing = root.join("missing.txt");
+    let unreadable = root.join("as-directory");
+    let corrupt = root.join("corrupt.txt");
+    std::fs::create_dir_all(&unreadable).expect("create unreadable directory path");
+    std::fs::write(&corrupt, "save\nbad id\n").expect("write corrupt recents");
+
+    assert!(
+        load_command_palette_recent_command_ids_or_empty(&missing).is_empty(),
+        "missing recents fall back to empty"
+    );
+    assert!(
+        load_command_palette_recent_command_ids_or_empty(&unreadable).is_empty(),
+        "unreadable recents fall back to empty"
+    );
+    assert!(
+        load_command_palette_recent_command_ids(&corrupt).is_err(),
+        "corrupt recents are detected"
+    );
+    assert!(
+        load_command_palette_recent_command_ids_or_empty(&corrupt).is_empty(),
+        "corrupt recents fall back to empty at the host boundary"
+    );
+
+    drop(std::fs::remove_dir_all(root));
+}
+
+#[test]
+fn command_palette_recent_persisted_stale_and_disabled_ids_are_not_promoted() {
+    let root = command_palette_recent_temp_root("stale_disabled");
+    let path = root.join("recent.txt");
+    let persisted = vec![
+        "missing_command".to_owned(),
+        Command::Save.diagnostic_id(),
+        Command::ToggleCommandPalette.diagnostic_id(),
+    ];
+    save_command_palette_recent_command_ids(&path, &persisted).expect("save recents");
+    let recents = load_command_palette_recent_command_ids(&path).expect("load recents");
+    let entries = vec![save(false), open(true), toggle(true)];
+
+    let labels: Vec<&str> = filter_command_palette_entries_with_recents(&entries, "", &recents)
+        .into_iter()
+        .map(|entry| entry.label.as_str())
+        .collect();
+
+    assert_eq!(
+        labels,
+        vec!["View: Command Palette", "File: Save", "File: Open"],
+        "only enabled persisted ids are promoted; stale ids are ignored and disabled ids remain in the original-order remainder"
+    );
+
+    drop(std::fs::remove_dir_all(root));
+}
+
+#[test]
+fn command_palette_recent_palette_activation_records_saves_and_enqueues() {
+    let root = command_palette_recent_temp_root("activation_saves");
+    let path = root.join("recent.txt");
+    let menu_commands = MenuCommandHandoff::new();
+    let mut recent = Vec::new();
+
+    enqueue_command_palette_activation(&menu_commands, &mut recent, &path, Command::Save);
+
+    assert_eq!(recent, vec![Command::Save.diagnostic_id()]);
+    assert_eq!(
+        load_command_palette_recent_command_ids(&path).expect("load recents"),
+        vec![Command::Save.diagnostic_id()],
+        "successful palette activation saves the recorded diagnostic id"
+    );
+    assert_eq!(
+        menu_commands.drain(),
+        vec![Command::Save],
+        "palette activation still enqueues through the menu-command handoff"
+    );
+
+    drop(std::fs::remove_dir_all(root));
+}
+
+#[test]
+fn command_palette_recent_unwritable_save_does_not_block_palette_dispatch() {
+    let root = command_palette_recent_temp_root("unwritable_save");
+    let path = root.join("recent-directory");
+    std::fs::create_dir_all(&path).expect("create directory at recents path");
+    let menu_commands = MenuCommandHandoff::new();
+    let mut recent = Vec::new();
+
+    enqueue_command_palette_activation(&menu_commands, &mut recent, &path, Command::OpenFile);
+
+    assert_eq!(recent, vec![Command::OpenFile.diagnostic_id()]);
+    assert_eq!(
+        menu_commands.drain(),
+        vec![Command::OpenFile],
+        "save failure is nonfatal and command dispatch still happens"
+    );
+
+    drop(std::fs::remove_dir_all(root));
+}
+
+#[test]
+fn command_palette_recent_main_menu_activation_does_not_record_or_persist() {
+    let root = command_palette_recent_temp_root("main_menu_non_recording");
+    let path = root.join("recent.txt");
+    let menu_commands = MenuCommandHandoff::new();
+    let recent = vec![Command::ToggleCommandPalette.diagnostic_id()];
+
+    menu_commands.push(Command::Save);
+
+    assert_eq!(
+        recent,
+        vec![Command::ToggleCommandPalette.diagnostic_id()],
+        "main-menu activation does not mutate command-palette recents"
+    );
+    assert!(
+        !path.exists(),
+        "main-menu activation does not create the command-palette recent file"
+    );
+    assert_eq!(
+        menu_commands.drain(),
+        vec![Command::Save],
+        "main menu still uses the existing menu-command handoff path"
+    );
+
+    drop(std::fs::remove_dir_all(root));
 }
 
 #[test]
