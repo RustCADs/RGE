@@ -616,7 +616,7 @@ invariant.
 | `-Goal` | string | — | Mandatory in the `GoalText` set. The task goal in plain language. |
 | `-GoalFile` | string | — | Mandatory in the `GoalFile` set. Path to a file holding the goal. |
 | `-ResumeApprovedTask` | switch | — | Mandatory switch of the `ResumeTask` set. Selects resume mode. |
-| `-MaxPlanRevisions` | int 0–5 | `1` | Max Codex re-plan rounds if the executor gate returns `needs_changes`. |
+| `-MaxPlanRevisions` | int 0–5 | `1` | Max Codex re-plan rounds if the executor gate returns `needs_changes`. Prior executor gate-review prose injected into a revision prompt is capped to the last 20,000 characters with an explicit truncation notice so verbose gate output cannot exceed Codex input limits. |
 | `-MaxCorrectionRounds` | int 0–5 | `1` | Max CORRECTION→re-execute rounds if Codex controls `needs_changes`. |
 | `-ClaudePermissionMode` | enum | `acceptEdits` | One of `acceptEdits`/`auto`/`bypassPermissions`/`default`/`dontAsk`/`plan`. Used for the *execution* call (the gate call is always `plan`). |
 | `-CodexModel` | string | `''` | Optional `--model` override for `codex`. |
@@ -708,7 +708,7 @@ $script:GoalText
 
 Revision number: $RevisionNumber
 
-Prior Claude gate result, if any:
+Prior executor gate result, if any:
 
 $gateContext
 
@@ -752,8 +752,8 @@ Rules:
 
 Placeholders: `$taskRel` = repo-relative path of the scaffolded TASK packet;
 `$script:GoalText` = the `-Goal`/`-GoalFile` text; `$RevisionNumber` = 0-based
-revision index; `$gateContext` = the prior Claude gate prose/marker record, or
-`No prior Claude gate.` on revision 0.
+revision index; `$gateContext` = the prior executor gate prose/marker record
+capped to the last 20,000 characters, or `No prior executor gate.` on revision 0.
 
 ### 10.2 Claude — plan gate (permission mode: `plan`)
 

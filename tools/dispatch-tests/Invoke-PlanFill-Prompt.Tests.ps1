@@ -107,6 +107,13 @@ Describe 'Invoke-PlanFill planner prompt (ISSUE-226 header/footer contract)' {
         $script:PlanFillRegion | Should -Match 'brace\s+expansion'
         $script:PlanFillRegion | Should -Match 'UNCHECKED'
     }
+
+    It 'caps prior executor gate context before revision prompt injection' {
+        $script:LoopScriptText | Should -Match '\$script:PlanRevisionGateContextMaxChars\s*=\s*20000'
+        $script:LoopScriptText | Should -Match 'function Limit-PlanRevisionGateContext'
+        $script:PlanFillRegion | Should -Match 'Limit-PlanRevisionGateContext\s+-Text'
+        $script:PlanFillRegion | Should -Match 'Prior executor gate result'
+    }
 }
 
 Describe 'TASK_PACKET template ADR-121 advisory envelope' {
