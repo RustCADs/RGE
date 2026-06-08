@@ -1695,7 +1695,7 @@ All four Phase 3 formal exit criteria **CLOSED** per IMPLEMENTATION.md §3 (2026
 - **`cargo bench` not wired in CI** — formal Phase 3 perf gates unrun (Option E addresses)
 - **WASM cold-start baseline (904µs) measured on wasmtime 23**, not re-validated post bump to 44 — small re-run task
 - **`crates/io-3mf` exists as the `rge-io-3mf` stub crate** (PLAN §1.6.5) — the crate is in the workspace but intentionally still a stub; real 3MF parser/exporter implementation remains deferred until format-handler implementation pressure appears (supersedes the earlier "entirely missing" wording)
-- **kernel/ecs snapshot warning routing** — currently uses `tracing::warn!` for unregistered components; could route through `&mut dyn DiagnosticSink` (deferred to align with future broader diagnostic-routing pass)
+- ~~**kernel/ecs snapshot warning routing**~~ **CLOSED 2026-06-08 (ISSUE-324 / PR #325)** — `World::restore_from_snapshot_with_diagnostics(&mut self, bytes, sink)` now preserves the existing `restore_from_snapshot` API while routing skipped unregistered snapshot components through `DiagnosticSink` as `FailureClass::SnapshotRecoverable`; malformed snapshot bytes still return `SnapshotError`.
 - **8 empty `docs/*` subdirectories** (PLAN-mandated placeholders; `.gitkeep` could make them git-trackable but not pressing)
 
 ## How to resume

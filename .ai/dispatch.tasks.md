@@ -8055,7 +8055,7 @@ is the only safeguard against selector drift.
    - `cargo check -p rge-io-3mf` if any Rust file is changed.
    - `git diff --check`.
 
-88. **Route ECS snapshot restore skip warnings through diagnostics.**
+88. **[DONE 2026-06-08 via ISSUE-324 salvage PR #325 - `restore_from_snapshot_with_diagnostics` merged at `95f2c25`; unregistered snapshot components now emit structured `SnapshotRecoverable` warnings through `DiagnosticSink` while `restore_from_snapshot` preserves its signature/behavior] Route ECS snapshot restore skip warnings through diagnostics.**
    Narrow the persistent kernel/ecs snapshot warning-routing gap by adding a
    diagnostics-aware restore path while preserving the existing simple
    `restore_from_snapshot` API.
