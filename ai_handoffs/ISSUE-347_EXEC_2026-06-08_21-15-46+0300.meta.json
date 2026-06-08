@@ -1,0 +1,19 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-347",
+    "packet_type": "EXEC",
+    "author": "Executor / Codex",
+    "timestamp": "2026-06-08_21-15-46+0300",
+    "related_files": [
+                          ".ai/dispatch.tasks.md - marked task 101 done and appended task 102",
+                          "plans/BASELINE.md - added the Phase 9 task-102 selection audit",
+                          "Status.md - prepended the ISSUE-347 selection snapshot",
+                          "HANDOFF.md - prepended the ISSUE-347 selection snapshot",
+                          "change.md - appended the ISSUE-347 change entry",
+                          "ai_handoffs/ISSUE-347_EXEC_2026-06-08_21-15-46+0300.md - this execution report"
+                      ],
+    "status": "AWAITING_REVIEW",
+    "handoff_status": "COMPLETE",
+    "next_role": "REVIEWER_AI",
+    "exit_code": 0
+}

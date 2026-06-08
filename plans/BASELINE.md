@@ -741,6 +741,58 @@ Until **at least one** of those fires, treat the reflection substrate as observe
 4. Cross-check the editor's call graph against the `CommandBus::submit` / `Action::apply` / `Action::revert` signatures to determine whether user-visible CAD mutations can flow through the existing bus.
 5. Test inventory across `editor-*` (`#[test]` count + integration vs unit breakdown + workflow coverage).
 
+### 2026-06-08 - Phase 9 editor-usability task-102 selection audit
+
+**Source-read selection result (ISSUE-347).** Current source supports one
+bounded next implementation task: add an editor-shell extension-command
+executor seam for already-captured `Command::Custom` / `Command::Plugin`
+menu activations. This is intentionally smaller than real plugin runtime,
+discovery, loading, sandboxing, or generalized registry execution.
+
+**Current evidence.**
+- `git grep -n "pub fn route_menu_command" -- crates/editor-* editor/`
+  returns exactly one definition:
+  `crates/editor-shell/src/render_path.rs:415`. The surrounding source is
+  inside `impl EditorShell`; the correct ownership is
+  `EditorShell::route_menu_command`.
+- `git grep -n -E "drain_extension_menu_commands|extension_menu_commands|future plugin/action executor|extension menu command captured" -- crates/editor-shell/src/lifecycle/mod.rs crates/editor-shell/src/render_path.rs crates/editor-shell/src/lifecycle/tests.rs`
+  shows the current FIFO, the one-shot drain, and the test that proves
+  extension commands are retained for a future executor.
+- `git grep -n -E "PluginHost|PluginContext|runtime-wasmtime|plugin-discovery|rge_kernel_plugin_host|rge-runtime" -- crates/editor-shell editor/rge-editor`
+  exits 1 with no matches. The editor surface has no current plugin runtime,
+  discovery, or loading path to wire in one bounded step.
+
+**Candidate comparison.**
+- Plugin/extension command execution policy beyond capture is the smallest
+  open gap: the menu/host/shell path already carries extension `Command`
+  values to the shell and currently stops at an inert FIFO.
+- Host-shell FIFO/menu-click replacement and generalized registry execution
+  would cut across the menu architecture and command routing model; defer.
+- Conflict resolution/keybinding editor/fatal gating has diagnostics and
+  conflict projection, but a product policy/editor UI is still broader than
+  one small implementation task.
+- Persistent command-palette history/favorites is explicitly open after task
+  100, but persistence/favorites need storage and UX choices; the in-memory
+  recent-ordering slice already shipped.
+- Unsaved quit has dirty-state observation and quit/close handlers, but
+  prompting and graceful shutdown semantics require UI/dialog policy.
+- OS clipboard / typed clipboard remains broader than the shell-local
+  legacy-blob clipboard; typed/CAD identity cloning is explicitly out of the
+  current clipboard path.
+- CAD delete/duplicate/undo integration remains authoritative-content work:
+  current Delete/Duplicate/Cut/Copy/Paste are wrapper-world legacy-blob
+  operations, not CAD graph/projection/render identity mutations through the
+  command bus.
+- Broader camera UI is beyond the current reset/frame/zoom commands; orbit,
+  pan, and richer camera controls need interaction design.
+
+**Selected follow-up.** Task 102 is the editor-shell extension-command
+executor seam. It should define the shell-owned execution policy and test
+FIFO, unhandled, and failure behavior with an injected handler. It must not
+wire real plugin runtime/discovery/loading, add Cargo dependencies, replace
+the host-to-shell menu FIFO, or rename the route-menu owner away from
+`EditorShell::route_menu_command`.
+
 ### 2026-06-07 - First full-automation batch readiness reconciliation
 
 **Docs-only reconciliation after tasks 74-80.** Tasks 74-80 are complete on `main`, and the command-palette keyboard navigation work is complete on `main` including filter-edit selection reset / filter-change reset: search-filter edits restart selection at the first enabled filtered result. This supersedes earlier dated still-open references to richer command-palette keyboard navigation; those older notes remain historical records, not current readiness blockers.

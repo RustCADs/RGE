@@ -8619,7 +8619,7 @@ is the only safeguard against selector drift.
    `cargo test -p rge-editor-egui-host --lib`; `cargo check -p
    rge-editor-egui-host --lib`; `git diff --check`.
 
-101. **Phase 9 editor-usability next-task selection audit.**
+101. **[DONE 2026-06-08 via ISSUE-347 - selected task 102] Phase 9 editor-usability next-task selection audit.**
    Queue is empty after task 100. Run a docs/source-read selection pass and
    choose exactly one bounded Phase 9/editor-usability implementation follow-up
    for task 102, or record `NEEDS_HUMAN` if the evidence does not support a
@@ -8684,3 +8684,117 @@ is the only safeguard against selector drift.
    during task 101, or current docs/source contradict the premise enough that a
    bounded follow-up cannot be defended, record `NEEDS_HUMAN` with evidence
    instead of manufacturing an unsafe task.
+
+102. **Add an editor-shell extension-command executor seam.**
+   Implement the smallest execution-policy step beyond the existing extension
+   command capture FIFO. Current source shows `Command::Custom` and
+   `Command::Plugin` menu activations already reach
+   `EditorShell::route_menu_command`, which captures them into
+   `extension_menu_commands`; task 102 should add the shell-owned seam that can
+   execute those captured commands through an injected handler, without wiring
+   real plugin runtime/discovery/loading.
+
+   **Scope / MAY edit:**
+   - `crates/editor-shell/src/lifecycle/mod.rs`
+   - `crates/editor-shell/src/lifecycle/extension_command.rs` (new, optional)
+   - `crates/editor-shell/src/render_path.rs`
+   - `crates/editor-shell/src/lifecycle/tests.rs`
+   - `plans/BASELINE.md`
+   - `Status.md`
+   - `HANDOFF.md`
+   - `change.md`
+   - `.ai/dispatch.tasks.md`
+   - generated ISSUE-102 handoff/audit/log artifacts for this dispatch only
+
+   **MUST NOT edit:**
+   - `crates/editor-ui/**`
+   - `crates/editor-egui-host/**`
+   - `kernel/plugin-host/**`
+   - `crates/plugin-*`
+   - `plugins/**`
+   - `runtime/**`
+   - Rust source outside the `crates/editor-shell/**` files listed above
+   - Cargo manifests or lockfiles
+   - workflows, dispatch automation scripts, schemas, architecture-lint
+     rules/config, scheduler config, or unrelated generated artifacts
+
+   **Current-state claims / falsification to include in the TASK packet:**
+   - Claim: the current public route-menu command handler is
+     `EditorShell::route_menu_command`.
+     Falsifying searches:
+     `git grep -n "pub fn route_menu_command" -- crates/editor-* editor/`
+     -> exactly one definition in `crates/editor-shell/src/render_path.rs`;
+     `git grep -n -E "impl EditorShell|impl EditorState|route_menu_command" -- crates/editor-shell/src/render_path.rs`
+     -> the definition is inside `impl EditorShell`, with no `impl
+     EditorState` match in that file.
+   - Claim: extension commands are currently captured but not executed.
+     Falsifying search:
+     `git grep -n -E "drain_extension_menu_commands|extension_menu_commands|future plugin/action executor|extension menu command captured" -- crates/editor-shell/src/lifecycle/mod.rs crates/editor-shell/src/render_path.rs crates/editor-shell/src/lifecycle/tests.rs`
+     -> current FIFO field, one-shot drain, capture log, and retention test
+     are present.
+   - Claim: editor-shell currently has no plugin runtime/discovery/loading path
+     to wire safely in this task.
+     Falsifying search:
+     `git grep -n -E "PluginHost|PluginContext|runtime-wasmtime|plugin-discovery|rge_kernel_plugin_host|rge-runtime" -- crates/editor-shell editor/rge-editor`
+     -> no matches; exit 1 is the expected no-match result.
+   - Claim: the previous failed route-menu owner defect must not recur.
+     Falsifying search before and after edits: run the stale-symbol grep named
+     in the ISSUE-347 TASK packet against `.ai/dispatch.tasks.md`,
+     `plans/BASELINE.md`, `Status.md`, `HANDOFF.md`, and `change.md`; no
+     matches are expected, and exit 1 is the expected no-match result.
+
+   **Required behavior:**
+   - Add a small editor-shell-owned extension-command executor seam for
+     commands already captured by `EditorShell::route_menu_command`.
+   - The seam must accept only extension commands (`Command::Custom` and
+     `Command::Plugin`) and must never receive core commands.
+   - Keep the existing capture boundary clear: core commands stay routed by
+     `EditorShell::route_menu_command`; extension commands are captured first,
+     then drained to the executor seam in FIFO order when a handler is
+     configured.
+   - Missing-handler behavior must be explicit and non-fatal. It may preserve
+     the existing observable FIFO/drain behavior, but it must not silently drop
+     extension commands.
+   - Handler failure or unhandled results must be non-fatal, must not run
+     document handlers, and must continue processing later extension commands
+     unless the task discovers an existing local pattern that strongly dictates
+     otherwise.
+   - Tests must use an injected/synthetic handler. Do not introduce a real
+     plugin host, plugin discovery, plugin loading, WASM runtime, capability
+     manifest, async executor, or sandbox integration.
+
+   **Done criteria:**
+   - A configured synthetic handler receives `Command::Plugin` and
+     `Command::Custom` activations in FIFO order after menu routing.
+   - Core commands are not delivered to the extension executor seam.
+   - No-handler behavior is covered and keeps extension activations observable
+     rather than silently dropping them.
+   - Failure/unhandled behavior is covered and does not prevent later extension
+     commands from being processed.
+   - Existing document/menu handlers still behave unchanged for representative
+     core commands such as Save and Toggle Command Palette.
+   - The docs/task bookkeeping records that this task adds only the
+     editor-shell execution seam and does not wire real plugin runtime,
+     discovery, or loading.
+
+   **Verification required:**
+   - Focused editor-shell tests covering extension-command executor FIFO,
+     no-handler behavior, unhandled/failure behavior, and core-command
+     non-delivery.
+   - `cargo +nightly fmt --all -- --check`
+   - `cargo test -p rge-editor-shell --lib`
+   - `cargo check -p rge-editor-shell --lib`
+   - `git diff --check`
+
+   **Halt conditions:**
+   - The implementation requires editing plugin runtime/discovery/loading,
+     `kernel/plugin-host`, `runtime/**`, `plugins/**`, or Cargo metadata.
+   - The implementation requires changing `crates/editor-ui` command variants,
+     `crates/editor-egui-host` menu projection/registration behavior, host to
+     shell FIFO semantics, generalized registry execution, keybinding editor
+     behavior, conflict fatality policy, OS clipboard, typed clipboard, CAD
+     graph/projection mutation, or undo/dirty integration.
+   - The executor cannot state the current route-menu owner as
+     `EditorShell::route_menu_command` with confidence.
+   - The final docs/task brief names the stale editor-state route-menu owner
+     instead of `EditorShell::route_menu_command`.
