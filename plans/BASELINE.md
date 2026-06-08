@@ -464,7 +464,29 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\compile-timing.p
 
 Result: exit 0, wall **125.467s**, Cargo `Finished` **2m 05s**. This is a **MISS** vs the <=120s clean-build budget by **5.467s**. The generated command was an explicit `cargo build --release -p ...` package list and did **not** contain `--workspace`; the resolver reported **92 included** packages and **5 excluded** packages (`rge-runtime-wasmtime`, `rge-runtime-wasmtime-engine`, `rge-script-host`, `rge-expr-wasm`, `rge-script-bench`), with `rge-tool-wasm-bench` included. The run emitted the pre-existing `rge-ui-theme` missing-docs warnings. The isolated scratch target was verified under `B:\sdk` and removed after recording; shared `A:\RustCache\target` was not deleted and `cargo clean` was not run.
 
-**Current verdict:** candidate C materially improved the clean-release selector relative to the full-workspace Wasmtime/Cranelift build, but it does **not** close the clean-build gate yet. The Phase 9 clean-build budget remains open.
+**DefaultCleanRelease hotspot attribution result (2026-06-08 / ISSUE-338 manual salvage):** an attribution-only follow-up ran the same resolver-backed package set through Cargo `--timings` from fresh isolated target `B:\sdk\rge-clean-default-hotspots-ISSUE-338`. The command was explicit `cargo build --release -p ... --timings`, did **not** contain `--workspace`, and resolved **92 included** / **5 excluded** packages with `rge-tool-wasm-bench` included. Result: exit 0, wall **111.072s**, Cargo `Finished` **1m 50s**, Cargo timings total **110.8s**, **569** timing units. Timing HTML, extracted `UNIT_DATA`, and a derived `hotspot-analysis.json` were preserved under gitignored `.ai/dispatch-ISSUE-338/default-clean-release-hotspots/`; the scratch target was verified under `B:\sdk` and removed after copying artifacts.
+
+Top units by duration in that run:
+
+| Rank | Unit | Start | Duration | End | Note |
+|---:|---|---:|---:|---:|---|
+| 1 | `vello_cpu 0.0.6` | 19.13s | 54.32s | 73.45s | dependency cost, not tail |
+| 2 | `zstd-sys 2.0.16+zstd.1.5.7` build script run | 28.61s | 43.46s | 72.07s | dependency build script |
+| 3 | `windows 0.62.2` | 13.56s | 38.76s | 52.32s | dependency cost |
+| 4 | `gltf-json 1.4.1` | 37.60s | 38.66s | 76.26s | dependency cost |
+| 5 | `naga 29.0.3` | 18.99s | 36.29s | 55.28s | dependency cost |
+| 6 | `egui 0.34.2` | 30.66s | 32.09s | 62.75s | dependency cost |
+| 7 | `rge-editor 0.0.1` bin | 80.56s | 30.23s | **110.79s** | **critical tail** |
+| 8 | `rge-physics 0.0.1` | 75.84s | 29.10s | 104.94s | workspace long unit |
+| 9 | `wgpu-core 29.0.3` | 51.59s | 28.54s | 80.13s | dependency cost |
+| 10 | `parry3d-f64 0.19.0` | 30.01s | 26.43s | 56.44s | dependency cost |
+| 11 | `wgpu-hal 29.0.3` | 44.98s | 26.16s | 71.14s | dependency cost |
+| 12 | `rapier3d-f64 0.24.0` | 34.62s | 23.21s | 57.83s | dependency cost |
+| 13 | `rge-tool-architecture-lints 0.0.1` bin | 84.85s | 22.28s | 107.13s | late workspace bin |
+
+Critical-tail interpretation: after excluding the Wasmtime scripting stack, the remaining wall clock is no longer dominated by `cranelift-codegen`. In the timed run it is bounded by late workspace binary/link units: `rge-editor` ends at **110.79s**, followed by `rge-tool-architecture-lints` ending at **107.13s**, while `rge-physics` is the largest non-bin workspace lib at **29.10s** duration ending at **104.94s**.
+
+**Current verdict:** candidate C materially improved the clean-release selector relative to the full-workspace Wasmtime/Cranelift build, but the clean-build gate is now variance-sensitive rather than clearly closed. The task-94 plain measurement missed at **125.467s**, while the task-95 fresh `--timings` attribution run passed at **111.072s** wall / **110.8s** timing total. Because the two fresh isolated measurements disagree across the <=120s threshold, do not start source or package-policy remediation yet. The selected follow-up is a bounded variance confirmation: run three fresh plain `tools/compile-timing.ps1 -Mode build -Release -PackageSet DefaultCleanRelease -Iterations 1` samples, each with its own `B:\sdk` target, then either record a provisional recorder-host PASS if all samples pass or keep the gate open and use the ISSUE-338 attribution (`rge-editor` / late binary tail) to choose the next remediation audit.
 
 **What would prove improvement later:** for candidates that keep the full workspace release selector, re-run this exact `cargo build --workspace --release --timings` from a fresh isolated `B:\sdk\rge-clean-hotspots-ISSUE-322-*` target after a candidate lands and confirm (1) the new `Total time` <= 120 s and (2) `cranelift-codegen` is no longer the critical-path tail in `UNIT_DATA`. For the selected candidate C follow-up, the proof command must instead be the documented default package-set release build that replaces the current `--workspace` selector, with a separate explicit wasm-stack opt-in verification command.
 

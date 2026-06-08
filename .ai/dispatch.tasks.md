@@ -8368,7 +8368,7 @@ is the only safeguard against selector drift.
    - Scratch target removal is verified after the result is recorded.
    - `git diff --check`.
 
-95. **[ ] Attribute remaining DefaultCleanRelease clean-build hotspot.**
+95. **[DONE 2026-06-08 via ISSUE-338 manual salvage - DefaultCleanRelease `--timings` run 111.072s wall / 110.8s total; critical tail `rge-editor` 30.23s ending at 110.79s; budget verdict inconclusive vs task-94 125.467s MISS due variance] Attribute remaining DefaultCleanRelease clean-build hotspot.**
    Task 94 measured the resolver-backed `DefaultCleanRelease` clean build at
    125.467s, still a MISS vs the <=120s clean-build budget by 5.467s. Run one
    attribution-only follow-up with Cargo `--timings` for the same package set
@@ -8428,4 +8428,94 @@ is the only safeguard against selector drift.
    - Confirm the generated command is an explicit `cargo build --release -p ...`
      package list and does not contain `--workspace`.
    - Scratch target removal is verified after artifacts are copied.
+   - `git diff --check`.
+
+   **Attribution result:** completed manually after the automated Codex executor
+   could not create the required `B:\sdk` scratch target from its sandbox. The
+   salvaged run used fresh isolated target
+   `B:\sdk\rge-clean-default-hotspots-ISSUE-338`, resolved the same
+   `DefaultCleanRelease` package set (92 included / 5 excluded, with
+   `rge-tool-wasm-bench` included), and ran an explicit
+   `cargo build --release -p ... --timings` command with no `--workspace`.
+   Result: exit 0, wall **111.072s**, Cargo `Finished` **1m 50s**, Cargo
+   timings total **110.8s**, 569 timing units. The timing HTML and extracted
+   `UNIT_DATA` JSON were preserved under the gitignored
+   `.ai/dispatch-ISSUE-338/default-clean-release-hotspots/` provenance before
+   the scratch target was removed. Top duration units were `vello_cpu` 54.32s,
+   `zstd-sys` build-script run 43.46s, `windows` 38.76s, `gltf-json` 38.66s,
+   `naga` 36.29s, `egui` 32.09s, then workspace unit `rge-editor` 30.23s.
+   Current critical tail was `rge-editor` bin, start 80.56s, duration 30.23s,
+   end 110.79s; next workspace tails were `rge-tool-architecture-lints` bin
+   ending at 107.13s and `rge-physics` ending at 104.94s. Because this fresh
+   `--timings` run passes <=120s while task 94's plain measurement missed at
+   125.467s, the selected next follow-up is a variance confirmation task, not
+   immediate source remediation.
+
+96. **[ ] Confirm DefaultCleanRelease clean-build variance before remediation.**
+   Task 94 produced a fresh isolated plain `DefaultCleanRelease` measurement
+   that missed the <=120s clean-build budget at 125.467s, while task 95's fresh
+   isolated `cargo --timings` attribution run completed at 111.072s wall /
+   110.8s timing total and identified `rge-editor` as the current critical
+   tail. Before changing source or package policy, run a small bounded
+   same-method variance check so the budget verdict is based on repeated
+   plain measurements rather than one miss plus one timed attribution pass.
+
+   **Allowed file surface**:
+   - MAY edit `plans/BASELINE.md`, `Status.md`, `HANDOFF.md`, and `change.md`
+     to record the variance result and selected next follow-up.
+   - MAY edit `.ai/dispatch.tasks.md` only to mark this task done,
+     done-blocked, or to record the selected next task after the variance check.
+   - MAY create temporary measurement JSON/log output under a gitignored
+     `.ai/dispatch-ISSUE-*` folder for provenance.
+   - MAY create and remove up to three fresh isolated scratch targets under
+     `B:\sdk`, one per sample.
+   - MUST NOT edit Rust source/tests, Cargo manifests/lock, dependency
+     features, `tools/compile-timing.ps1`,
+     `tools/Resolve-CleanReleasePackageSet.ps1`, workflows, scheduler config,
+     dispatch automation scripts, architecture lints, or shared
+     `A:\RustCache\target` contents.
+   - MUST NOT run `cargo clean`.
+
+   **Current-state claims / falsification to include in the TASK packet**:
+   - Claim: the current `DefaultCleanRelease` clean-build budget verdict is
+     inconsistent across fresh isolated measurements and needs variance
+     confirmation before remediation.
+     Falsifying search:
+     `rg -n "125\\.467s|111\\.072s|110\\.8s|rge-editor.*110\\.79s|DefaultCleanRelease.*variance" plans/BASELINE.md Status.md HANDOFF.md change.md .ai/dispatch.tasks.md ai_handoffs`
+     -> should show task 94's 125.467s MISS and task 95's 111.072s / 110.8s
+     attribution pass evidence, but no completed repeated plain-measurement
+     variance table before this task is run.
+
+   **Required behavior**:
+   - Run three fresh isolated plain `DefaultCleanRelease` samples unless a
+     command fails or times out. Use a new empty `CARGO_TARGET_DIR` under
+     `B:\sdk` for each sample; verify each resolved path is under `B:\sdk`
+     before deleting it.
+   - Use the documented plain measurement shape for each sample, with only the
+     scratch suffix and optional JSON path adjusted:
+
+     ```
+     $env:CARGO_TARGET_DIR = 'B:\sdk\rge-clean-default-variance-ISSUE-NNN-sample1'
+     powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\compile-timing.ps1 -Mode build -Release -PackageSet DefaultCleanRelease -Iterations 1 -TimeoutSeconds 1200 -JsonPath .ai\dispatch-ISSUE-NNN\default-clean-variance-sample1.json
+     ```
+
+   - Record every sample's exit code, wall time, Cargo `Finished` line,
+     generated command shape, and PASS/MISS vs <=120s.
+   - Confirm every generated Cargo command is an explicit
+     `cargo build --release -p ...` package list and does not contain
+     `--workspace`.
+   - If all three samples pass <=120s, record the recorder-host clean-build
+     gate as provisionally PASS and select a follow-up to avoid churn unless a
+     future measurement regresses.
+   - If any sample misses or fails, keep the gate open and select exactly one
+     next follow-up based on task 95's attribution: either a narrow audit of why
+     late bin targets (`rge-editor`, `rge-tool-architecture-lints`) belong in
+     the default clean-release set, or a bounded source/task remediation if the
+     evidence clearly points to one.
+   - Remove only the isolated scratch targets after recording the result.
+
+   **Verification required**:
+   - Each attempted measurement exits 0, or its failure/timeout is recorded
+     with command output and exit code.
+   - Scratch target removal is verified for every attempted sample.
    - `git diff --check`.
