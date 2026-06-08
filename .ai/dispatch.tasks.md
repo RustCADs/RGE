@@ -8562,3 +8562,14 @@ is the only safeguard against selector drift.
    `editor-shell` routing, `editor-ui` menu registry, keybinding editor, Cargo
    manifests/lock, workflows, scheduler config, architecture lints, or dispatch
    automation behavior changed.
+
+99. **[DONE 2026-06-08 via manual automation hygiene] Bound plan-revision gate context.**
+   The ISSUE-342 automation failure exposed that `Invoke-AiDispatchLoop.ps1`
+   fed the entire prior executor plan-gate review back into Codex when
+   `GATE_VERDICT: needs_changes` triggered a revision. Verbose gate output can
+   exceed Codex's 1,048,576-character input ceiling before execution starts.
+   The loop now caps only the prior gate-review prose to the last 20,000
+   characters with an explicit truncation notice before injecting it into the
+   next planner prompt. The task goal, TASK packet, gate verdict semantics,
+   same-phase retry behavior, execution, control review, queue publish modes,
+   scheduler config, and sandbox routing are unchanged.

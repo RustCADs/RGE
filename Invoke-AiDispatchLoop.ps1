@@ -104,6 +104,8 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+$script:PlanRevisionGateContextMaxChars = 20000
+
 # When $true, Fail throws instead of exiting so an eligible read-only model
 # review phase (Claude plan gate / Codex control) can be wrapped by a
 # same-phase retry. Reset to $false outside the retry wrapper so unrelated
@@ -609,6 +611,29 @@ function Get-CodexExecutorSandbox {
     return 'workspace-write'
 }
 
+function Limit-PlanRevisionGateContext {
+    # Plan-gate reviews are model prose and can become very large when the
+    # gate enumerates repository evidence. A revision prompt only needs the
+    # actionable review tail; keep the task goal untouched and cap this
+    # prior-gate context before feeding it back to Codex.
+    param(
+        [AllowNull()]
+        [string]$Text,
+        [ValidateRange(1000, 1000000)]
+        [int]$MaxChars = $script:PlanRevisionGateContextMaxChars
+    )
+
+    if (-not $Text) { return $Text }
+    if ($Text.Length -le $MaxChars) { return $Text }
+
+    $kept = $Text.Substring($Text.Length - $MaxChars, $MaxChars)
+    return @"
+[dispatch prior-gate context truncated: original $($Text.Length) chars; kept last $MaxChars chars. The omitted text was executor preflight review prose only.]
+
+$kept
+"@
+}
+
 function Invoke-CodexPreflightAudit {
     # Opt-in pitfall audit: run Codex in a read-only sandbox, extract a
     # marker-delimited Markdown body from the current audit output, validate
@@ -965,7 +990,7 @@ function Invoke-PlanFill {
     $taskRel = Get-RepoRelativePath $TaskPacket.FullName
     $gateContext = 'No prior executor gate.'
     if ($PriorExecutorGatePath -and (Test-Path -LiteralPath $PriorExecutorGatePath)) {
-        $gateContext = Get-Content -Raw -LiteralPath $PriorExecutorGatePath
+        $gateContext = Limit-PlanRevisionGateContext -Text (Get-Content -Raw -LiteralPath $PriorExecutorGatePath)
     }
 
     $prompt = @"
