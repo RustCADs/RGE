@@ -8798,3 +8798,78 @@ is the only safeguard against selector drift.
      `EditorShell::route_menu_command` with confidence.
    - The final docs/task brief names the stale editor-state route-menu owner
      instead of `EditorShell::route_menu_command`.
+
+103. **Phase 9 editor-usability next-task selection audit after extension seam.**
+   Queue is empty after task 102. Run a docs/source-read selection pass and
+   choose exactly one bounded Phase 9/editor-usability implementation follow-up
+   for task 104, or record `NEEDS_HUMAN` if the evidence does not support a
+   safe task.
+
+   **Purpose:** keep full automation moving without guessing from stale
+   history. Task 102 closed only the editor-shell extension-command executor
+   seam; it explicitly did not wire real plugin runtime/discovery/loading,
+   host FIFO replacement, generalized registry execution, keybinding editor,
+   conflict fatality policy, OS/typed clipboard, CAD mutation, or broader
+   camera UI. Re-evaluate the current source and docs before deciding the next
+   automation item.
+
+   **MAY edit:**
+   - `.ai/dispatch.tasks.md`
+   - `plans/BASELINE.md`
+   - `Status.md`
+   - `HANDOFF.md`
+   - `change.md`
+   - generated ISSUE-103 handoff/audit/log artifacts for this dispatch only
+
+   **MAY read/search:** `crates/editor-*`, `editor/`, `crates/plugin-*`,
+   `plugins/`, `kernel/plugin-host`, `runtime/`, `crates/cad-*`,
+   `crates/kernel-*`, docs/status/task files, and other source paths needed to
+   falsify current claims with `rg` / `git grep`. Reads/searches are allowed;
+   source edits are not.
+
+   **MUST NOT edit:** Rust source/tests, Cargo manifests/lockfiles, workflows,
+   scheduler/dispatch automation scripts, architecture-lint rules/config,
+   schemas, plugin runtime/discovery/loading code, existing handoff/log
+   artifacts from other dispatches, or unrelated generated scratch files.
+
+   **Audit requirements:**
+   - Record the remaining Phase 9/editor-usability gaps using current source
+     evidence, not only historical docs.
+   - Include falsifying searches for stale or risky claims.
+   - Confirm task 102's closure boundary: extension commands now have an
+     injected editor-shell handler seam, but no real plugin runtime,
+     discovery, loading, host FIFO replacement, generalized registry
+     execution, keybinding editor, clipboard, CAD mutation, or camera UI work
+     was added.
+   - Compare at least these candidate classes:
+     1. host-shell FIFO/menu-click replacement and generalized registry
+        execution,
+     2. conflict resolution, keybinding editor, and fatal gating,
+     3. persistent command-palette history/favorites,
+     4. unsaved-changes prompt and graceful quit,
+     5. OS clipboard / typed clipboard,
+     6. authoritative CAD deletion/duplication/undo integration,
+     7. broader camera UI,
+     8. real plugin runtime/discovery/loading beyond the task-102 seam.
+   - Select exactly one next implementation task and append it as task 104 with
+     explicit `MAY edit`, `MUST NOT edit`, done criteria, verification, and
+     halt conditions. If no candidate can be safely bounded from evidence,
+     append no implementation task and record `NEEDS_HUMAN`.
+
+   **Strong suggested prior:** host-shell FIFO/menu-click replacement and
+   generalized registry execution may be the best next class because recent
+   work improved command-palette projection/activation and extension-command
+   shell handling while preserving the host-to-shell FIFO boundary. The audit
+   must verify that premise from source and may choose a different candidate if
+   the evidence is stronger.
+
+   **Verification:** `git diff --check`; final
+   `git status --short --untracked-files=all`; recorded source/doc search
+   commands and results sufficient to support the selected task. No Rust build
+   or test is expected unless the audit changes a verifier/tooling file, which
+   this task should not do.
+
+   **Halt condition:** if selecting task 104 would require implementation edits
+   during task 103, or current docs/source contradict the premise enough that a
+   bounded follow-up cannot be defended, record `NEEDS_HUMAN` with evidence
+   instead of manufacturing an unsafe task.
