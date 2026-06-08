@@ -152,7 +152,7 @@ pub use handoff::{
 };
 use menu::{
     command_palette_entries, command_palette_window, menu_item, project_main_menu,
-    register_menu_entry as register_entry,
+    record_command_palette_recent_command, register_menu_entry as register_entry,
 };
 pub use tabs::{EditorTabViewer, InspectorTabBody, TabBody, ViewportRectSink};
 
@@ -302,6 +302,9 @@ pub struct EguiHost {
     /// Host-local filter text for the command-palette window.
     command_palette_filter: String,
 
+    /// Host-local, in-memory most-recent-first palette activation ids.
+    command_palette_recent_command_ids: Vec<String>,
+
     /// Transient selected filtered-row index for command-palette keyboard navigation.
     command_palette_selected_index: Option<usize>,
 
@@ -448,6 +451,7 @@ impl EguiHost {
             menu_registry,
             command_palette_open: false,
             command_palette_filter: String::new(),
+            command_palette_recent_command_ids: Vec::new(),
             command_palette_selected_index: None,
             command_palette_search_focus_requested: false,
         }
@@ -796,6 +800,7 @@ impl EguiHost {
         let command_palette_entries = command_palette_entries(&main_menu);
         let command_palette_open = &mut self.command_palette_open;
         let command_palette_filter = &mut self.command_palette_filter;
+        let command_palette_recent_command_ids = &mut self.command_palette_recent_command_ids;
         let command_palette_selected_index = &mut self.command_palette_selected_index;
         let command_palette_search_focus_requested =
             &mut self.command_palette_search_focus_requested;
@@ -886,7 +891,12 @@ impl EguiHost {
                 command_palette_selected_index,
                 command_palette_search_focus_requested,
                 &command_palette_entries,
+                command_palette_recent_command_ids.as_slice(),
             ) {
+                record_command_palette_recent_command(
+                    command_palette_recent_command_ids,
+                    command.diagnostic_id(),
+                );
                 menu_commands.push(command);
             }
             // Bottom status bar — open save source file name + dirty marker. Added

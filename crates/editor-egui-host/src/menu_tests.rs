@@ -31,9 +31,11 @@ use super::MenuCommandHandoff;
 use crate::menu::{
     command_palette_entries, command_palette_row_is_selected, command_palette_selected_index,
     command_palette_selected_index_for_filter_change, filter_command_palette_entries,
-    move_command_palette_selected_index, project_main_menu, register_menu_entry,
+    filter_command_palette_entries_with_recents, move_command_palette_selected_index,
+    project_main_menu, record_command_palette_recent_command, register_menu_entry,
     selected_command_palette_entry, take_command_palette_search_focus_request,
     CommandPaletteSelectionDirection, ProjectedCommandPaletteEntry,
+    COMMAND_PALETTE_RECENT_COMMAND_LIMIT,
 };
 
 type PaletteEntry = ProjectedCommandPaletteEntry;
@@ -560,6 +562,107 @@ fn command_palette_filter_matches_label_shortcut_and_command_id() {
     assert!(
         labels("not-a-real-command").is_empty(),
         "unknown filters produce an empty palette list"
+    );
+}
+
+#[test]
+fn command_palette_recent_records_most_recent_ids_with_cap_and_deduplication() {
+    let mut recent = Vec::new();
+    let total = COMMAND_PALETTE_RECENT_COMMAND_LIMIT + 2;
+    for index in 0..total {
+        record_command_palette_recent_command(&mut recent, format!("cmd_{index:02}"));
+    }
+
+    let expected: Vec<String> = (2..total)
+        .rev()
+        .map(|index| format!("cmd_{index:02}"))
+        .collect();
+    assert_eq!(recent, expected, "only the capped most-recent ids remain");
+
+    let duplicate = format!("cmd_{:02}", COMMAND_PALETTE_RECENT_COMMAND_LIMIT - 1);
+    record_command_palette_recent_command(&mut recent, duplicate.clone());
+    assert_eq!(recent.len(), COMMAND_PALETTE_RECENT_COMMAND_LIMIT);
+    assert_eq!(recent.first().map(String::as_str), Some(duplicate.as_str()));
+    assert_eq!(
+        recent.iter().filter(|id| *id == &duplicate).count(),
+        1,
+        "re-recording an id moves it to the front without duplication"
+    );
+
+    record_command_palette_recent_command(&mut recent, "cmd_new".to_owned());
+    assert_eq!(recent.len(), COMMAND_PALETTE_RECENT_COMMAND_LIMIT);
+    assert_eq!(recent.first().map(String::as_str), Some("cmd_new"));
+    assert!(
+        !recent.contains(&"cmd_02".to_owned()),
+        "recording a fresh id beyond the cap drops the oldest retained id"
+    );
+}
+
+#[test]
+fn command_palette_recent_blank_filter_promotes_enabled_recent_entries() {
+    let entries = vec![save(true), open(true), toggle(true)];
+    let recents = vec![
+        Command::ToggleCommandPalette.diagnostic_id(),
+        Command::Save.diagnostic_id(),
+    ];
+
+    let labels: Vec<&str> = filter_command_palette_entries_with_recents(&entries, "  ", &recents)
+        .into_iter()
+        .map(|entry| entry.label.as_str())
+        .collect();
+
+    assert_eq!(
+        labels,
+        vec!["View: Command Palette", "File: Save", "File: Open"],
+        "blank filters put enabled recent commands first, then keep original order"
+    );
+}
+
+#[test]
+fn command_palette_recent_blank_filter_ignores_stale_ids_and_disabled_promotions() {
+    let entries = vec![save(false), open(true), toggle(true)];
+    let recents = vec![
+        "missing_command".to_owned(),
+        Command::Save.diagnostic_id(),
+        Command::ToggleCommandPalette.diagnostic_id(),
+    ];
+
+    let labels: Vec<&str> = filter_command_palette_entries_with_recents(&entries, "", &recents)
+        .into_iter()
+        .map(|entry| entry.label.as_str())
+        .collect();
+
+    assert_eq!(
+        labels,
+        vec!["View: Command Palette", "File: Save", "File: Open"],
+        "stale ids do not add rows and disabled recent rows stay in the remainder"
+    );
+}
+
+#[test]
+fn command_palette_recent_non_blank_filter_preserves_fuzzy_score_ordering() {
+    let entries = vec![
+        pe("Tools: Smart Vector", None, Command::OpenFile, true),
+        pe("Tools: Autosave", None, Command::OpenFile, true),
+        pe("Tools: Saver Options", None, Command::OpenFile, true),
+        save(true),
+    ];
+    let recents = vec![Command::OpenFile.diagnostic_id()];
+
+    let labels: Vec<&str> = filter_command_palette_entries_with_recents(&entries, "save", &recents)
+        .into_iter()
+        .map(|entry| entry.label.as_str())
+        .collect();
+
+    assert_eq!(
+        labels,
+        vec![
+            "File: Save",
+            "Tools: Saver Options",
+            "Tools: Autosave",
+            "Tools: Smart Vector",
+        ],
+        "recent history does not perturb non-blank fuzzy scoring"
     );
 }
 

@@ -25,6 +25,9 @@ use rge_editor_ui::menus::{
 /// Projected menu item: `(label, shortcut display, command, enabled)`.
 pub(crate) type ProjectedMenuEntry = (String, Option<String>, Command, bool);
 
+/// Maximum number of command-palette activations retained in host memory.
+pub(crate) const COMMAND_PALETTE_RECENT_COMMAND_LIMIT: usize = 16;
+
 /// Host-owned command-palette item projected from the current main-menu state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ProjectedCommandPaletteEntry {
@@ -168,24 +171,47 @@ pub(crate) fn command_palette_entries(
     out
 }
 
+/// Record one successful command-palette activation by diagnostic id.
+pub(crate) fn record_command_palette_recent_command(
+    recent_command_ids: &mut Vec<String>,
+    command_id: String,
+) {
+    if let Some(position) = recent_command_ids.iter().position(|id| id == &command_id) {
+        recent_command_ids.remove(position);
+    }
+    recent_command_ids.insert(0, command_id);
+    recent_command_ids.truncate(COMMAND_PALETTE_RECENT_COMMAND_LIMIT);
+}
+
 /// Return command-palette entries matching the user-entered filter.
 ///
-/// Filtering is deliberately presentation-local: it does not persist history
-/// or change command execution. Each whitespace-separated term must match the
+/// Filtering is deliberately presentation-local: it does not persist history or
+/// change command execution. Each whitespace-separated term must match the
 /// menu-path label, shortcut display, or command diagnostic id. Matching entries
 /// are ordered by deterministic, simple relevance: exact word/field match,
-/// prefix match, substring match, fuzzy ordered-subsequence match, then
-/// original menu order.
+/// prefix match, substring match, fuzzy ordered-subsequence match, then original
+/// menu order.
+#[cfg(test)]
 pub(crate) fn filter_command_palette_entries<'a>(
     entries: &'a [ProjectedCommandPaletteEntry],
     filter: &str,
+) -> Vec<&'a ProjectedCommandPaletteEntry> {
+    filter_command_palette_entries_with_recents(entries, filter, &[])
+}
+
+/// Return command-palette entries, promoting recent enabled commands only for
+/// blank filters.
+pub(crate) fn filter_command_palette_entries_with_recents<'a>(
+    entries: &'a [ProjectedCommandPaletteEntry],
+    filter: &str,
+    recent_command_ids: &[String],
 ) -> Vec<&'a ProjectedCommandPaletteEntry> {
     let terms: Vec<String> = filter
         .split_whitespace()
         .map(str::to_ascii_lowercase)
         .collect();
     if terms.is_empty() {
-        return entries.iter().collect();
+        return blank_command_palette_entries_with_recents(entries, recent_command_ids);
     }
 
     let mut matches: Vec<(
@@ -201,6 +227,35 @@ pub(crate) fn filter_command_palette_entries<'a>(
         .collect();
     matches.sort_by_key(|(score, index, _)| (*score, *index));
     matches.into_iter().map(|(_, _, entry)| entry).collect()
+}
+
+fn blank_command_palette_entries_with_recents<'a>(
+    entries: &'a [ProjectedCommandPaletteEntry],
+    recent_command_ids: &[String],
+) -> Vec<&'a ProjectedCommandPaletteEntry> {
+    let mut ordered = Vec::with_capacity(entries.len());
+    let mut emitted_indices = Vec::new();
+
+    for recent_id in recent_command_ids {
+        for (index, entry) in entries.iter().enumerate() {
+            if entry.enabled
+                && !emitted_indices.contains(&index)
+                && entry.command.diagnostic_id() == *recent_id
+            {
+                ordered.push(entry);
+                emitted_indices.push(index);
+                break;
+            }
+        }
+    }
+
+    for (index, entry) in entries.iter().enumerate() {
+        if !emitted_indices.contains(&index) {
+            ordered.push(entry);
+        }
+    }
+
+    ordered
 }
 
 /// Return a valid filtered-row index for command-palette keyboard selection.
@@ -464,6 +519,7 @@ pub(crate) fn command_palette_window(
     selected_index: &mut Option<usize>,
     search_focus_requested: &mut bool,
     entries: &[ProjectedCommandPaletteEntry],
+    recent_command_ids: &[String],
 ) -> Option<Command> {
     if !*open {
         *search_focus_requested = false;
@@ -489,7 +545,11 @@ pub(crate) fn command_palette_window(
             }
             let filter_changed = search_response.changed();
             ui.separator();
-            let filtered_entries = filter_command_palette_entries(entries, filter.as_str());
+            let filtered_entries = filter_command_palette_entries_with_recents(
+                entries,
+                filter.as_str(),
+                recent_command_ids,
+            );
             if filtered_entries.is_empty() {
                 ui.label("No commands match");
             }
