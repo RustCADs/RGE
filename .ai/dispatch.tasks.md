@@ -8300,3 +8300,51 @@ is the only safeguard against selector drift.
      the result.
    - Run any newly added focused Pester tests.
    - `git diff --check`.
+
+94. **Measure default clean-release package-set build time.**
+   Task 93 implemented the resolver-backed `DefaultCleanRelease` package set
+   but intentionally did not run a fresh isolated-target measurement. Run the
+   documented measurement now and record whether the default release package set
+   closes the Phase 9 section 13.3 clean-build budget.
+
+   **Allowed file surface**:
+   - MAY edit `plans/BASELINE.md`, `Status.md`, `HANDOFF.md`, and `change.md`
+     to record the measurement result.
+   - MAY edit `.ai/dispatch.tasks.md` only to mark this task done or
+     done-blocked after the result is recorded.
+   - MAY create temporary measurement output under a gitignored `.ai/` folder
+     if useful for command provenance.
+   - MAY create and remove exactly one fresh isolated scratch target under
+     `B:\sdk`.
+   - MUST NOT edit Rust source/tests, Cargo manifests/lock, dependency
+     features, `tools/compile-timing.ps1`,
+     `tools/Resolve-CleanReleasePackageSet.ps1`, workflows, scheduler config,
+     dispatch automation scripts, architecture lints, or shared
+     `A:\RustCache\target` contents.
+   - MUST NOT run `cargo clean`.
+
+   **Required behavior**:
+   - Use a fresh empty isolated `CARGO_TARGET_DIR` under `B:\sdk`; verify the
+     resolved path is under `B:\sdk` before deleting it.
+   - Run exactly this measurement shape, with only the scratch target suffix
+     adjusted for the new dispatch if desired:
+
+     ```
+     $env:CARGO_TARGET_DIR = 'B:\sdk\rge-clean-default-ISSUE-335-next'
+     powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\compile-timing.ps1 -Mode build -Release -PackageSet DefaultCleanRelease -Iterations 1 -TimeoutSeconds 1200
+     ```
+
+   - Record wall time, Cargo `Finished` line, the generated package-set command
+     shape, and whether the result passes or misses the <=120s clean-build
+     budget.
+   - Confirm the generated Cargo command is an explicit `cargo build --release
+     -p ...` package list and does not contain `--workspace`.
+   - Remove only the isolated scratch target after recording the result.
+   - If the measurement fails or times out, record the failure exactly and mark
+     the task done-blocked; do not invent a budget verdict.
+
+   **Verification required**:
+   - The measurement command exits 0, or the failure/timeout is recorded with
+     command output and exit code.
+   - Scratch target removal is verified after the result is recorded.
+   - `git diff --check`.
