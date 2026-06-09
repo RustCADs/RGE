@@ -119,6 +119,18 @@ registry policy, shell route, plugin runtime, Cargo, `editor-ui`, or
 `editor-shell` behavior changed. The task brief is now exhausted at 113/113
 done.
 
+**2026-06-09 update 11:** task 114 completed the post-conflict-diagnostics
+source audit and selected task 115: viewport-only mouse-wheel camera zoom in
+`editor-shell`. Current source already has menu/keyboard Reset Camera, Zoom In,
+and Zoom Out routed through the canonical menu command path, while
+`WindowEvent::MouseInput` still names scroll/drag/hover as later work and the
+scoped source has no `MouseWheel` branch. The selected follow-up is limited to
+using existing camera zoom semantics and existing viewport hit-test state; host
+FIFO/generalized execution, real plugin execution, shortcut remapping/conflict
+policy, OS/typed clipboard, authoritative CAD/editor mutation, undo/dirty
+policy, route replacement, new commands/accelerators, and broader orbit/pan/drag
+navigation remain deferred.
+
 ---
 
 ## Phase 9 editor-usability task-104 selection audit

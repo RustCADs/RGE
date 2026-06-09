@@ -10033,12 +10033,26 @@ is the only safeguard against selector drift.
    - The default menu no-conflict invariant would need to be weakened to make
      the diagnostics visible.
 
-114. **Post-shortcut-conflict-diagnostics Phase 9 next-task source audit.**
+114. **[DONE 2026-06-09 via ISSUE-364 - selected task 115 viewport mouse-wheel zoom] Post-shortcut-conflict-diagnostics Phase 9 next-task source audit.**
    The automation queue is exhausted after task 113 (ISSUE-362 / commit `66bc010`,
    host-local shortcut conflict diagnostics). Re-arm automation with a docs/
    source-read audit that selects exactly one bounded Phase 9 editor-usability
    implementation follow-up as task 115, or records `NEEDS_HUMAN` if the remaining
    candidates require product/architecture policy before code.
+
+   Completed via ISSUE-364 as a source/docs audit only. Current source confirms
+   task 113's shortcut-conflict diagnostics are present, menu/palette/accelerator
+   activation still intentionally crosses `MenuCommandHandoff` into
+   `EditorShell::route_menu_command`, extension/plugin commands still stop at the
+   task-102 `ExtensionCommandHandler` seam with no editor route to real plugin
+   runtime/discovery/loading, and shell-local entity Cut/Copy/Paste/Delete/
+   Duplicate already exists without OS clipboard, typed component, CAD, undo, or
+   dirty semantics. The selected follow-up is task 115: a viewport-only
+   mouse-wheel camera zoom slice in `editor-shell`, using the existing camera zoom
+   behavior and existing viewport hit-test boundary. Host FIFO/generalized command
+   execution, real plugin execution, shortcut remapping/conflict policy, OS/typed
+   clipboard, authoritative CAD/editor mutation, orbit/pan/drag navigation, new
+   commands/accelerators, and route replacement remain deferred.
 
    This is a SOURCE AUDIT ONLY: read current source, compare candidate classes,
    and append exactly one task 115 (or `NEEDS_HUMAN`). It selects work; it does
@@ -10116,3 +10130,85 @@ is the only safeguard against selector drift.
    - No bounded, source-safe candidate exists → record `NEEDS_HUMAN` rather than
      forcing a selection.
    - Describing task 115 would require editing any MUST-NOT path.
+
+115. **Add viewport-only mouse-wheel camera zoom in `editor-shell`.**
+   Add the smallest interactive camera-navigation slice now that View menu
+   Reset/Zoom commands already route through the canonical menu/accelerator path.
+   Current source has `EditorShell::zoom_camera_in`, `zoom_camera_out`, and
+   `reset_camera`; `WindowEvent::MouseInput` explicitly leaves scroll/drag/hover
+   as later work; and no `MouseWheel` / `MouseScrollDelta` branch exists in the
+   scoped editor source. This task should route mouse-wheel scroll over the
+   transparent Viewport tab body to the existing zoom behavior without adding a
+   command, accelerator, menu item, command-route replacement, or broader camera
+   controller.
+
+   **Safety rationale:** this is narrower than the deferred alternatives because
+   it uses the existing `editor-shell` camera intent and the existing
+   `is_pointer_over_viewport_tab()` host boundary. It does not require changing
+   `editor-egui-host`, `editor-ui`, command registry definitions, plugin
+   runtime/discovery/loading, OS clipboard, CAD graph/projection mutation, or
+   undo/dirty policy. Treat it as a camera/navigation usability slice, not as a
+   general input-router redesign.
+
+   **MAY edit:**
+   - `crates/editor-shell/src/lifecycle/mod.rs`
+   - `crates/editor-shell/src/lifecycle/tests.rs`
+   - new focused `crates/editor-shell/src/lifecycle/viewport_navigation.rs` helper
+     module if it keeps `mod.rs` cohesive
+   - `.ai/dispatch.tasks.md`
+   - `Status.md`
+   - `HANDOFF.md`
+   - `plans/BASELINE.md`
+   - `change.md`
+   - generated ISSUE-115 handoff/audit/log artifacts for this dispatch only
+
+   **MUST NOT edit:**
+   - `crates/editor-egui-host/**`
+   - `crates/editor-ui/**`
+   - `crates/editor-actions/**`
+   - `crates/cad-core/**`
+   - `crates/cad-projection/**`
+   - `kernel/**`
+   - `runtime/**`
+   - `editor/rge-editor/**`
+   - Cargo manifests or `Cargo.lock`
+   - GitHub workflows
+   - dispatch automation, guard, queue, scheduler, or verification scripts
+   - schemas, ADR files, architecture-lint rules/config, packet templates, or
+     existing handoff/log artifacts from other dispatches
+   - plugin runtime/discovery/loading implementation code
+
+   **Done criteria:**
+   - `WindowEvent::MouseWheel` over the current Viewport tab body zooms the
+     `EditorShell` camera in for positive wheel delta and out for negative wheel
+     delta, using the existing camera zoom semantics or a shell-private helper
+     with equivalent target/direction/clip-plane preservation.
+   - Wheel events over Inspector panels, menus, tab chrome, text fields, or any
+     non-viewport egui-owned region do not zoom the scene.
+   - No cursor / no viewport-rect / no egui host cases are no-ops, not panics.
+   - The task does not add or modify `Command`, menu registry entries,
+     accelerators, command-palette behavior, shortcut conflict policy,
+     extension/plugin execution, OS clipboard behavior, CAD graph/projection
+     mutation, undo/dirty semantics, or drag/orbit/pan navigation.
+
+   **Verification required:**
+   - `git grep -n -E "MouseWheel|MouseScrollDelta|zoom_camera_in|zoom_camera_out|is_pointer_over_viewport_tab|should_fire_face_pick" -- crates/editor-shell/src crates/editor-egui-host/src` before implementation, summarized in the EXEC packet.
+   - Focused `rge-editor-shell` tests proving wheel-delta direction mapping,
+     viewport-only gating, no-cursor/no-viewport no-op behavior, and preservation
+     of the existing zoom target/direction invariants.
+   - `cargo test -p rge-editor-shell --lib`
+   - `cargo check -p rge-editor-shell --lib`
+   - `cargo +nightly fmt --all -- --check`
+   - `git diff --check`
+
+   **Halt conditions:**
+   - Implementing viewport wheel zoom requires editing outside the MAY list.
+   - The implementation needs a new `Command`, accelerator, menu item, command
+     route, command-palette change, shortcut remapping/conflict policy, or host/UI
+     registry edit.
+   - The implementation starts orbit, pan, drag navigation, camera persistence,
+     OS/typed clipboard, authoritative CAD mutation, undo/dirty policy, plugin
+     runtime/discovery/loading, or generalized input routing.
+   - Existing viewport hit-test state is insufficient to distinguish viewport
+     scroll from panel/menu/tab scroll without editing `editor-egui-host`; halt
+     rather than broadening scope.
