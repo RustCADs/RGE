@@ -22,6 +22,33 @@ GitHub has no open `ai-dispatch` issues, and the autonomous dry-run selector
 reports no real task to select. Any next work should start as a fresh bounded
 roadmap/audit task rather than continuing the exhausted dispatch brief.
 
+**2026-06-09 update:** task 106 now performs that fresh bounded roadmap/audit
+step. It is docs/source-read only and must select exactly one scoped
+Phase 9/editor-usability implementation follow-up as task 107, or record
+`NEEDS_HUMAN`; it is not authorized to implement the selected work.
+
+**2026-06-09 update 2:** task 106 completed that source-read audit and selected
+task 107: command-palette pinned favorites in `editor-egui-host`. The audit
+found host-shell FIFO replacement/generalized execution still broader than a
+safe one-dispatch step because core menu clicks and accelerators already route
+through the canonical `Command` sink while the FIFO remains the deliberate
+host-shell boundary. Real plugin execution, keybinding conflict policy,
+unsaved prompt UX, OS/typed clipboard, authoritative CAD mutation/undo, and
+broader camera UI stay deferred as policy/substrate-heavy. Task 107 is scoped
+to host-local pinned command ids, non-fatal persistence, and blank-filter
+promotion ahead of recents, with no command-routing, plugin-runtime, Cargo,
+`editor-shell`, or `editor-ui` change.
+
+**2026-06-09 update 3:** task 107 implemented command-palette pinned favorites.
+`editor-egui-host` persists pinned command ids as capped, de-duplicated
+`Command::diagnostic_id()` lines next to the recent-history file, loads them at
+host construction, and lets users pin/unpin rows from the palette without
+dispatching commands or touching recents. Blank filters rank enabled pinned
+commands first, enabled recents second, and all remaining projected rows last;
+stale pins and disabled pinned rows are not promoted, and task-98 fuzzy ordering
+for non-blank filters remains unchanged. The automation queue is again
+exhausted at 107/107 done.
+
 ---
 
 ## Phase 9 editor-usability task-104 selection audit

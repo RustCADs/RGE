@@ -146,6 +146,7 @@ use winit::window::Window;
 
 pub mod handoff;
 mod menu;
+mod palette_pinned;
 mod palette_recent;
 pub mod tabs;
 
@@ -156,6 +157,7 @@ use menu::{
     command_palette_entries, command_palette_window, menu_item, project_main_menu,
     register_menu_entry as register_entry,
 };
+use palette_pinned as pinned;
 use palette_recent::{
     default_command_palette_recent_path, enqueue_command_palette_activation,
     load_command_palette_recent_command_ids_or_empty,
@@ -313,6 +315,8 @@ pub struct EguiHost {
 
     /// Host-local persistence path for command-palette recent activation ids.
     command_palette_recent_path: PathBuf,
+    command_palette_pinned_command_ids: Vec<String>,
+    command_palette_pinned_path: PathBuf,
 
     /// Transient selected filtered-row index for command-palette keyboard navigation.
     command_palette_selected_index: Option<usize>,
@@ -447,6 +451,9 @@ impl EguiHost {
         let command_palette_recent_path = default_command_palette_recent_path();
         let command_palette_recent_command_ids =
             load_command_palette_recent_command_ids_or_empty(&command_palette_recent_path);
+        let command_palette_pinned_path = pinned::default_command_palette_pinned_path();
+        let command_palette_pinned_command_ids =
+            pinned::load_command_palette_pinned_command_ids_or_empty(&command_palette_pinned_path);
 
         Self {
             context,
@@ -465,6 +472,8 @@ impl EguiHost {
             command_palette_filter: String::new(),
             command_palette_recent_command_ids,
             command_palette_recent_path,
+            command_palette_pinned_command_ids,
+            command_palette_pinned_path,
             command_palette_selected_index: None,
             command_palette_search_focus_requested: false,
         }
@@ -815,6 +824,8 @@ impl EguiHost {
         let command_palette_filter = &mut self.command_palette_filter;
         let command_palette_recent_command_ids = &mut self.command_palette_recent_command_ids;
         let command_palette_recent_path = self.command_palette_recent_path.clone();
+        let command_palette_pinned_command_ids = &mut self.command_palette_pinned_command_ids;
+        let command_palette_pinned_path = self.command_palette_pinned_path.clone();
         let command_palette_selected_index = &mut self.command_palette_selected_index;
         let command_palette_search_focus_requested =
             &mut self.command_palette_search_focus_requested;
@@ -905,6 +916,8 @@ impl EguiHost {
                 command_palette_selected_index,
                 command_palette_search_focus_requested,
                 &command_palette_entries,
+                command_palette_pinned_command_ids,
+                &command_palette_pinned_path,
                 command_palette_recent_command_ids.as_slice(),
             ) {
                 enqueue_command_palette_activation(

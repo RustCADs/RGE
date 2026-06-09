@@ -17,16 +17,23 @@
 //! data the projection carries. Play's plain-key playback bindings are projected
 //! only through display hints, not as executable menu accelerators.
 
+use std::path::Path;
+
 use rge_editor_ui::menus::{
     edit_menu_point, file_menu_point, play_menu_point, plugins_menu_point, view_menu_point,
     Command, ExtensionPoint, MenuEntry, MenuRegistry, PredicateContext, RegistryError, Shortcut,
 };
+
+use crate::palette_pinned::toggle_command_palette_pinned_command;
 
 /// Projected menu item: `(label, shortcut display, command, enabled)`.
 pub(crate) type ProjectedMenuEntry = (String, Option<String>, Command, bool);
 
 /// Maximum number of command-palette activations retained in host memory.
 pub(crate) const COMMAND_PALETTE_RECENT_COMMAND_LIMIT: usize = 16;
+
+/// Maximum number of command-palette pinned commands retained in host memory.
+pub(crate) const COMMAND_PALETTE_PINNED_COMMAND_LIMIT: usize = 16;
 
 /// Host-owned command-palette item projected from the current main-menu state.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -196,14 +203,26 @@ pub(crate) fn filter_command_palette_entries<'a>(
     entries: &'a [ProjectedCommandPaletteEntry],
     filter: &str,
 ) -> Vec<&'a ProjectedCommandPaletteEntry> {
-    filter_command_palette_entries_with_recents(entries, filter, &[])
+    filter_command_palette_entries_with_pinned_and_recents(entries, filter, &[], &[])
 }
 
 /// Return command-palette entries, promoting recent enabled commands only for
 /// blank filters.
+#[cfg(test)]
 pub(crate) fn filter_command_palette_entries_with_recents<'a>(
     entries: &'a [ProjectedCommandPaletteEntry],
     filter: &str,
+    recent_command_ids: &[String],
+) -> Vec<&'a ProjectedCommandPaletteEntry> {
+    filter_command_palette_entries_with_pinned_and_recents(entries, filter, &[], recent_command_ids)
+}
+
+/// Return command-palette entries, promoting pinned commands before recents for
+/// blank filters.
+pub(crate) fn filter_command_palette_entries_with_pinned_and_recents<'a>(
+    entries: &'a [ProjectedCommandPaletteEntry],
+    filter: &str,
+    pinned_command_ids: &[String],
     recent_command_ids: &[String],
 ) -> Vec<&'a ProjectedCommandPaletteEntry> {
     let terms: Vec<String> = filter
@@ -211,7 +230,11 @@ pub(crate) fn filter_command_palette_entries_with_recents<'a>(
         .map(str::to_ascii_lowercase)
         .collect();
     if terms.is_empty() {
-        return blank_command_palette_entries_with_recents(entries, recent_command_ids);
+        return blank_command_palette_entries_with_pinned_and_recents(
+            entries,
+            pinned_command_ids,
+            recent_command_ids,
+        );
     }
 
     let mut matches: Vec<(
@@ -229,25 +252,26 @@ pub(crate) fn filter_command_palette_entries_with_recents<'a>(
     matches.into_iter().map(|(_, _, entry)| entry).collect()
 }
 
-fn blank_command_palette_entries_with_recents<'a>(
+fn blank_command_palette_entries_with_pinned_and_recents<'a>(
     entries: &'a [ProjectedCommandPaletteEntry],
+    pinned_command_ids: &[String],
     recent_command_ids: &[String],
 ) -> Vec<&'a ProjectedCommandPaletteEntry> {
     let mut ordered = Vec::with_capacity(entries.len());
     let mut emitted_indices = Vec::new();
 
-    for recent_id in recent_command_ids {
-        for (index, entry) in entries.iter().enumerate() {
-            if entry.enabled
-                && !emitted_indices.contains(&index)
-                && entry.command.diagnostic_id() == *recent_id
-            {
-                ordered.push(entry);
-                emitted_indices.push(index);
-                break;
-            }
-        }
-    }
+    promote_command_ids(
+        entries,
+        pinned_command_ids,
+        &mut ordered,
+        &mut emitted_indices,
+    );
+    promote_command_ids(
+        entries,
+        recent_command_ids,
+        &mut ordered,
+        &mut emitted_indices,
+    );
 
     for (index, entry) in entries.iter().enumerate() {
         if !emitted_indices.contains(&index) {
@@ -256,6 +280,35 @@ fn blank_command_palette_entries_with_recents<'a>(
     }
 
     ordered
+}
+
+fn promote_command_ids<'a>(
+    entries: &'a [ProjectedCommandPaletteEntry],
+    command_ids: &[String],
+    ordered: &mut Vec<&'a ProjectedCommandPaletteEntry>,
+    emitted_indices: &mut Vec<usize>,
+) {
+    for command_id in command_ids {
+        for (index, entry) in entries.iter().enumerate() {
+            if entry.enabled
+                && !emitted_indices.contains(&index)
+                && entry.command.diagnostic_id() == *command_id
+            {
+                ordered.push(entry);
+                emitted_indices.push(index);
+                break;
+            }
+        }
+    }
+}
+
+/// Return whether `entry` is currently pinned by diagnostic id.
+pub(crate) fn command_palette_entry_is_pinned(
+    entry: &ProjectedCommandPaletteEntry,
+    pinned_command_ids: &[String],
+) -> bool {
+    let command_id = entry.command.diagnostic_id();
+    pinned_command_ids.iter().any(|id| id == &command_id)
 }
 
 /// Return a valid filtered-row index for command-palette keyboard selection.
@@ -519,6 +572,8 @@ pub(crate) fn command_palette_window(
     selected_index: &mut Option<usize>,
     search_focus_requested: &mut bool,
     entries: &[ProjectedCommandPaletteEntry],
+    pinned_command_ids: &mut Vec<String>,
+    pinned_path: &Path,
     recent_command_ids: &[String],
 ) -> Option<Command> {
     if !*open {
@@ -545,9 +600,10 @@ pub(crate) fn command_palette_window(
             }
             let filter_changed = search_response.changed();
             ui.separator();
-            let filtered_entries = filter_command_palette_entries_with_recents(
+            let filtered_entries = filter_command_palette_entries_with_pinned_and_recents(
                 entries,
                 filter.as_str(),
+                pinned_command_ids.as_slice(),
                 recent_command_ids,
             );
             if filtered_entries.is_empty() {
@@ -586,10 +642,10 @@ pub(crate) fn command_palette_window(
                             command_palette_row_is_selected(entry, index, *selected_index);
                         let response = command_palette_menu_item(
                             ui,
-                            entry.enabled,
-                            entry.label.as_str(),
-                            entry.shortcut.as_deref(),
+                            entry,
                             row_selected,
+                            pinned_command_ids,
+                            pinned_path,
                         );
                         if row_selected {
                             response.scroll_to_me(Some(egui::Align::Center));
@@ -638,14 +694,23 @@ pub(crate) fn menu_item(
 
 fn command_palette_menu_item(
     ui: &mut egui::Ui,
-    enabled: bool,
-    label: &str,
-    shortcut: Option<&str>,
+    entry: &ProjectedCommandPaletteEntry,
     selected: bool,
+    pinned_command_ids: &mut Vec<String>,
+    pinned_path: &Path,
 ) -> egui::Response {
-    let mut button = egui::Button::new(label).selected(selected);
-    if let Some(text) = shortcut {
-        button = button.shortcut_text(text);
-    }
-    ui.add_enabled(enabled, button)
+    ui.horizontal(|ui| {
+        let pinned = command_palette_entry_is_pinned(entry, pinned_command_ids);
+        let pin_label = if pinned { "Unpin" } else { "Pin" };
+        if ui.small_button(pin_label).clicked() {
+            toggle_command_palette_pinned_command(pinned_command_ids, pinned_path, &entry.command);
+        }
+
+        let mut button = egui::Button::new(entry.label.as_str()).selected(selected);
+        if let Some(text) = entry.shortcut.as_deref() {
+            button = button.shortcut_text(text);
+        }
+        ui.add_enabled(entry.enabled, button)
+    })
+    .inner
 }

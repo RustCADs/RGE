@@ -34,11 +34,17 @@ use super::MenuCommandHandoff;
 use crate::menu::{
     command_palette_entries, command_palette_row_is_selected, command_palette_selected_index,
     command_palette_selected_index_for_filter_change, filter_command_palette_entries,
+    filter_command_palette_entries_with_pinned_and_recents,
     filter_command_palette_entries_with_recents, move_command_palette_selected_index,
     project_main_menu, record_command_palette_recent_command, register_menu_entry,
     selected_command_palette_entry, take_command_palette_search_focus_request,
     CommandPaletteSelectionDirection, ProjectedCommandPaletteEntry,
-    COMMAND_PALETTE_RECENT_COMMAND_LIMIT,
+    COMMAND_PALETTE_PINNED_COMMAND_LIMIT, COMMAND_PALETTE_RECENT_COMMAND_LIMIT,
+};
+use crate::palette_pinned::{
+    load_command_palette_pinned_command_ids, load_command_palette_pinned_command_ids_or_empty,
+    save_command_palette_pinned_command_ids, toggle_command_palette_pinned_command,
+    toggle_command_palette_pinned_command_id,
 };
 use crate::palette_recent::{
     enqueue_command_palette_activation, load_command_palette_recent_command_ids,
@@ -787,6 +793,273 @@ fn command_palette_recent_main_menu_activation_does_not_record_or_persist() {
         menu_commands.drain(),
         vec![Command::Save],
         "main menu still uses the existing menu-command handoff path"
+    );
+
+    drop(std::fs::remove_dir_all(root));
+}
+
+#[test]
+fn command_palette_pinned_toggle_caps_deduplicates_and_unpins_ids() {
+    let mut pinned = Vec::new();
+    let total = COMMAND_PALETTE_PINNED_COMMAND_LIMIT + 2;
+    for index in 0..total {
+        assert!(
+            toggle_command_palette_pinned_command_id(&mut pinned, format!("cmd_{index:02}")),
+            "fresh id is pinned"
+        );
+    }
+
+    let expected: Vec<String> = (2..total)
+        .rev()
+        .map(|index| format!("cmd_{index:02}"))
+        .collect();
+    assert_eq!(
+        pinned, expected,
+        "only the capped most-recently pinned ids remain"
+    );
+
+    let existing = format!("cmd_{:02}", COMMAND_PALETTE_PINNED_COMMAND_LIMIT - 1);
+    assert!(
+        !toggle_command_palette_pinned_command_id(&mut pinned, existing.clone()),
+        "toggling an existing pin unpins it"
+    );
+    assert!(!pinned.contains(&existing));
+    assert_eq!(
+        pinned.len(),
+        COMMAND_PALETTE_PINNED_COMMAND_LIMIT - 1,
+        "unpin removes the id without backfilling older dropped ids"
+    );
+}
+
+#[test]
+fn command_palette_pinned_persistence_round_trips_ids_only() {
+    let root = command_palette_recent_temp_root("pinned_round_trips");
+    let path = root.join("pinned.txt");
+    let pinned = vec![
+        Command::ToggleCommandPalette.diagnostic_id(),
+        Command::Save.diagnostic_id(),
+        Command::OpenFile.diagnostic_id(),
+    ];
+
+    save_command_palette_pinned_command_ids(&path, &pinned).expect("save pinned ids");
+
+    assert_eq!(
+        std::fs::read_to_string(&path).expect("read persisted pinned ids"),
+        "toggle_command_palette\nsave\nopen_file\n",
+        "the file stores only diagnostic id strings, one per line"
+    );
+    assert_eq!(
+        load_command_palette_pinned_command_ids(&path).expect("load pinned ids"),
+        pinned
+    );
+
+    drop(std::fs::remove_dir_all(root));
+}
+
+#[test]
+fn command_palette_pinned_persistence_caps_and_deduplicates_ids() {
+    let root = command_palette_recent_temp_root("pinned_caps_and_deduplicates");
+    let path = root.join("pinned.txt");
+    let mut pinned: Vec<String> = (0..(COMMAND_PALETTE_PINNED_COMMAND_LIMIT + 4))
+        .map(|index| format!("cmd_{index:02}"))
+        .collect();
+    pinned.insert(2, "cmd_00".to_owned());
+
+    save_command_palette_pinned_command_ids(&path, &pinned).expect("save pinned ids");
+    let loaded = load_command_palette_pinned_command_ids(&path).expect("load pinned ids");
+    let expected: Vec<String> = (0..COMMAND_PALETTE_PINNED_COMMAND_LIMIT)
+        .map(|index| format!("cmd_{index:02}"))
+        .collect();
+
+    assert_eq!(
+        loaded, expected,
+        "persisted pins keep first-seen order, dedupe, and stay capped"
+    );
+
+    drop(std::fs::remove_dir_all(root));
+}
+
+#[test]
+fn command_palette_pinned_unpin_persists_across_load() {
+    let root = command_palette_recent_temp_root("pinned_unpin_persists");
+    let path = root.join("pinned.txt");
+    let mut pinned = Vec::new();
+
+    assert!(toggle_command_palette_pinned_command(
+        &mut pinned,
+        &path,
+        &Command::Save
+    ));
+    assert!(!toggle_command_palette_pinned_command(
+        &mut pinned,
+        &path,
+        &Command::Save
+    ));
+
+    assert!(
+        load_command_palette_pinned_command_ids(&path)
+            .expect("load pinned ids")
+            .is_empty(),
+        "unpinning persists an empty pinned list"
+    );
+
+    drop(std::fs::remove_dir_all(root));
+}
+
+#[test]
+fn command_palette_pinned_missing_unreadable_or_corrupt_persistence_is_nonfatal() {
+    let root = command_palette_recent_temp_root("pinned_nonfatal_load");
+    let missing = root.join("missing.txt");
+    let unreadable = root.join("as-directory");
+    let corrupt = root.join("corrupt.txt");
+    std::fs::create_dir_all(&unreadable).expect("create unreadable directory path");
+    std::fs::write(&corrupt, "save\nbad id\n").expect("write corrupt pinned ids");
+
+    assert!(
+        load_command_palette_pinned_command_ids_or_empty(&missing).is_empty(),
+        "missing pinned ids fall back to empty"
+    );
+    assert!(
+        load_command_palette_pinned_command_ids_or_empty(&unreadable).is_empty(),
+        "unreadable pinned ids fall back to empty"
+    );
+    assert!(
+        load_command_palette_pinned_command_ids(&corrupt).is_err(),
+        "corrupt pinned ids are detected"
+    );
+    assert!(
+        load_command_palette_pinned_command_ids_or_empty(&corrupt).is_empty(),
+        "corrupt pinned ids fall back to empty at the host boundary"
+    );
+
+    drop(std::fs::remove_dir_all(root));
+}
+
+#[test]
+fn command_palette_pinned_blank_filter_promotes_pins_before_recents() {
+    let entries = vec![save(true), open(true), toggle(true)];
+    let pinned = vec![Command::OpenFile.diagnostic_id()];
+    let recents = vec![
+        Command::ToggleCommandPalette.diagnostic_id(),
+        Command::OpenFile.diagnostic_id(),
+        Command::Save.diagnostic_id(),
+    ];
+
+    let labels: Vec<&str> =
+        filter_command_palette_entries_with_pinned_and_recents(&entries, " ", &pinned, &recents)
+            .into_iter()
+            .map(|entry| entry.label.as_str())
+            .collect();
+
+    assert_eq!(
+        labels,
+        vec!["File: Open", "View: Command Palette", "File: Save"],
+        "pinned enabled commands rank before recents and do not duplicate rows"
+    );
+}
+
+#[test]
+fn command_palette_pinned_stale_and_disabled_ids_are_not_promoted() {
+    let entries = vec![save(false), open(true), toggle(true)];
+    let pinned = vec![
+        "missing_command".to_owned(),
+        Command::Save.diagnostic_id(),
+        Command::ToggleCommandPalette.diagnostic_id(),
+    ];
+    let recents = vec![Command::OpenFile.diagnostic_id()];
+
+    let labels: Vec<&str> =
+        filter_command_palette_entries_with_pinned_and_recents(&entries, "", &pinned, &recents)
+            .into_iter()
+            .map(|entry| entry.label.as_str())
+            .collect();
+
+    assert_eq!(
+        labels,
+        vec!["View: Command Palette", "File: Open", "File: Save"],
+        "stale pins add no rows and disabled pins stay in the original-order remainder"
+    );
+}
+
+#[test]
+fn command_palette_pinned_non_blank_filter_preserves_fuzzy_score_ordering() {
+    let entries = vec![
+        pe("Tools: Smart Vector", None, Command::OpenFile, true),
+        pe("Tools: Autosave", None, Command::OpenFile, true),
+        pe("Tools: Saver Options", None, Command::OpenFile, true),
+        save(true),
+    ];
+    let pinned = vec![Command::OpenFile.diagnostic_id()];
+    let recents = vec![Command::Save.diagnostic_id()];
+
+    let labels: Vec<&str> =
+        filter_command_palette_entries_with_pinned_and_recents(&entries, "save", &pinned, &recents)
+            .into_iter()
+            .map(|entry| entry.label.as_str())
+            .collect();
+
+    assert_eq!(
+        labels,
+        vec![
+            "File: Save",
+            "Tools: Saver Options",
+            "Tools: Autosave",
+            "Tools: Smart Vector",
+        ],
+        "pinned commands do not perturb non-blank fuzzy scoring"
+    );
+}
+
+#[test]
+fn command_palette_pin_toggle_does_not_dispatch_or_record_recent_history() {
+    let root = command_palette_recent_temp_root("pin_non_dispatch");
+    let path = root.join("pinned.txt");
+    let menu_commands = MenuCommandHandoff::new();
+    let mut pinned = Vec::new();
+    let recent = vec![Command::ToggleCommandPalette.diagnostic_id()];
+
+    assert!(toggle_command_palette_pinned_command(
+        &mut pinned,
+        &path,
+        &Command::Save
+    ));
+
+    assert_eq!(pinned, vec![Command::Save.diagnostic_id()]);
+    assert_eq!(
+        load_command_palette_pinned_command_ids(&path).expect("load pinned ids"),
+        vec![Command::Save.diagnostic_id()],
+        "pinning persists the command id"
+    );
+    assert!(
+        menu_commands.drain().is_empty(),
+        "pinning is not command activation and does not enqueue"
+    );
+    assert_eq!(
+        recent,
+        vec![Command::ToggleCommandPalette.diagnostic_id()],
+        "pinning does not update recent-history ids"
+    );
+
+    drop(std::fs::remove_dir_all(root));
+}
+
+#[test]
+fn command_palette_pinned_unwritable_save_is_nonfatal() {
+    let root = command_palette_recent_temp_root("pinned_unwritable_save");
+    let path = root.join("pinned-directory");
+    std::fs::create_dir_all(&path).expect("create directory at pinned path");
+    let mut pinned = Vec::new();
+
+    assert!(toggle_command_palette_pinned_command(
+        &mut pinned,
+        &path,
+        &Command::OpenFile
+    ));
+
+    assert_eq!(
+        pinned,
+        vec![Command::OpenFile.diagnostic_id()],
+        "save failure is nonfatal and the in-memory pin still changes"
     );
 
     drop(std::fs::remove_dir_all(root));

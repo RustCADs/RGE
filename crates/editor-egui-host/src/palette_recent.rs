@@ -127,7 +127,7 @@ fn is_valid_command_palette_recent_id(id: &str) -> bool {
     !id.is_empty() && id.chars().all(|ch| !ch.is_control() && !ch.is_whitespace())
 }
 
-fn default_config_dir() -> PathBuf {
+pub(crate) fn default_config_dir() -> PathBuf {
     if cfg!(target_os = "windows") {
         if let Some(appdata) = non_empty_env("APPDATA") {
             return appdata.join("rge");

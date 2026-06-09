@@ -9105,3 +9105,259 @@ is the only safeguard against selector drift.
    - The only available fix would hide arbitrary untracked files rather than a
      path-normalized generated target directory.
    - The validator must become blocking to make the behavior testable.
+
+106. **[DONE 2026-06-09 via local source-read audit - selected task 107 command-palette pinned favorites] Select the next bounded Phase 9/editor-usability implementation follow-up.**
+   Run a docs/source-read audit after the task-104/task-105 closure and select
+   exactly one new bounded implementation task as task 107, or record
+   `NEEDS_HUMAN` if the current evidence does not support a safe dispatch. This
+   is a selection audit only: it may read/search source to falsify stale claims,
+   but it must not implement the selected follow-up.
+
+   **MAY edit:**
+   - `.ai/dispatch.tasks.md`
+   - `Status.md`
+   - `HANDOFF.md`
+   - `plans/BASELINE.md`
+   - `change.md`
+   - generated ISSUE-106 handoff/audit/log artifacts for this dispatch only
+
+   **MUST NOT edit:**
+   - Rust source or tests under `crates/**`, `kernel/**`, `runtime/**`,
+     `editor/**`, or `tools/**`
+   - `Cargo.toml`, `Cargo.lock`, or any `**/Cargo.toml`
+   - GitHub workflows
+   - dispatch automation, guard, queue, scheduler, or verification scripts
+   - schemas, architecture-lint rules/config, ADR files, packet templates, or
+     existing handoff/log artifacts from other dispatches
+   - plugin runtime/discovery/loading code
+   - unrelated local `.ai/**`, `ai_handoffs/**`, or `ai_dispatch_logs/**`
+     artifacts
+
+   **MAY add new files:**
+   - generated ISSUE-106 handoff/audit/log artifacts for this dispatch only
+
+   **Current-state claims / falsification to include in the TASK packet:**
+   - Claim: task 104 and task 105 are complete, and this task 106 is the only
+     newly armed follow-up after the previously exhausted 105/105 queue.
+     Falsifying search:
+     `git grep -n -E "105/105|task 104|task 105|task 106|ISSUE-353|ISSUE-355|PR #354|PR #356" -- .ai/dispatch.tasks.md Status.md HANDOFF.md plans/BASELINE.md change.md`
+   - Claim: task 102 added only an editor-shell extension-command seam, not
+     real plugin runtime/discovery/loading.
+     Falsifying search:
+     `git grep -n -E "ExtensionCommandHandler|ExtensionCommandEvent|Command::Custom|Command::Plugin|PluginHost|PluginContext|runtime-wasmtime|plugin-discovery|rge_kernel_plugin_host" -- crates/editor-shell/src editor/rge-editor/src crates/editor-egui-host/src crates/editor-ui/src`
+   - Claim: the host-to-shell `MenuCommandHandoff` FIFO and
+     `EditorShell::route_menu_command` remain the active menu/palette dispatch
+     route, while the canonical menu registry owns menu definitions.
+     Falsifying search:
+     `git grep -n -E "MenuCommandHandoff|drain_and_route_menu_commands|route_menu_command|default_editor_menu|MenuRegistry|enabled_command_for_shortcut" -- crates/editor-egui-host/src crates/editor-shell/src crates/editor-ui/src editor/rge-editor/src`
+   - Claim: command-palette recent ordering and persistence are already done,
+     so task 106 must not select another recent-history persistence slice.
+     Falsifying search:
+     `git grep -n -E "palette_recent|command_palette_recent_command_ids|record_command_palette_recent_command|load_command_palette_recent_command_ids|save_command_palette_recent_command_ids" -- crates/editor-egui-host/src Status.md HANDOFF.md plans/BASELINE.md .ai/dispatch.tasks.md`
+
+   **Candidate classes to compare before selecting task 107:**
+   - Host-shell FIFO replacement or generalized registry execution beyond the
+     current `MenuCommandHandoff` -> `EditorShell::route_menu_command` path.
+   - Extension/plugin command execution beyond the injected handler seam, while
+     keeping real plugin runtime/discovery/loading out unless source evidence
+     shows a tiny safe slice.
+   - Keybinding/conflict policy or shortcut-surface improvements.
+   - Unsaved quit/close prompting and save-state UX.
+   - OS clipboard or typed editor clipboard behavior.
+   - Authoritative CAD graph/projection mutation with undo/dirty integration.
+   - Camera/navigation UI beyond the existing reset/zoom commands.
+   - Command-palette favorites/pinning or other palette UX that is distinct
+     from already-complete recent ordering and persistence.
+
+   **Selection requirements:**
+   - Read current docs and source before choosing; do not infer from stale
+     roadmap prose.
+   - Compare the full candidate set above and record why the selected follow-up
+     is smaller or safer than the deferred alternatives.
+   - Append exactly one task 107 with a bounded MAY-edit/MUST-NOT-edit envelope,
+     current-state falsification searches, required behavior, done criteria,
+     verification, and halt conditions.
+   - If no candidate can be defended as one bounded implementation dispatch,
+     record `NEEDS_HUMAN` with concrete evidence instead of manufacturing work.
+   - Do not implement task 107 during this audit.
+
+   **Verification required:**
+   - Required source/doc `git grep` or `rg` searches recorded in the EXEC packet.
+   - `git diff --check`
+   - `git diff --name-only`
+
+   **Result:** local source-read audit completed after task 104/task 105
+   closure. Required searches confirmed task 104 and task 105 are complete, the
+   editor-shell extension-command executor remains an injected seam only, the
+   canonical menu registry plus `MenuCommandHandoff`/`route_menu_command` remain
+   the active menu/palette route, and command-palette recents are already
+   persisted. Follow-up source reads found that the File/Edit/Play/View command
+   surface is now much more complete than stale backlog wording implied:
+   `SelectAll`, `Cut`, `Copy`, `Paste`, `Delete`, `Duplicate`, Close/Quit,
+   camera reset/zoom, enabled-only accelerators, plugin menu projection,
+   shortcut-conflict diagnostics, and extension-command injected-handler events
+   are all already represented in source and tests.
+
+   **Candidate comparison:** host-shell FIFO replacement/generalized registry
+   execution is still live but broader than one safe dispatch because the FIFO is
+   also the deliberate host-shell boundary and core execution already unifies
+   menu clicks and keyboard accelerators through `Command`. Real plugin command
+   execution remains beyond the task-102 seam because current editor source has
+   no plugin runtime/discovery/loading integration. Keybinding conflict fatality
+   policy, unsaved quit/close prompting, OS/typed clipboard behavior,
+   authoritative CAD graph/projection mutation with undo/dirty integration, and
+   broader camera/navigation UI each require wider policy or substrate decisions
+   than this audit should manufacture. The safest one-dispatch implementation
+   slice is command-palette pinned favorites in `editor-egui-host`: it is
+   distinct from task-104 recent-history persistence, reuses the same
+   host-local projection and persistence pattern, and does not alter command
+   routing, plugin runtime/discovery/loading, keybinding policy, clipboard, CAD
+   mutation, or undo/dirty semantics.
+
+   **Halt conditions:**
+   - Selecting task 107 would require implementation edits during task 106.
+   - The safest next step requires human product/architecture policy rather than
+     source-backed dispatch selection.
+   - Current source contradicts the premise enough that none of the candidate
+     classes can be scoped safely.
+
+107. **[DONE 2026-06-09] Add command-palette pinned favorites in `editor-egui-host`.**
+   Add a bounded host-local pinned/favorite command slice to the existing
+   command-palette UI. This is the next smallest Phase 9 editor-usability
+   follow-up after recent-history persistence: users can pin frequently used
+   projected commands so blank-filter palette ordering is stable and intentional
+   across sessions, while command execution continues to use the existing
+   `MenuCommandHandoff` route.
+
+   **MAY edit:**
+   - `crates/editor-egui-host/src/lib.rs`
+   - `crates/editor-egui-host/src/menu.rs`
+   - `crates/editor-egui-host/src/menu_tests.rs`
+   - `crates/editor-egui-host/src/palette_recent.rs`
+   - new focused `crates/editor-egui-host/src/palette_pinned.rs` or similarly
+     named host-local helper module if it keeps the host/menu files under the
+     line-cap and cohesion rules
+   - `.ai/dispatch.tasks.md`
+   - `Status.md`
+   - `HANDOFF.md`
+   - `plans/BASELINE.md`
+   - `change.md`
+   - generated ISSUE-107 handoff/audit/log artifacts for this dispatch only
+
+   **MUST NOT edit:**
+   - `crates/editor-shell/**`
+   - `crates/editor-ui/**`
+   - `crates/editor-actions/**`
+   - `kernel/**`
+   - `runtime/**`
+   - `editor/rge-editor/**`
+   - Cargo manifests or `Cargo.lock`
+   - GitHub workflows
+   - dispatch automation, guard, queue, scheduler, or verification scripts
+   - schemas, architecture-lint rules/config, ADR files, packet templates, or
+     existing handoff/log artifacts from other dispatches
+   - plugin runtime/discovery/loading code
+
+   **Current-state claims / falsification to include in the TASK packet:**
+   - Claim: command-palette recent ordering and persistence already exist and
+     must not be reimplemented.
+     Falsifying search:
+     `git grep -n -E "palette_recent|command_palette_recent_command_ids|record_command_palette_recent_command|load_command_palette_recent_command_ids|save_command_palette_recent_command_ids|enqueue_command_palette_activation" -- crates/editor-egui-host/src`
+   - Claim: no command-palette pinned/favorite command state exists in the
+     editor source today.
+     Falsifying search:
+     `git grep -n -E "favorite|favorites|Favourite|favourite|command_palette.*pin|pin.*command_palette|pinned_command|pinned.*command" -- crates/editor-egui-host/src crates/editor-shell/src crates/editor-ui/src editor/rge-editor/src`
+     -> expected matches may include generic "pin" wording in layout/dock docs;
+     no actual command-palette favorite/pinned state or persistence should
+     exist.
+   - Claim: command-palette entries are host projections of the current
+     `MenuRegistry`, and activation still enqueues a `Command` through the
+     host-to-shell handoff.
+     Falsifying search:
+     `git grep -n -E "command_palette_entries|command_palette_window|MenuCommandHandoff|enqueue_command_palette_activation|project_main_menu|Command::diagnostic_id" -- crates/editor-egui-host/src`
+   - Claim: plugin menu entries and extension commands must remain projected
+     data only; task 107 must not add real plugin runtime/discovery/loading or
+     a new command execution path.
+     Falsifying search:
+     `git grep -n -E "register_plugin_menu_entry|Command::Plugin|Command::Custom|ExtensionCommandHandler|PluginHost|runtime-wasmtime|plugin-discovery" -- crates/editor-egui-host/src crates/editor-shell/src editor/rge-editor/src`
+
+   **Required behavior:**
+   - Add host-owned pinned command ids keyed by `Command::diagnostic_id()`,
+     capped and de-duplicated.
+   - Load pinned ids when `EguiHost` is constructed, using the existing
+     command-palette persistence directory pattern or an injectable test path.
+   - Persist pin/unpin changes non-fatally; missing, corrupt, or unwritable
+     persistence must not prevent rendering, filtering, palette activation, or
+     command dispatch.
+   - Add a compact command-palette row affordance to pin and unpin a command
+     without dispatching it. The affordance must be available for enabled and
+     disabled rows, must not close the palette when toggled, and must not update
+     recent-history ordering.
+   - For blank or whitespace-only filters, promote currently projected and
+     enabled pinned commands first, in pinned-list order; then promote enabled
+     recent commands that are not already pinned; then append all remaining
+     projected rows in normal menu order.
+   - Stale pinned ids must be ignored. Disabled pinned rows must stay visible in
+     the normal remainder but must not be promoted ahead of enabled rows.
+   - Non-blank fuzzy search/filter ordering from task 98 must remain unchanged
+     except for rendering the pinned/unpinned affordance state.
+   - Main-menu activations must not pin commands or change pinned ordering.
+   - Preserve task-104 recent-history persistence semantics: successful palette
+     activations still record recents; pin/unpin clicks do not count as command
+     activations.
+
+   **Done criteria:**
+   - A command pinned in one host/helper instance is promoted in blank-filter
+     ordering after constructing a fresh host/helper with the same persistence
+     path.
+   - Unpinning removes the command from pinned promotion and persists across a
+     fresh host/helper load.
+   - Pinned commands outrank recent commands for blank filters, and recent
+     commands do not duplicate rows already promoted by pins.
+   - Stale pinned ids and disabled pinned rows are not promoted.
+   - Non-blank fuzzy ranking remains covered and unchanged.
+   - Pin/unpin interaction does not enqueue a `Command`, close the palette, or
+     update recent-history ids.
+
+   **Verification required:**
+   - Focused `editor-egui-host` tests for pinned load/save round trip,
+     cap/deduplication, unpin persistence, blank-filter ordering with pinned
+     before recent, stale/disabled pinned ids, pin/unpin non-dispatch behavior,
+     corrupt/missing/unwritable persistence where feasible, and non-blank fuzzy
+     ordering preservation.
+   - `cargo +nightly fmt --all -- --check`
+   - `cargo test -p rge-editor-egui-host --lib command_palette`
+   - `cargo test -p rge-editor-egui-host --lib`
+   - `cargo check -p rge-editor-egui-host --lib`
+   - `git diff --check`
+
+   **Result:** implemented in `editor-egui-host`. Added
+   `palette_pinned.rs` with capped, de-duplicated newline-delimited
+   `Command::diagnostic_id()` persistence at the same per-user config root used
+   by command-palette recents. `EguiHost` now loads pinned ids at construction,
+   keeps host-local pinned state, and passes it into the command-palette window.
+   The palette renders a compact Pin/Unpin row affordance that works for enabled
+   and disabled rows, does not close the palette, does not enqueue commands, and
+   does not record recent history. Blank filters now promote enabled pinned
+   commands first, then enabled recents not already promoted, then all remaining
+   rows in projected menu order. Stale pinned ids are ignored, disabled pinned
+   rows stay in the normal remainder, and non-blank fuzzy ordering is unchanged.
+
+   **Verification run:**
+   - `cargo test -p rge-editor-egui-host --lib command_palette` -> 41 passed.
+   - `cargo test -p rge-editor-egui-host --lib` -> 71 passed.
+   - `cargo +nightly fmt --all -- --check` -> passed.
+   - `cargo check -p rge-editor-egui-host --lib` -> passed warning-clean.
+
+   **Halt conditions:**
+   - The implementation requires editing `editor-shell`, `editor-ui`,
+     `editor-actions`, plugin runtime/discovery/loading, Cargo manifests,
+     workflows, dispatch automation, schemas, or architecture-lint config.
+   - The implementation requires replacing `MenuCommandHandoff`, adding a second
+     command registry/model, changing `Command` routing, or changing shortcut
+     conflict policy.
+   - A safe persistence path cannot be chosen from the existing
+     command-palette recent-history precedent.
+   - A full keybinding editor, plugin runtime execution, OS/typed clipboard,
+     CAD graph/projection mutation, or undo/dirty integration becomes necessary
+     to satisfy the task.
