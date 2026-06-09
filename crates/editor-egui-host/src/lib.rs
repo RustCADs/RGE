@@ -148,6 +148,7 @@ pub mod handoff;
 mod menu;
 mod palette_pinned;
 mod palette_recent;
+mod shortcut_help;
 pub mod tabs;
 
 pub use handoff::{
@@ -323,6 +324,7 @@ pub struct EguiHost {
 
     /// One-shot request to focus the command-palette search field on open.
     command_palette_search_focus_requested: bool,
+    shortcut_help_open: bool,
 }
 
 impl EguiHost {
@@ -476,6 +478,7 @@ impl EguiHost {
             command_palette_pinned_path,
             command_palette_selected_index: None,
             command_palette_search_focus_requested: false,
+            shortcut_help_open: false,
         }
     }
 
@@ -829,21 +832,13 @@ impl EguiHost {
         let command_palette_selected_index = &mut self.command_palette_selected_index;
         let command_palette_search_focus_requested =
             &mut self.command_palette_search_focus_requested;
+        let shortcut_help_rows = shortcut_help::shortcut_help_rows(&main_menu);
+        let shortcut_help_open = &mut self.shortcut_help_open;
         let dock_state = &mut self.dock_state;
         let full_output = self.context.run_ui(raw_input, |root_ui| {
-            // Top menu bar — File ▸ Open / Save / Save As New Project, Edit ▸
-            // Undo / Redo, Play ▸ Play / Pause / Stop / Step, View ▸ Reset
-            // Camera, and optional Plugins entries. Added BEFORE the bottom
-            // status bar + DockArea so egui
-            // reserves the top strip and the dock fills the remaining central rect.
-            // Activating an item ENQUEUES a `Command` onto the host→shell FIFO; the
-            // editor-shell drain routes it (File wiring + A2 Edit + A3 Play + A4 View).
             egui::Panel::top("rge_menu_bar").show_inside(root_ui, |ui| {
                 egui::MenuBar::new().ui(ui, |ui| {
-                    // Every item's `enabled` is the resolved `ResolvedEntry.enabled`
-                    // from `project_main_menu` (the canonical registry enablement
-                    // path) — File/Edit grey out outside Editing, Play items per the
-                    // live PlayState. The host re-encodes no validity rule.
+                    // Existing projected entries enqueue Commands; shortcut help does not.
                     ui.menu_button("File", |ui| {
                         for (label, shortcut, cmd, enabled) in &main_menu.file {
                             if menu_item(ui, *enabled, label.as_str(), shortcut.as_deref())
@@ -883,6 +878,7 @@ impl EguiHost {
                                 ui.close();
                             }
                         }
+                        shortcut_help::view_menu_affordance(ui, shortcut_help_open);
                     });
                     if !main_menu.plugins.is_empty() {
                         ui.menu_button("Plugins", |ui| {
@@ -927,9 +923,12 @@ impl EguiHost {
                     command,
                 );
             }
-            // Bottom status bar — open save source file name + dirty marker. Added
-            // BEFORE the DockArea so egui reserves the bottom strip and the
-            // dock fills the remaining central rect.
+            // Draw the help window before the bottom status bar and dock area.
+            shortcut_help::shortcut_help_window(
+                root_ui.ctx(),
+                shortcut_help_open,
+                &shortcut_help_rows,
+            );
             egui::Panel::bottom("rge_save_status_bar").show_inside(root_ui, |ui| {
                 rge_editor_ui::widgets::save_status::ui(&save_status, ui);
             });
