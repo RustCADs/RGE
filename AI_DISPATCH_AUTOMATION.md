@@ -574,6 +574,13 @@ deliberately excluded to keep the per-dispatch refresh cheap. The full
 structural alternative — a per-worktree `CARGO_TARGET_DIR` — was rejected
 because it forces a cold full-workspace build on every dispatch.
 
+When operators deliberately run a verifier with an in-repo `CARGO_TARGET_DIR`
+such as `target-issue-353`, ADR-121 advisory scope validation excludes that
+active target directory from touched-file analysis. That exception is limited
+to the generated build target path passed by `.ai/dispatch.verify.ps1`; it does
+not hide source, docs, handoff packets, queue logs, workflows, or other
+untracked files.
+
 `Register-AiDispatchSchedule.ps1` is the **recurring-trigger layer**. It
 registers a Windows Scheduled Task that fires one of the two runners on a fixed
 interval — the issue queue by default, or the autonomous driver with

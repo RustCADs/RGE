@@ -9014,7 +9014,7 @@ is the only safeguard against selector drift.
    - Favorites/pinning becomes necessary to satisfy the task; record that as a
      separate human/product decision instead of implementing it.
 
-105. **Fix ADR-121 advisory scope for generated verify target dirs.**
+105. **[DONE 2026-06-09 via ISSUE-355 manual salvage] Fix ADR-121 advisory scope for generated verify target dirs.**
    Harden the non-blocking ADR-121 handoff-packet advisory validator so the
    scope check does not treat generated build artifacts from the active
    verification target directory as dispatch-touched files. ISSUE-353 recovery
@@ -9087,6 +9087,17 @@ is the only safeguard against selector drift.
      outside-target violation preservation.
    - `git diff --check`
    - Canonical `.ai/dispatch.verify.ps1`
+
+   **Result:** implemented after the automated ISSUE-355 task-gate attempts
+   exhausted their plan revisions. `Test-HandoffPacket.ps1` now accepts an
+   optional `-ExcludeTouchedPath` list, normalizes those paths to repo-local
+   prefixes, and filters only touched files under those prefixes before scope
+   evaluation. `.ai/dispatch.verify.ps1` passes the active `CARGO_TARGET_DIR`
+   to that validator path, so in-repo generated target directories no longer
+   produce false advisory scope violations. Focused Pester coverage confirms
+   target-dir files are ignored while an outside-target out-of-envelope file
+   still fails scope, and wrapper coverage confirms the verifier advisory call
+   forwards `CARGO_TARGET_DIR`.
 
    **Halt conditions:**
    - The fix requires changing Rust source, Cargo metadata, GitHub workflow

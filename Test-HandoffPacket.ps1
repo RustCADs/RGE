@@ -28,6 +28,8 @@ param(
 
     [string[]]$PlannerOverridePacket = @(),
 
+    [string[]]$ExcludeTouchedPath = @(),
+
     [string]$Integration = 'main',
 
     [switch]$JsonOnly,
@@ -519,8 +521,80 @@ function Test-HandoffScope {
     }
 }
 
+function Convert-HandoffExcludePathToPrefix {
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $null }
+
+    $repoRoot = (& git rev-parse --show-toplevel 2>$null)
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($repoRoot)) {
+        return $null
+    }
+
+    $repoFull = [System.IO.Path]::GetFullPath($repoRoot.Trim()).TrimEnd('\', '/')
+    $rawPath = $Path.Trim()
+    if ([System.IO.Path]::IsPathRooted($rawPath)) {
+        $full = [System.IO.Path]::GetFullPath($rawPath).TrimEnd('\', '/')
+    } else {
+        $full = [System.IO.Path]::GetFullPath((Join-Path (Get-Location).Path $rawPath)).TrimEnd('\', '/')
+    }
+
+    if ($full.Length -le $repoFull.Length) { return $null }
+    if (-not $full.StartsWith($repoFull, [System.StringComparison]::OrdinalIgnoreCase)) {
+        return $null
+    }
+
+    $separator = $full[$repoFull.Length]
+    if ($separator -ne '\' -and $separator -ne '/') { return $null }
+    $relative = $full.Substring($repoFull.Length + 1)
+    if ([string]::IsNullOrWhiteSpace($relative)) { return $null }
+    return (Normalize-HandoffPath $relative).TrimEnd('/')
+}
+
+function Test-HandoffPathUnderPrefix {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$Prefix
+    )
+
+    $normalized = (Normalize-HandoffPath $Path).TrimEnd('/')
+    $prefix = (Normalize-HandoffPath $Prefix).TrimEnd('/')
+    return ($normalized -eq $prefix -or $normalized.StartsWith("$prefix/", [System.StringComparison]::OrdinalIgnoreCase))
+}
+
+function Remove-HandoffExcludedTouchedFiles {
+    param(
+        [string[]]$TouchedFiles = @(),
+        [string[]]$ExcludePath = @()
+    )
+
+    $prefixes = @(
+        foreach ($path in $ExcludePath) {
+            $prefix = Convert-HandoffExcludePathToPrefix -Path $path
+            if (-not [string]::IsNullOrWhiteSpace($prefix)) { $prefix }
+        }
+    )
+    if ($prefixes.Count -eq 0) { return @($TouchedFiles) }
+
+    return @(
+        foreach ($file in $TouchedFiles) {
+            $excluded = $false
+            foreach ($prefix in $prefixes) {
+                if (Test-HandoffPathUnderPrefix -Path $file -Prefix $prefix) {
+                    $excluded = $true
+                    break
+                }
+            }
+            if (-not $excluded) { $file }
+        }
+    )
+}
+
 function Get-HandoffTouchedFiles {
-    param([Parameter(Mandatory)][string]$IntegrationRef)
+    param(
+        [Parameter(Mandatory)][string]$IntegrationRef,
+        [string[]]$ExcludePath = @()
+    )
     $base = (& git merge-base $IntegrationRef HEAD 2>$null).Trim()
     if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($base)) {
         throw "git merge-base failed for integration ref '$IntegrationRef'"
@@ -529,7 +603,8 @@ function Get-HandoffTouchedFiles {
     $files += & git diff --name-only "$base..HEAD"
     $files += & git diff --name-only HEAD
     $files += & git ls-files --others --exclude-standard
-    return @($files | Where-Object { $_ } | ForEach-Object { Normalize-HandoffPath $_ } | Sort-Object -Unique)
+    $normalized = @($files | Where-Object { $_ } | ForEach-Object { Normalize-HandoffPath $_ } | Sort-Object -Unique)
+    return @(Remove-HandoffExcludedTouchedFiles -TouchedFiles $normalized -ExcludePath $ExcludePath)
 }
 
 if ($env:RGE_HANDOFF_VALIDATOR_SKIP_MAIN -eq '1') { return }
@@ -542,7 +617,7 @@ $packetResult = Test-HandoffPacketFile -Path $PacketPath
 $scopeResult = $null
 if (-not [string]::IsNullOrWhiteSpace($TaskPacket)) {
     try {
-        $touched = @(Get-HandoffTouchedFiles -IntegrationRef $Integration)
+        $touched = @(Get-HandoffTouchedFiles -IntegrationRef $Integration -ExcludePath $ExcludeTouchedPath)
         $scopeResult = Test-HandoffScope -TaskPath $TaskPacket -TouchedFiles $touched -OverridePacket $PlannerOverridePacket
     } catch {
         $scopeResult = [ordered]@{

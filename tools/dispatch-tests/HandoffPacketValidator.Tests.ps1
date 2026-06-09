@@ -276,6 +276,36 @@ INCIDENTAL_OK: true
         $result.violations | Should -Contain 'docs/out-of-scope.md'
     }
 
+    It 'excludes configured repo-local target paths without hiding outside violations' {
+        $envelope = @'
+<!-- handoff:envelope v1 -->
+MAY_EDIT:
+  - Test-HandoffPacket.ps1
+MUST_NOT_EDIT:
+INCIDENTAL_OK: false
+<!-- /handoff:envelope -->
+'@
+        $packet = Write-Packet -Directory (New-TestPacketDirectory) -Name 'ISSUE-PESTER-121_TASK_2026-06-06_12-00-00+0300.md' `
+            -Text (New-TaskPacketText -Envelope $envelope)
+        $targetDir = Join-Path $script:RepoRootForTest 'target-issue-pester'
+        $touched = Remove-HandoffExcludedTouchedFiles -TouchedFiles @(
+            'target-issue-pester/debug/build-script-build.d',
+            'target-issue-pester/release/deps/generated.dll',
+            'docs/out-of-scope.md'
+        ) -ExcludePath @($targetDir)
+
+        $touched | Should -Not -Contain 'target-issue-pester/debug/build-script-build.d'
+        $touched | Should -Not -Contain 'target-issue-pester/release/deps/generated.dll'
+        $touched | Should -Contain 'docs/out-of-scope.md'
+
+        $result = Test-HandoffScope -TaskPath $packet -TouchedFiles $touched
+
+        $result.verdict | Should -Be 'FAIL'
+        $result.violations | Should -Contain 'docs/out-of-scope.md'
+        $result.violations | Should -Not -Contain 'target-issue-pester/debug/build-script-build.d'
+        $result.violations | Should -Not -Contain 'target-issue-pester/release/deps/generated.dll'
+    }
+
     It 'downgrades violations to WARN only for Planner-owned overrides' {
         $envelope = @'
 <!-- handoff:envelope v1 -->

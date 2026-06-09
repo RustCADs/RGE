@@ -187,4 +187,46 @@ exit 0
             Set-TestEnvVar -Name 'RGE_AI_DISPATCH_ID' -Value $old
         }
     }
+
+    It 'passes the active cargo target dir to the advisory validator as an excluded touched path' {
+        $oldDispatch = $env:RGE_AI_DISPATCH_ID
+        $oldTarget = $env:CARGO_TARGET_DIR
+        try {
+            Set-TestEnvVar -Name 'RGE_AI_DISPATCH_ID' -Value 'ISSUE-VERIFY'
+            Set-TestEnvVar -Name 'CARGO_TARGET_DIR' -Value (Join-Path $TestDrive 'target-issue-verify')
+            $handoffDir = Join-Path $TestDrive 'ai_handoffs'
+            New-Item -ItemType Directory -Path $handoffDir -Force | Out-Null
+            Write-Utf8NoBomFile -Path (Join-Path $handoffDir 'ISSUE-VERIFY_TASK_2026-06-06_01-00-00+0300.md') -Text 'task'
+            Write-Utf8NoBomFile -Path (Join-Path $handoffDir 'ISSUE-VERIFY_EXEC_2026-06-06_02-00-00+0300.md') -Text 'exec'
+            $validator = Join-Path $TestDrive 'validator-exclude-target.ps1'
+            Write-Utf8NoBomFile -Path $validator -Text @'
+param(
+    [string]$PacketPath,
+    [string]$TaskPacket,
+    [string[]]$PlannerOverridePacket,
+    [string[]]$ExcludeTouchedPath,
+    [string]$Integration
+)
+if ($ExcludeTouchedPath -notcontains $env:CARGO_TARGET_DIR) {
+    Write-Output "HANDOFF_VALIDATE: FAIL"
+    Write-Output "ExcludeTouchedPath=$($ExcludeTouchedPath -join ',')"
+    exit 2
+}
+Write-Output "HANDOFF_VALIDATE: PASS"
+exit 0
+'@
+
+            $result = Invoke-HandoffPacketAdvisoryValidation -RepoRoot $TestDrive `
+                -HandoffDir $handoffDir `
+                -ValidatorPath $validator `
+                -IntegrationRef 'main' `
+                -BranchName 'main'
+
+            $result.Status | Should -Be 'PASS'
+            $result.ExitCode | Should -Be 0
+        } finally {
+            Set-TestEnvVar -Name 'RGE_AI_DISPATCH_ID' -Value $oldDispatch
+            Set-TestEnvVar -Name 'CARGO_TARGET_DIR' -Value $oldTarget
+        }
+    }
 }
