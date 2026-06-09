@@ -9698,7 +9698,7 @@ is the only safeguard against selector drift.
      unless those are explicitly scoped as the narrow audit-selected task with
      source-backed safety.
 
-111. **Add unsaved Close/Quit confirmation in `editor-shell` / `rge-editor`.**
+111. **[DONE 2026-06-09 via ISSUE-360 / commit `f831558`] Add unsaved Close/Quit confirmation in `editor-shell` / `rge-editor`.**
    Add a bounded dirty-state guard for destructive document close and
    application quit paths. Current source already has the save/source/dirty
    model and native-dialog ownership split needed for this: `EditorShell`
@@ -9817,3 +9817,96 @@ is the only safeguard against selector drift.
      dirty-state model.
    - The binary cannot provide the native confirmation implementation using its
      existing dependency surface, or adding a dependency would be necessary.
+
+112. **Post-unsaved-confirmation Phase 9 next-task source audit.**
+   The automation queue is exhausted after task 111. Re-arm automation with a
+   docs/source-read audit that selects exactly one bounded Phase 9
+   editor-usability implementation follow-up as task 113, or records
+   `NEEDS_HUMAN` if the remaining candidates require product/architecture
+   policy before code.
+
+   **MAY edit:**
+   - `.ai/dispatch.tasks.md`
+   - `Status.md`
+   - `HANDOFF.md`
+   - `plans/BASELINE.md`
+   - `change.md`
+   - generated ISSUE-112 handoff/audit/log artifacts for this dispatch only
+
+   **MUST NOT edit:**
+   - Rust source or tests under `crates/**`, `kernel/**`, `runtime/**`, or
+     `editor/**`
+   - Cargo manifests or `Cargo.lock`
+   - GitHub workflows
+   - dispatch automation, guard, queue, scheduler, or verification scripts
+   - schemas, architecture-lint rules/config, ADR files, packet templates, or
+     existing handoff/log artifacts from other dispatches
+   - plugin runtime/discovery/loading implementation code
+
+   **Current-state claims / falsification to include in the EXEC packet:**
+   - Claim: task 111 completed the unsaved Close/Quit/window-close guard, so
+     task 113 must not reselect dirty-close prompting.
+     Falsifying search:
+     `git grep -n -E "UnsavedChanges|with_unsaved_changes_dialog|handle_close_file_request|handle_quit_request|CloseRequested|MessageDialog|command_bus\\(\\)\\.is_dirty" -- crates/editor-shell/src editor/rge-editor/src Status.md HANDOFF.md plans/BASELINE.md .ai/dispatch.tasks.md`
+   - Claim: menu, palette, and accelerator activations still cross the
+     host-shell boundary through `MenuCommandHandoff` and
+     `EditorShell::route_menu_command`; replacing that route remains broader
+     than a UI-only task unless current source shows a tiny safe slice.
+     Falsifying search:
+     `git grep -n -E "MenuCommandHandoff|drain_and_route_menu_commands|route_menu_command|command_palette_window|enqueue_command_palette_activation|enabled_command_for_shortcut|default_editor_menu" -- crates/editor-egui-host/src crates/editor-shell/src crates/editor-ui/src editor/rge-editor/src`
+   - Claim: extension/plugin commands still stop at the task-102 injected
+     handler seam; no real plugin runtime/discovery/loading path is wired into
+     the editor command route.
+     Falsifying search:
+     `git grep -n -E "ExtensionCommandHandler|ExtensionCommandEvent|Command::Custom|Command::Plugin|PluginHost|PluginContext|plugin-discovery|runtime-wasmtime|rge_kernel_plugin_host" -- crates/editor-shell/src crates/editor-egui-host/src crates/editor-ui/src editor/rge-editor/src`
+   - Claim: remaining stale roadmap candidates must be rechecked from current
+     source before selection, especially host FIFO/generalized execution,
+     shortcut/keybinding policy, OS/typed clipboard, CAD/editor mutation routes,
+     and camera/navigation controls.
+     Falsifying search:
+     `git grep -n -E "Shortcut Conflicts|shortcut_conflicts|keybinding|has_clipboard_entities|Command::Cut|Command::Copy|Command::Paste|Command::Duplicate|Command::Delete|cad|CadGraph|Command::ResetCamera|Command::ZoomIn|Command::ZoomOut|Command::Custom|Command::Plugin" -- crates/editor-egui-host/src crates/editor-shell/src crates/editor-ui/src editor/rge-editor/src`
+
+   **Candidate classes to compare before selecting task 113:**
+   - Host-shell FIFO replacement or generalized registry execution beyond the
+     current `MenuCommandHandoff` -> `EditorShell::route_menu_command` path.
+   - Extension/plugin command execution beyond the injected handler seam,
+     including whether any substrate-only step exists before real runtime or
+     discovery/loading work.
+   - Keybinding/conflict policy, shortcut diagnostics, or shortcut remapping
+     after task 109's read-only help window.
+   - OS clipboard or typed editor clipboard behavior beyond the current
+     shell-local entity clipboard.
+   - Authoritative CAD graph/projection mutation with undo/dirty integration.
+   - Camera/navigation UI beyond existing reset/zoom commands and scene-aware
+     labels.
+   - Any other Phase 9/editor-usability candidate that current source shows is
+     smaller and safer than the listed deferred areas.
+
+   **Selection requirements:**
+   - Read current docs and source before choosing; do not infer from stale
+     backlog prose or from `ai_handoffs/` file names.
+   - Compare the full candidate set above and record why the selected follow-up
+     is smaller or safer than the deferred alternatives.
+   - Append exactly one task 113 with a bounded MAY-edit/MUST-NOT-edit envelope,
+     current-state falsification searches, required behavior, done criteria,
+     verification, and halt conditions.
+   - If no candidate can be defended as one bounded implementation dispatch,
+     record `NEEDS_HUMAN` with concrete source evidence instead of
+     manufacturing work.
+   - Do not implement task 113 during this audit.
+
+   **Verification required:**
+   - Required source/doc `git grep` or `rg` searches recorded in the EXEC
+     packet or status update.
+   - `git diff --check`
+   - `git diff --name-only`
+
+   **Halt conditions:**
+   - Selecting task 113 would require implementation edits during task 112.
+   - Current source shows all plausible next slices require human
+     product/architecture policy before implementation.
+   - The selected follow-up would need Cargo/workflow/automation/schema/ADR
+     edits, real plugin runtime/discovery/loading, command-route replacement,
+     OS clipboard integration, authoritative CAD mutation, or undo/dirty policy
+     unless those are explicitly scoped as the narrow audit-selected task with
+     source-backed safety.

@@ -87,6 +87,16 @@ traits. Host-shell FIFO replacement, real plugin runtime/discovery/loading,
 shortcut/keybinding policy, OS/typed clipboard, CAD mutation/undo, and broader
 camera/navigation work remain deferred as wider or policy-heavy.
 
+**2026-06-09 update 8:** ISSUE-360 published task 111 as commit `f831558`.
+The shipped implementation adds the unsaved dirty guard through an
+`editor-shell` trait boundary and wires the binary-owned native dialog in
+`rge-editor`; canonical verification and Codex control both passed. The next
+automation tick returned no-selection because the implementation commit did not
+also mark task 111 done or append a task 112. The task source is re-armed with
+task 112, a docs/source-read-only audit that must compare the remaining
+Phase 9/editor-usability candidates from current source and append exactly one
+bounded task 113 or record `NEEDS_HUMAN`.
+
 ---
 
 ## Phase 9 editor-usability task-104 selection audit
