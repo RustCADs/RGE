@@ -56,6 +56,16 @@ to compare the remaining editor-usability candidates against current docs and
 source, then append exactly one bounded implementation task 109 or record
 `NEEDS_HUMAN`; it is not an implementation task.
 
+**2026-06-09 update 5:** task 108 completed that audit and selected task 109:
+host-local keyboard shortcuts help in `editor-egui-host`. The audit deferred
+host-shell FIFO replacement, real plugin execution, keybinding conflict
+policy/remapping, unsaved close/quit prompts, OS/typed clipboard, authoritative
+CAD mutation/undo, and broader camera/navigation controls as wider or
+policy-heavy. Task 109 is a discoverability slice over existing
+`ProjectedMainMenu` shortcut projection only: no new command, binding,
+shortcut policy, command routing, plugin runtime/discovery/loading, Cargo,
+`editor-shell`, or `editor-ui` change.
+
 ---
 
 ## Phase 9 editor-usability task-104 selection audit

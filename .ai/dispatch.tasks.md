@@ -9362,7 +9362,7 @@ is the only safeguard against selector drift.
      CAD graph/projection mutation, or undo/dirty integration becomes necessary
      to satisfy the task.
 
-108. **Post-palette Phase 9 next-task source audit.**
+108. **[DONE 2026-06-09 via local source-read audit - selected task 109 keyboard-shortcuts help] Post-palette Phase 9 next-task source audit.**
    The task queue is exhausted after task 107. Re-arm automation with a
    docs/source-read audit that selects exactly one bounded Phase 9
    editor-usability implementation follow-up as task 109, or records
@@ -9457,3 +9457,147 @@ is the only safeguard against selector drift.
      OS clipboard integration, authoritative CAD mutation, or undo/dirty policy
      unless those are explicitly scoped as the narrow audit-selected task with
      source-backed safety.
+
+   **Result:** local source-read audit completed after task 107 closure. Required
+   searches confirmed task 107's fuzzy/recent/pinned command-palette work is
+   already complete; menu clicks, palette activations, and enabled keyboard
+   accelerators still share the `MenuCommandHandoff` -> `EditorShell::route_menu_command`
+   route; extension/plugin activations still stop at the task-102 injected
+   `ExtensionCommandHandler` seam; shortcut conflicts are represented as
+   registry data and host diagnostics; close/quit still avoid unsaved prompts
+   while dirty state is visible through save-status/window-title paths; clipboard
+   behavior remains shell-local entity blobs; Edit commands operate on the
+   wrapper-world selection/entities; and View camera reset/zoom commands already
+   exist and route through the menu sink.
+
+   **Candidate comparison:** host-shell FIFO replacement/generalized registry
+   execution remains broader than a single UI follow-up because it would replace
+   the deliberate host-shell boundary. Real plugin command execution still
+   requires runtime/discovery/loading decisions. Keybinding conflict fatality or
+   a keybinding editor needs product policy, but a read-only shortcut help
+   surface is source-backed by the existing `ProjectedMainMenu` shortcut
+   projection. Unsaved close/quit prompts, OS/typed clipboard, authoritative CAD
+   mutation with undo/dirty integration, and broader camera/navigation controls
+   each require policy or substrate work beyond this audit's safe automation
+   bar. The selected one-dispatch follow-up is therefore host-local keyboard
+   shortcuts help in `editor-egui-host`: a discoverability surface over the
+   current projected menu/shortcut data, with no routing, binding, conflict
+   policy, plugin runtime, clipboard, CAD, or undo/dirty changes.
+
+109. **Add host-local keyboard shortcuts help in `editor-egui-host`.**
+   Add a bounded shortcut-discoverability surface to the existing egui host. The
+   help surface must be derived from the already-resolved main-menu projection
+   so it reflects current labels, shortcut display strings, passive Play hints,
+   plugin menu entries, and enablement without adding a second shortcut model.
+
+   **MAY edit:**
+   - `crates/editor-egui-host/src/lib.rs`
+   - `crates/editor-egui-host/src/menu.rs`
+   - `crates/editor-egui-host/src/menu_tests.rs`
+   - new focused `crates/editor-egui-host/src/shortcut_help.rs` or similarly
+     named host-local helper module if it keeps the host/menu files cohesive
+   - `.ai/dispatch.tasks.md`
+   - `Status.md`
+   - `HANDOFF.md`
+   - `plans/BASELINE.md`
+   - `change.md`
+   - generated ISSUE-109 handoff/audit/log artifacts for this dispatch only
+
+   **MUST NOT edit:**
+   - `crates/editor-shell/**`
+   - `crates/editor-ui/**`
+   - `crates/editor-actions/**`
+   - `crates/cad-core/**`
+   - `crates/cad-projection/**`
+   - `kernel/**`
+   - `runtime/**`
+   - `editor/rge-editor/**`
+   - Cargo manifests or `Cargo.lock`
+   - GitHub workflows
+   - dispatch automation, guard, queue, scheduler, or verification scripts
+   - schemas, architecture-lint rules/config, ADR files, packet templates, or
+     existing handoff/log artifacts from other dispatches
+   - plugin runtime/discovery/loading code
+
+   **Current-state claims / falsification to include in the TASK packet:**
+   - Claim: task 107 completed command-palette fuzzy/recent/pinned work, so task
+     109 must not select another palette fuzzy/recent/pinned persistence slice.
+     Falsifying search:
+     `git grep -n -E "palette_recent|palette_pinned|command_palette_recent_command_ids|command_palette_pinned_command_ids|filter_command_palette_entries_with_pinned_and_recents|toggle_command_palette_pinned_command|enqueue_command_palette_activation" -- crates/editor-egui-host/src Status.md HANDOFF.md plans/BASELINE.md .ai/dispatch.tasks.md`
+   - Claim: shortcut labels and enablement are already projected through
+     `ProjectedMainMenu`, but no dedicated keyboard-shortcuts help/window exists
+     in the host today.
+     Falsifying search:
+     `git grep -n -E "Shortcut Help|Keyboard Shortcuts|shortcut_help|shortcut.*window|ShortcutsOverlay|shortcuts_overlay|Shortcut Conflicts|ProjectMainMenu|ProjectedMenuEntry|command_palette_entries" -- crates/editor-egui-host/src crates/editor-ui/src crates/editor-shell/src`
+     -> expected matches include `ShortcutsOverlay` layout configuration,
+     `Shortcut Conflicts` diagnostics, and `project_main_menu` /
+     `command_palette_entries`; no current shortcut-help window or helper should
+     exist.
+   - Claim: the executable shortcut source of truth is still
+     `default_editor_menu` / `Shortcut::display`, while editor-shell executes
+     enabled accelerators via `ResolveResult::enabled_command_for_shortcut`.
+     Falsifying search:
+     `git grep -n -E "Shortcut::new|Shortcut::plain|shortcut_hint|Shortcut::display|command_for_shortcut|enabled_command_for_shortcut" -- crates/editor-ui/src/menus crates/editor-egui-host/src crates/editor-shell/src/lifecycle/accelerator.rs`
+   - Claim: `editor-egui-host` already has host-local UI surfaces that do not
+     dispatch commands, alongside routed menu/palette command activation; task
+     109 can add a host-local help window without replacing command routing.
+     Falsifying search:
+     `git grep -n -E 'egui::Window::new|menu_button\("Shortcut Conflicts"|command_palette_window|MenuCommandHandoff|menu_commands\.push|toggle_command_palette' -- crates/editor-egui-host/src`
+
+   **Required behavior:**
+   - Add a host-local keyboard-shortcuts help affordance in the egui menu bar and
+     a transient egui window/surface for the help content.
+   - Build help rows only from the current `ProjectedMainMenu` data. Preserve
+     menu grouping and projected order for File, Edit, Play, View, and Plugins.
+   - Include entries that carry `Some(shortcut)` from either executable
+     shortcuts or passive `shortcut_hint` values; omit entries with no shortcut.
+   - Display current projected labels, shortcut strings, command diagnostic ids,
+     and enabled/disabled state so the help surface reflects live predicates and
+     dynamic labels such as View -> Frame Scene.
+   - Plugin menu rows may appear only as projected menu data; do not add real
+     plugin runtime/discovery/loading or a new execution path.
+   - Opening, closing, or interacting with the help surface must not enqueue a
+     `Command`, close the command palette, update command-palette recents or
+     pins, change menu enablement, or alter accelerator execution.
+
+   **Explicit non-goals:**
+   - No keybinding editor, shortcut remapping, conflict fatality policy, or
+     conflict resolution.
+   - No `?` keyboard shortcut, workspace `ShortcutsOverlay` integration,
+     `editor-ui` layout migration, or new `Command` variant.
+   - No command-route replacement, generalized command executor, plugin runtime
+     execution, OS clipboard integration, CAD graph/projection mutation, or
+     undo/dirty policy.
+
+   **Done criteria:**
+   - Focused host tests prove shortcut-help row derivation groups rows by menu
+     section, preserves current projected order, includes passive Play hints,
+     omits unshortcuted rows, retains enablement, and includes plugin rows only
+     when they are projected.
+   - A default-menu projection test pins representative rows for File/Edit/Play/View,
+     including `Ctrl+S`, `Ctrl+Z`, `Space`/`Escape`, and Home/PageUp/PageDown.
+   - A scene-aware predicate test proves the dynamic View label flows through the
+     help rows without changing command identity.
+   - A non-dispatch test proves the help affordance/window does not push into
+     `MenuCommandHandoff` and does not mutate command-palette recent or pinned
+     state.
+
+   **Verification required:**
+   - `cargo test -p rge-editor-egui-host --lib shortcut`
+   - `cargo test -p rge-editor-egui-host --lib`
+   - `cargo check -p rge-editor-egui-host --lib`
+   - `cargo +nightly fmt --all -- --check`
+   - `git diff --check`
+
+   **Halt conditions:**
+   - The implementation requires editing `editor-shell`, `editor-ui`,
+     `editor-actions`, CAD crates, kernel/runtime crates, plugin
+     runtime/discovery/loading code, Cargo manifests/lockfiles, workflows,
+     dispatch automation, schemas, ADRs, or architecture-lint config.
+   - The implementation requires a new `Command` variant, new accelerator,
+     `ShortcutsOverlay` workspace integration, keybinding remap/editor work,
+     shortcut conflict policy, or command-route replacement.
+   - Shortcut-help rows cannot be sourced from existing projected menu data and
+     would require a parallel hard-coded shortcut table.
+   - Real plugin execution, OS/typed clipboard behavior, authoritative CAD
+     mutation, or undo/dirty integration becomes necessary to satisfy the task.
