@@ -194,6 +194,9 @@ function Invoke-HandoffPacketAdvisoryValidation {
             foreach ($override in $overridePackets) { $args += $override.FullName }
         }
     }
+    if (-not [string]::IsNullOrWhiteSpace($env:CARGO_TARGET_DIR)) {
+        $args += @('-ExcludeTouchedPath', $env:CARGO_TARGET_DIR)
+    }
 
     $prevEap = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
