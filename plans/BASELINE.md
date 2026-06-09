@@ -110,6 +110,15 @@ mutation, or undo/dirty behavior. Broader host FIFO/generalized execution, real
 plugin execution, OS/typed clipboard, CAD mutation/undo, and camera/navigation
 work remain deferred.
 
+**2026-06-09 update 10:** ISSUE-362 implemented task 113. The previous inline
+`"Shortcut Conflicts"` top-bar dropdown is replaced by a host-local diagnostics
+affordance that opens a persistent egui window over the existing
+`ProjectedMainMenu.conflicts` rows. The projection remains read-only and
+non-activating: no command handoff, palette state, shortcut-help state,
+registry policy, shell route, plugin runtime, Cargo, `editor-ui`, or
+`editor-shell` behavior changed. The task brief is now exhausted at 113/113
+done.
+
 ---
 
 ## Phase 9 editor-usability task-104 selection audit

@@ -101,7 +101,7 @@
 //!     `MenuEntry.shortcut` (`menu::menu_item`); display-only — clicks dispatch
 //!     through the FIFO. Play shows passive Space/Escape hints; View camera
 //!     commands show Home / PageUp / PageDown accelerators. Shortcut conflicts
-//!     detected by the registry are surfaced as a diagnostic menu when present.
+//!     detected by the registry are surfaced as a diagnostic window when present.
 //!
 //! # Headless by design
 //!
@@ -148,6 +148,7 @@ pub mod handoff;
 mod menu;
 mod palette_pinned;
 mod palette_recent;
+mod shortcut_conflicts;
 mod shortcut_help;
 pub mod tabs;
 
@@ -163,6 +164,7 @@ use palette_recent::{
     default_command_palette_recent_path, enqueue_command_palette_activation,
     load_command_palette_recent_command_ids_or_empty,
 };
+use shortcut_conflicts as conflicts;
 pub use tabs::{EditorTabViewer, InspectorTabBody, TabBody, ViewportRectSink};
 
 // ---------------------------------------------------------------------------
@@ -324,6 +326,7 @@ pub struct EguiHost {
 
     /// One-shot request to focus the command-palette search field on open.
     command_palette_search_focus_requested: bool,
+    shortcut_conflicts_open: bool,
     shortcut_help_open: bool,
 }
 
@@ -478,6 +481,7 @@ impl EguiHost {
             command_palette_pinned_path,
             command_palette_selected_index: None,
             command_palette_search_focus_requested: false,
+            shortcut_conflicts_open: false,
             shortcut_help_open: false,
         }
     }
@@ -832,13 +836,15 @@ impl EguiHost {
         let command_palette_selected_index = &mut self.command_palette_selected_index;
         let command_palette_search_focus_requested =
             &mut self.command_palette_search_focus_requested;
+        let conflict_rows = conflicts::shortcut_conflict_rows(&main_menu);
+        let shortcut_conflicts_open = &mut self.shortcut_conflicts_open;
         let shortcut_help_rows = shortcut_help::shortcut_help_rows(&main_menu);
         let shortcut_help_open = &mut self.shortcut_help_open;
         let dock_state = &mut self.dock_state;
         let full_output = self.context.run_ui(raw_input, |root_ui| {
             egui::Panel::top("rge_menu_bar").show_inside(root_ui, |ui| {
                 egui::MenuBar::new().ui(ui, |ui| {
-                    // Existing projected entries enqueue Commands; shortcut help does not.
+                    // Existing projected entries enqueue Commands; diagnostics do not.
                     ui.menu_button("File", |ui| {
                         for (label, shortcut, cmd, enabled) in &main_menu.file {
                             if menu_item(ui, *enabled, label.as_str(), shortcut.as_deref())
@@ -892,17 +898,7 @@ impl EguiHost {
                             }
                         });
                     }
-                    if !main_menu.conflicts.is_empty() {
-                        ui.menu_button("Shortcut Conflicts", |ui| {
-                            for conflict in &main_menu.conflicts {
-                                ui.label(format!(
-                                    "{}: {}",
-                                    conflict.shortcut,
-                                    conflict.entries.join(", ")
-                                ));
-                            }
-                        });
-                    }
+                    conflicts::menu_affordance(ui, shortcut_conflicts_open, &conflict_rows);
                 });
             });
             if let Some(command) = command_palette_window(
@@ -923,7 +919,8 @@ impl EguiHost {
                     command,
                 );
             }
-            // Draw the help window before the bottom status bar and dock area.
+            // Draw diagnostic/help windows before the bottom status bar and dock area.
+            conflicts::show(root_ui.ctx(), shortcut_conflicts_open, &conflict_rows);
             shortcut_help::shortcut_help_window(
                 root_ui.ctx(),
                 shortcut_help_open,

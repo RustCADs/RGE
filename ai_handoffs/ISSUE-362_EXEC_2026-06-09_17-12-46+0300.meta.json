@@ -1,0 +1,21 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-362",
+    "packet_type": "EXEC",
+    "author": "Executor / Codex",
+    "timestamp": "2026-06-09_17-12-46+0300",
+    "related_files": [
+                          "crates/editor-egui-host/src/lib.rs - wired the host-local conflict diagnostics window state and rendering path",
+                          "crates/editor-egui-host/src/shortcut_conflicts.rs - added focused conflict row projection, window rendering, and tests",
+                          ".ai/dispatch.tasks.md - marked task 113 done via ISSUE-362 and recorded implementation notes",
+                          "Status.md - added ISSUE-362 completion snapshot",
+                          "HANDOFF.md - added ISSUE-362 handoff snapshot",
+                          "plans/BASELINE.md - added Phase 9 update 10 for task 113 closure",
+                          "change.md - added ISSUE-362 change-log entry",
+                          "ai_handoffs/ISSUE-362_EXEC_2026-06-09_17-12-46+0300.md - this execution report"
+                      ],
+    "status": "AWAITING_REVIEW",
+    "handoff_status": "COMPLETE",
+    "next_role": "REVIEWER_AI",
+    "exit_code": 0
+}

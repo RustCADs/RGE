@@ -9911,13 +9911,24 @@ is the only safeguard against selector drift.
      unless those are explicitly scoped as the narrow audit-selected task with
      source-backed safety.
 
-113. **Add host-local shortcut conflict diagnostics in `editor-egui-host`.**
+113. **[DONE 2026-06-09 via ISSUE-362] Add host-local shortcut conflict diagnostics in `editor-egui-host`.**
    Add a bounded host-only diagnostics surface for shortcut conflicts that are
    already computed by `editor-ui`'s menu registry and projected into
    `editor-egui-host` as `ProjectedMainMenu.conflicts`. The current host only
    exposes a transient inline `"Shortcut Conflicts"` menu when conflicts exist;
    this follow-up should make those diagnostics easier to inspect without
    changing conflict policy, remapping, command routing, or plugin execution.
+
+   **Implemented via ISSUE-362:** `editor-egui-host` now projects conflict rows
+   through a focused host helper and opens a persistent egui `Shortcut
+   Conflicts` diagnostics window from a non-command top-bar affordance when the
+   current `ProjectedMainMenu.conflicts` is non-empty. Rows are copied only from
+   the projected conflict data, preserving shortcut display strings and entry-id
+   order; the window closes/clears when the current projection has no conflicts.
+   Focused tests cover multiple conflicts, default-menu no-conflict behavior,
+   first-winner conflict semantics, and read-only host state behavior. No
+   `editor-ui`, `editor-shell`, command routing, conflict policy, Cargo,
+   plugin-runtime, clipboard, CAD, or undo/dirty behavior changed.
 
    **MAY edit:**
    - `crates/editor-egui-host/src/lib.rs`
