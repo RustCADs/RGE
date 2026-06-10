@@ -10131,7 +10131,7 @@ is the only safeguard against selector drift.
      forcing a selection.
    - Describing task 115 would require editing any MUST-NOT path.
 
-115. **Add viewport-only mouse-wheel camera zoom in `editor-shell`.**
+115. **[DONE 2026-06-10 via ISSUE-367 / PR #368 / commit `265d540`] Add viewport-only mouse-wheel camera zoom in `editor-shell`.**
    Add the smallest interactive camera-navigation slice now that View menu
    Reset/Zoom commands already route through the canonical menu/accelerator path.
    Current source has `EditorShell::zoom_camera_in`, `zoom_camera_out`, and
@@ -10212,3 +10212,86 @@ is the only safeguard against selector drift.
    - Existing viewport hit-test state is insufficient to distinguish viewport
      scroll from panel/menu/tab scroll without editing `editor-egui-host`; halt
      rather than broadening scope.
+
+116. **Post-viewport-wheel-zoom Phase 9 next-task source audit.**
+   The automation queue is exhausted after task 115 (ISSUE-367 / PR #368,
+   viewport-only mouse-wheel camera zoom). Re-arm with a docs/source-read audit
+   that selects exactly one bounded Phase 9 editor-usability implementation
+   follow-up as task 117, or records `NEEDS_HUMAN` if remaining candidates need
+   product or architecture policy before code.
+
+   This is a SOURCE AUDIT ONLY: read current source, compare candidate classes,
+   and append exactly one task 117 (or `NEEDS_HUMAN`). It selects work; it does
+   not do work.
+
+   **MAY edit:**
+   - `.ai/dispatch.tasks.md`
+   - `Status.md`
+   - `HANDOFF.md`
+   - `plans/BASELINE.md`
+   - `change.md`
+   - generated ISSUE-<n> handoff/audit/log artifacts for this dispatch only
+
+   **MAY read (read-only, classification only):**
+   - `docs/EXTERNAL_ENGINE_LESSONS.md` to tag the selected candidate by kernel
+     pressure when useful. The ledger is a reporter, not implementation
+     authority.
+
+   **MUST NOT edit:**
+   - Rust source or tests under `crates/**`, `kernel/**`, `runtime/**`, or
+     `editor/**`
+   - Cargo manifests or `Cargo.lock`
+   - GitHub workflows
+   - dispatch automation, guard, queue, scheduler, or verification scripts
+   - schemas, architecture-lint rules/config, ADR files, packet templates, or
+     existing handoff/log artifacts from other dispatches
+   - plugin runtime/discovery/loading implementation code
+   - `docs/EXTERNAL_ENGINE_LESSONS.md`
+
+   **Current-state claims / falsification to include in the EXEC packet (re-grep
+   current source before trusting any roadmap text):**
+   - Claim: task 115 shipped viewport-only `MouseWheel` zoom; do not reselect
+     wheel zoom.
+     Falsifying search:
+     `git grep -n -E "MouseWheel|MouseScrollDelta|zoom_camera_in|zoom_camera_out|is_pointer_over_viewport_tab" -- crates/editor-shell/src crates/editor-egui-host/src`
+   - Claim: menu/palette/accelerator activations still cross the host<->shell
+     boundary via `MenuCommandHandoff` / `EditorShell::route_menu_command`;
+     replacing that route is broader than a UI-only task unless current source
+     shows a tiny safe slice.
+     Falsifying search:
+     `git grep -n -E "MenuCommandHandoff|drain_and_route_menu_commands|route_menu_command|command_palette_window"`
+   - Claim: extension/plugin commands still stop at the injected handler seam;
+     no real plugin runtime/discovery/loading is wired into the editor command
+     route.
+     Falsifying search:
+     `git grep -n -E "ExtensionCommandHandler|Command::Custom|Command::Plugin|PluginHost|PluginContext|plugin-discovery|runtime-wasmtime"`
+   - Claim: remaining stale roadmap candidates must be rechecked from current
+     source before selection.
+     Falsifying search:
+     `git grep -n -E "MouseInput|CursorMoved|orbit|pan|clipboard|keybinding|ShortcutConflict|Command::(Cut|Copy|Paste|Duplicate|Delete)|CommandBus|Action"`
+
+   **Candidate classes to compare before selecting task 117:**
+   - Next camera/navigation slice after wheel zoom, such as viewport-only orbit,
+     pan, frame/focus, or a source-backed decision to stop camera work.
+   - Host-shell FIFO replacement / generalized registry execution beyond the
+     current `MenuCommandHandoff` -> `EditorShell::route_menu_command` path.
+   - Extension/plugin command execution beyond the injected handler seam,
+     including whether any substrate-only precursor precedes real runtime or
+     discovery/loading work.
+   - Keybinding/conflict-resolution policy or shortcut remapping after task
+     113's read-only conflict diagnostics.
+   - OS/typed clipboard for editor entities.
+   - CAD/editor mutation routes through the authoritative command bus.
+
+   **Output:** append exactly ONE task 117 with a source-backed safety rationale
+   and explicit MAY / MUST-NOT / Done / Verification / Halt sections like the
+   prior tasks, OR record `NEEDS_HUMAN` with the blocking product/architecture
+   policy question.
+
+   **Halt conditions (hard):**
+   - This audit begins IMPLEMENTING task 117 -- writing Rust, editing
+     editor/kernel/runtime source, adding a `Command`/accelerator, or any code
+     change -- instead of only selecting + appending it.
+   - No bounded, source-safe candidate exists -> record `NEEDS_HUMAN` rather
+     than forcing a selection.
+   - Describing task 117 would require editing any MUST-NOT path.

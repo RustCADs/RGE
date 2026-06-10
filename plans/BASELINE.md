@@ -131,6 +131,17 @@ policy, OS/typed clipboard, authoritative CAD/editor mutation, undo/dirty
 policy, route replacement, new commands/accelerators, and broader orbit/pan/drag
 navigation remain deferred.
 
+**2026-06-10 update 12:** PR #368 merged task 115 as commit `265d540`, adding
+viewport-only mouse-wheel zoom in `editor-shell`; ISSUE-367 is closed. The
+automation queue is re-armed with task 116, a docs/source-read-only audit that
+must re-grep current source after wheel zoom, compare the remaining
+Phase 9/editor-usability candidate classes, and append exactly one bounded task
+117 or record `NEEDS_HUMAN`. Candidate classes to compare are the next
+camera/navigation slice, host-shell FIFO/generalized registry execution, real
+plugin command execution, keybinding/remap policy, OS/typed clipboard, and
+authoritative CAD/editor mutation routes. Task 116 is not authorized to
+implement the selected work.
+
 ---
 
 ## Phase 9 editor-usability task-104 selection audit
