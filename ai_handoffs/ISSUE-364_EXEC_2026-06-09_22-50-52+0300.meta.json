@@ -1,0 +1,19 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-364",
+    "packet_type": "EXEC",
+    "author": "Executor / Codex",
+    "timestamp": "2026-06-09_22-50-52+0300",
+    "related_files": [
+                          ".ai/dispatch.tasks.md - marked task 114 done and appended task 115",
+                          "Status.md - added current selection-audit snapshot",
+                          "HANDOFF.md - added current handoff snapshot and reviewer guidance",
+                          "plans/BASELINE.md - added Phase 9 update 11",
+                          "change.md - added task-114 audit log entry",
+                          "ai_handoffs/ISSUE-364_EXEC_2026-06-09_22-50-52+0300.md - this execution report"
+                      ],
+    "status": "AWAITING_REVIEW",
+    "handoff_status": "COMPLETE",
+    "next_role": "REVIEWER_AI",
+    "exit_code": 0
+}
