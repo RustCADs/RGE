@@ -11500,3 +11500,131 @@ is the only safeguard against selector drift.
      activation path, preferences surface, or a new diagnostics window.
    - Verification fails, or `git diff --name-only` shows any file outside the
      MAY-edit list plus generated artifacts for this dispatch.
+
+128. **Post-shortcut-conflict-help Phase 9 next-task audit.**
+   Perform the next docs/source-read-only Phase 9 audit after task 127 /
+   ISSUE-381. The immediate objective is to compare the remaining
+   editor-usability candidate classes from current local source and append
+   exactly one bounded implementation task 129, or record a source-grounded
+   `NEEDS_HUMAN` result if no single safe implementation slice exists.
+
+   **Dispatcher snapshot / Rule 8 requirement:**
+   - The TASK packet for this audit must copy the exact
+     `Dispatcher GitHub state snapshot` excerpt from the auto-created issue body
+     into the packet, or cite a concrete local artifact path plus exact read
+     command containing that excerpt. A summary such as "no open issue" is not
+     enough.
+   - Use that embedded snapshot as the only GitHub queue/already-filed-task
+     evidence. Do not call `gh`, browse, or use network access from the executor
+     sandbox.
+   - Any negative current-state claim in the TASK or EXEC packet must include a
+     rerunnable falsifying search/read and observed result, following
+     `ai_handoffs/AI_HANDOFF_PROTOCOL.md` Rule 8.
+   - Local repository/source evidence must come from source reads and
+     falsifying searches in this worktree.
+
+   **Starting facts from the re-arm commit:**
+   - ISSUE-381 auto-published task 127 as `3b817b7` and closed with
+     `ai-dispatch-done`.
+   - Task 127 deliberately did not append task 128 in its implementation
+     commit; this re-arm commit appends task 128 under the standing
+     Human=Codex / non-stop authorization.
+   - `rg -n "^126\.|^127\.|^128\.|^129\." .ai/dispatch.tasks.md` before this
+     re-arm edit found task 126 done and task 127 done, with no task 128 or
+     task 129 heading.
+   - The queue had no open `ai-dispatch` issue and no open
+     `ai-dispatch-failed` issue before this re-arm edit.
+
+   **Candidate classes to compare from current source:**
+   - Keybinding/remap policy after tasks 123, 125, and 127: conflicted
+     shortcuts are diagnostic-visible, non-executable through keyboard
+     activation, annotated in Keyboard Shortcuts help, and now show peer entry
+     ids there. Remaining work includes remapping UI, preferences/persistence,
+     fatal startup policy, or a narrower diagnostic/policy follow-up if one is
+     still source-safe.
+   - Host-shell command execution: menu, command-palette, and accelerator
+     activation still cross `MenuCommandHandoff` into
+     `EditorShell::route_menu_command`; replacing that route or generalizing
+     registry execution is broader unless a small host-owned source-safe slice
+     exists.
+   - Real plugin command execution: extension commands still stop at the
+     injected `ExtensionCommandHandler` seam; runtime/discovery/loading,
+     capability policy, and editor route ownership remain broader unless a
+     bounded seam-only follow-up exists.
+   - OS/typed clipboard: Edit Cut/Copy/Paste remains shell-local legacy-blob
+     entity data; OS clipboard, typed components, CAD identity, and
+     cross-process semantics remain broader unless a narrow policy/documented
+     substrate slice exists.
+   - CAD/editor mutation through CommandBus: current actions remain World-only;
+     authoritative CAD/projection mutation, undo/dirty authority, and save/load
+     semantics remain broader unless a bounded source-safe slice exists.
+   - Camera/navigation follow-up after wheel zoom, right-button orbit,
+     middle-button pan, and left-double-click frame-all: remaining work includes
+     frame-selected/world-AABB, pointer capture/window-grab, camera persistence,
+     or a broader controller policy.
+
+   **MAY edit:**
+   - `.ai/dispatch.tasks.md`
+   - `Status.md`
+   - `HANDOFF.md`
+   - `plans/BASELINE.md`
+   - `change.md`
+   - generated ISSUE-<n> handoff/audit/log artifacts for this dispatch only
+
+   **MUST NOT edit:**
+   - Rust source or tests under `crates/**`, `editor/**`, `kernel/**`,
+     `runtime/**`, `tools/**`, or `plugins/**`
+   - Cargo manifests or `Cargo.lock`
+   - GitHub workflows
+   - dispatch automation, guard, queue, scheduler, watcher, verification, or
+     health/trend scripts
+   - schemas, ADR files, architecture-lint rules/config, packet templates, or
+     existing unrelated handoff/log artifacts
+   - plugin runtime/discovery/loading implementation
+   - `MenuCommandHandoff` storage semantics, host-shell FIFO replacement, or
+     `EditorShell::route_menu_command`
+   - command-palette activation semantics, accelerator execution semantics, or
+     menu-click behavior
+   - shortcut remapping UI, user preferences, persistence, or fatal startup
+     policy as implementation
+   - OS/typed clipboard behavior
+   - CAD graph/projection mutation, `CommandBus` action signatures,
+     undo/dirty/save-load authority, or save/load behavior
+   - camera/navigation behavior
+
+   **Done criteria:**
+   - The audit records the raw embedded dispatcher snapshot evidence or concrete
+     local artifact/read path in the TASK packet, then records the snapshot
+     facts in the audit result.
+   - The audit records a local
+     `rg -n "^126\.|^127\.|^128\.|^129\." .ai/dispatch.tasks.md` check from
+     before editing.
+   - The audit records source-grounded evidence for each candidate class above,
+     including at least one falsifying grep per class where practical.
+   - Exactly one bounded implementation task 129 is appended with explicit MAY
+     edit, MUST-NOT edit, done criteria, verification, and halt conditions; or
+     task 128 records `NEEDS_HUMAN` with concrete source evidence explaining why
+     no bounded task can be safely specified.
+   - If delegated Human=Codex policy is used, the selected policy is stated
+     explicitly in task 129 and kept to the smallest source-safe boundary.
+   - No implementation work for task 129 is done, and no task 130 is appended.
+   - `git diff --name-only` shows only MAY-edit docs plus this dispatch's own
+     generated artifacts; `git diff --check` is clean.
+
+   **Verification:**
+   - `rg -n "^126\.|^127\.|^128\.|^129\." .ai/dispatch.tasks.md`
+   - Candidate source greps covering keybinding/remap, command routing,
+     plugin/extension execution, clipboard, CommandBus/CAD mutation, and camera
+     follow-up surfaces
+   - `git diff --name-only`
+   - `git diff --check`
+
+   **Halt conditions:**
+   - The TASK packet for the audit does not include the raw dispatcher snapshot
+     excerpt or an exact local artifact/read path to that excerpt, and a plan
+     revision cannot fix it within `MaxPlanRevisions`.
+   - The audit begins implementing task 129, writing Rust, editing Cargo,
+     changing workflows, or changing automation.
+   - The audit requires live GitHub/network evidence instead of the embedded
+     snapshot plus local source reads.
+   - No bounded task 129 can be specified without editing a MUST-NOT path.

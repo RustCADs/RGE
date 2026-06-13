@@ -2,6 +2,18 @@
 
 ## Phase 9 editor-usability and dispatch-advisory closure
 
+**2026-06-14 update 26:** ISSUE-381 published task 127 as `3b817b7`.
+Keyboard Shortcuts help now exposes ordered conflict peer entry ids from
+`ProjectedMainMenu.conflicts.entries` for enabled conflicted rows, while
+disabled rows stay disabled with no peer detail and the existing State labels
+remain distinct. No routing, shortcut execution, menu-click,
+command-palette activation, remapping/persistence, plugin runtime,
+OS/typed clipboard, CAD/CommandBus mutation, or camera behavior changed. The
+brief is re-armed with task 128, a docs/source-read-only audit that must
+include raw dispatcher-snapshot evidence in its TASK packet to avoid the #380
+Rule 8 failure mode, then select exactly one bounded implementation task 129 or
+record source-grounded `NEEDS_HUMAN`.
+
 **2026-06-14 update 25:** ISSUE-380 failed before publish while trying to run
 task 126: the first attempt stalled during execution, then the retry halted at
 plan-gate revision 1 because the TASK packet did not make every negative
