@@ -10617,7 +10617,7 @@ is the only safeguard against selector drift.
      middle-button drags from panel/menu/tab interactions without editing
      `editor-egui-host`; halt rather than broadening scope.
 
-120. **Post-viewport-pan Phase 9 next-task source audit.**
+120. **[DONE 2026-06-13 via manual salvage of failed ISSUE-374 — selected task 121 left-double-click frame-all camera gesture] Post-viewport-pan Phase 9 next-task source audit.**
    Re-arm the automation after task 119 (ISSUE-373 viewport-only middle-button
    pan). This is a docs/source-read-only audit that must inspect current source
    and status after viewport wheel zoom, right-button orbit, and middle-button
@@ -10686,3 +10686,119 @@ is the only safeguard against selector drift.
      changing workflows, or changing automation.
    - No bounded, source-safe candidate exists.
    - Describing task 121 would require editing a MUST-NOT path.
+
+121. **Add viewport-only left-double-click frame-all camera gesture in `editor-shell`.**
+   Add the smallest next camera/navigation slice after tasks 115 (wheel zoom),
+   117 (right-button orbit), and 119 (middle-button pan). The reframe pipeline
+   already exists: `EditorShell::reset_camera()`
+   (`crates/editor-shell/src/lifecycle/mod.rs:2062-2067`) computes a framed
+   isometric pose from `current_scene_bounds()` (mod.rs:2036-2049) +
+   `isometric_camera_for_bounds(min, max)` (mod.rs:2407-2432), falling back to
+   `EditorCameraState::default()` for an empty/non-finite scene — but today that
+   infallible reframe is reachable only via the `ResetCamera` menu command / Home
+   key. This task exposes the SAME reframe as a viewport-only **left double-click**
+   over the Viewport tab body, reusing `is_pointer_over_viewport_tab()`
+   (mod.rs:2247-2255), the existing `WindowEvent::MouseInput` match
+   (mod.rs:2660-2703), and a private double-click detector housed in
+   `viewport_navigation.rs` alongside `ViewportOrbitDrag`/`ViewportPanDrag`.
+
+   **Safety rationale:** camera/navigation is the safest of the six task-120
+   candidate classes and still has exactly one small, source-backed slice
+   (frame/zoom-to-fit; flagged in the not-yet-done survey). The gesture mutates only
+   the existing `EditorCameraState` via the already-present reframe primitives, adds
+   NO new `Command` variant, menu entry, accelerator, or route, and bypasses the
+   command bus exactly as orbit/pan do. Frame-SELECTED is out of scope (per-entity
+   world-AABB would cross into `cad-projection`/`editor-actions`); frame-ALL reuses
+   only the existing whole-scene bounds query. The higher-risk classes are avoided:
+   host-shell FIFO/route replacement, plugin runtime/discovery/loading, keybinding
+   remap policy, OS clipboard, and CAD/CommandBus authoritative mutation (undo/dirty)
+   all remain deferred.
+
+   **MAY edit:**
+   - `crates/editor-shell/src/lifecycle/viewport_navigation.rs`
+   - `crates/editor-shell/src/lifecycle/mod.rs`
+   - `crates/editor-shell/src/lifecycle/tests.rs`
+   - `crates/editor-shell/src/camera.rs`
+   - `.ai/dispatch.tasks.md`
+   - `Status.md`
+   - `HANDOFF.md`
+   - `plans/BASELINE.md`
+   - `change.md`
+   - `ai_handoffs/ISSUE-121_*.md`
+   - `ai_handoffs/ISSUE-121_*.meta.json`
+   - `.ai/dispatch-ISSUE-121/**`
+   - `ai_dispatch_logs/log_*ISSUE-121*.md`
+
+   **MUST NOT edit:**
+   - `crates/editor-shell/src/render_path.rs` (the gesture MUST bypass the command route)
+   - `crates/editor-egui-host/**`
+   - `crates/editor-ui/**`
+   - `crates/editor-actions/**`
+   - `crates/cad-core/**`
+   - `crates/cad-projection/**`
+   - `crates/plugin-discovery/**`, `crates/runtime-wasmtime/**`, `crates/runtime-wasmtime-engine/**`
+   - `kernel/**`, `runtime/**`, `editor/rge-editor/**`
+   - Cargo manifests or `Cargo.lock`
+   - GitHub workflows
+   - dispatch automation, guard, queue, scheduler, or verification scripts
+   - schemas, ADR files, architecture-lint rules/config, packet templates, or
+     existing handoff/log artifacts from other dispatches
+   - plugin runtime/discovery/loading implementation code
+
+   **Done criteria:**
+   - A left double-click whose press lands over the Viewport tab body (per
+     `is_pointer_over_viewport_tab()`) reframes `self.editor_camera` by reusing the
+     existing `current_scene_bounds()` + `isometric_camera_for_bounds()` path,
+     identically to `reset_camera()`: framed isometric pose for finite/non-empty
+     bounds, `EditorCameraState::default()` fallback when bounds are `None`.
+   - Double-click detection lives in a private detector type in
+     `viewport_navigation.rs` (mirroring `ViewportOrbitDrag`/`ViewportPanDrag`),
+     parameterized by a within-window time threshold and a max pointer-movement
+     threshold; reset on non-Left buttons and out-of-threshold clicks.
+   - A first single left-click still routes to `handle_left_click()` (face-pick)
+     exactly as today; the frame fires only on the qualifying SECOND click, and the
+     `should_fire_face_pick()` truth table is unchanged for single clicks.
+   - The frame gesture is gated on `over_viewport_tab` AND a present `cursor_pos`; a
+     double-click outside the Viewport tab body, or with no cursor/viewport/egui
+     state, is a no-op.
+   - No new `Command` variant, menu entry, or accelerator is added; the gesture does
+     not route through `route_menu_command` or the menu command handoff.
+     Right-button orbit, middle-button pan, and mouse-wheel zoom are unchanged.
+   - Camera invariants remain enforced by the reused primitives (no NaN/inf
+     eye/target/up; valid clip planes).
+   - Focused tests cover: (a) double-click over viewport frames to scene bounds,
+     (b) empty/None bounds falls back to the default camera, (c) double-click outside
+     the viewport / with absent cursor is a no-op, (d) a single click does not frame
+     and still reaches face-pick, (e) two clicks separated beyond the time or
+     movement threshold are treated as two single clicks (no frame).
+   - `cargo fmt` clean and `git diff --check` reports no whitespace errors; only
+     MAY-edit files change.
+
+   **Verification required:**
+   - Before implementation, summarize:
+     `git grep -n -E "is_pointer_over_viewport_tab|current_scene_bounds|isometric_camera_for_bounds|reset_camera|should_fire_face_pick|handle_left_click|MouseInput|MouseButton::Left|ViewportOrbitDrag|ViewportPanDrag" -- crates/editor-shell/src`
+   - `cargo test -p rge-editor-shell --lib` (full editor-shell lib suite passes;
+     baseline ~277 passed / 1 ignored plus the new focused frame-gesture tests).
+   - `cargo check -p rge-editor-shell` introduces no new warnings.
+   - `cargo +nightly fmt --all -- --check` clean; `git diff --check` clean.
+   - `git diff --name-only` confirms ZERO modifications under
+     `crates/editor-egui-host`, `crates/editor-ui`, `crates/editor-actions`,
+     `crates/cad-*`, `kernel`, `runtime`, `plugin-discovery`, any `Cargo.toml` /
+     `Cargo.lock`, `.github`, or `crates/editor-shell/src/render_path.rs`.
+
+   **Halt conditions (hard):**
+   - Implementing the gesture would require a new `Command` variant, menu entry,
+     accelerator, or routing through `route_menu_command` / `MenuCommandHandoff`.
+   - Framing the selection (not the whole scene) is attempted and requires
+     per-entity world-AABB computation touching `cad-projection` / `editor-actions`
+     / the selection-projection layer.
+   - Any edit is needed outside `crates/editor-shell/src` (camera.rs, lifecycle/*)
+     or the doc set — including `render_path.rs`, host/UI, actions, cad-*, kernel,
+     runtime, plugin runtime, Cargo, workflows, or automation.
+   - Double-click detection cannot be implemented from existing winit `MouseInput`
+     events plus `cursor_pos`/time without a new dependency, a host-provided event,
+     or a new public `EditorShell` API — STOP and record `NEEDS_HUMAN`.
+   - The reframe cannot reuse `current_scene_bounds()` + `isometric_camera_for_bounds()`
+     unchanged, or single-left-click face-pick / orbit / pan / wheel-zoom behavior
+     would change.
+   - Verification gate fails, or `git diff --name-only` shows any MUST-NOT path.
