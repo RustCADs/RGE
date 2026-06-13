@@ -10803,7 +10803,7 @@ is the only safeguard against selector drift.
      would change.
    - Verification gate fails, or `git diff --name-only` shows any MUST-NOT path.
 
-122. **[NEEDS_HUMAN 2026-06-13 via ISSUE-376] Post-viewport-frame-all Phase 9 next-task source audit.**
+122. **[DONE 2026-06-13 via ISSUE-376 + delegated Codex decision] Post-viewport-frame-all Phase 9 next-task source audit.**
    Re-arm after task 121 (viewport-only left-double-click frame-all camera
    gesture). This is a docs/source-read-only selection audit: inspect current
    source and status after viewport wheel zoom, right-button orbit,
@@ -10909,3 +10909,98 @@ is the only safeguard against selector drift.
    keybinding/remap/conflict policy, OS/typed clipboard semantics, or
    authoritative CAD/editor mutation through a richer CommandBus/undo/dirty
    model.
+
+   **Delegated-human decision:** per the standing "Human=Codex / non-stop"
+   authorization, choose the keybinding conflict-policy boundary as the next
+   smallest implementation surface. The policy for task 123 is: conflicted
+   shortcuts remain visible in diagnostics, but keyboard execution must not pick
+   a first-registered winner while a shortcut has a live conflict. This crosses
+   the minimum policy boundary needed to continue automation while staying inside
+   the existing `editor-ui` menu-resolution substrate and the shell's existing
+   `enabled_command_for_shortcut` execution path.
+
+123. **Make conflicted shortcuts non-executable while preserving diagnostics.**
+   Implement the delegated task-122 decision: when a resolved shortcut has a
+   conflict, keyboard execution must treat it as unexecutable even if the
+   first-registered entry is enabled. Conflict diagnostics and display/introspection
+   lookups remain available, so hosts can still show the conflict and the
+   accelerator table can still report its deterministic first entry.
+
+   **Policy fixed for this task:**
+   - `ResolveResult::enabled_command_for_shortcut` is the keyboard-execution
+     resolver and MUST return `None` for any shortcut listed in
+     `ResolveResult::conflicts`.
+   - `ResolveResult::command_for_shortcut` and `AcceleratorTable::resolve` MAY
+     keep their existing first-registered winner behavior for display,
+     diagnostics, and compatibility; do not use them as the execution gate.
+   - Hidden or predicate-filtered entries continue not to occupy shortcut slots.
+   - Disabled-but-visible entries continue to resolve as bindings for display
+     but do not execute through `enabled_command_for_shortcut`.
+
+   **MAY edit:**
+   - `crates/editor-ui/src/menus/registry.rs`
+   - `crates/editor-ui/src/menus/shortcut.rs`
+   - `crates/editor-ui/tests/menus_ordering.rs`
+   - `crates/editor-ui/src/menus/default_menu.rs`
+   - `crates/editor-shell/src/lifecycle/mod.rs`
+   - `crates/editor-shell/src/render_path.rs`
+   - `crates/editor-shell/src/lifecycle/accelerator.rs`
+   - `Status.md`
+   - `HANDOFF.md`
+   - `plans/BASELINE.md`
+   - `change.md`
+   - `.ai/dispatch.tasks.md`
+   - generated ISSUE-<n> handoff/audit/log artifacts for this dispatch only
+
+   **MUST NOT edit:**
+   - Cargo manifests or `Cargo.lock`
+   - GitHub workflows
+   - dispatch automation, guard, queue, scheduler, or verification scripts
+   - schemas, ADR files, architecture-lint rules/config, packet templates, or
+     existing unrelated handoff/log artifacts
+   - plugin runtime/discovery/loading implementation
+   - host-shell FIFO replacement, `MenuCommandHandoff` storage semantics, or
+     `EditorShell::route_menu_command`
+   - OS/typed clipboard behavior
+   - CAD graph/projection mutation, `CommandBus` action signatures, undo/dirty
+     authority, or save/load behavior
+   - camera/navigation behavior
+   - shortcut remapping UI, user preferences, persistence, or fatal application
+     startup policy
+
+   **Done criteria:**
+   - `ResolveResult::enabled_command_for_shortcut` returns `None` for a
+     conflicted shortcut, while unconflicted enabled shortcuts still return
+     their command and disabled shortcuts still return `None`.
+   - Existing conflict diagnostics still report all conflicting entry ids in
+     deterministic order.
+   - The first-winner display/introspection behavior remains available through
+     `command_for_shortcut` and/or `AcceleratorTable::resolve`.
+   - Tests cover conflicted execution suppression, unconflicted execution,
+     disabled entry suppression, and predicate-filtered entries releasing their
+     shortcut slot.
+   - Shell comments or parity tests are updated only as needed to make clear
+     that keyboard dispatch goes through the conflict-aware
+     `enabled_command_for_shortcut` path.
+   - No task 124 is appended.
+
+   **Verification:**
+   - `cargo test -p rge-editor-ui --test menus_ordering`
+   - `cargo test -p rge-editor-ui --lib`
+   - `cargo test -p rge-editor-shell --lib accelerator`
+   - `cargo check -p rge-editor-ui -p rge-editor-shell --lib`
+   - `cargo +nightly fmt --all -- --check`
+   - `git diff --check`
+   - `git diff --name-only` contains only MAY-edit files plus this dispatch's
+     generated artifacts.
+
+   **Halt conditions:**
+   - Implementing the policy requires a new command route, menu handoff
+     replacement, plugin runtime/discovery/loading work, Cargo dependency, OS
+     clipboard behavior, CAD/editor mutation, camera behavior, persistence, or
+     user-facing shortcut remapping UI.
+   - The change would make conflicted shortcuts disappear from diagnostics rather
+     than remain visible but non-executable.
+   - The change would make disabled entries execute, or make hidden/predicate
+     suppressed entries occupy shortcut slots.
+   - Verification fails, or `git diff --name-only` shows any MUST-NOT path.

@@ -36,6 +36,17 @@ keybinding/remap/conflict policy, OS/typed clipboard, or authoritative
 CAD/editor mutation through a richer CommandBus/undo/dirty model. No task 123
 was appended.
 
+**2026-06-13 update 20:** the delegated-human follow-up to ISSUE-376 chooses
+the keybinding conflict-policy boundary. The next automated implementation is
+task 123: conflicted shortcuts remain visible in diagnostics, but keyboard
+execution through `ResolveResult::enabled_command_for_shortcut` must return
+`None` for any live conflicted shortcut. First-winner lookup remains available
+for display/introspection through `command_for_shortcut` /
+`AcceleratorTable::resolve`. This is intentionally narrower than shortcut
+remapping, fatal startup policy, host-shell FIFO replacement, plugin runtime,
+OS clipboard, CAD/editor mutation, camera work, Cargo changes, workflows, or
+automation changes.
+
 **2026-06-13 update:** ISSUE-373 published task 119, completing the
 viewport-only middle-button pan slice in `editor-shell`, and `c1daf94` added
 queue-owned stale-claim cleanup. The next scheduler tick reached task selection
