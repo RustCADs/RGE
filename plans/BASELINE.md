@@ -2,6 +2,18 @@
 
 ## Phase 9 editor-usability and dispatch-advisory closure
 
+**2026-06-13 update 17:** ISSUE-375 implements task 121: viewport-only
+left-double-click frame-all in `editor-shell`. The gesture is handled inside
+the existing lifecycle mouse path with a private `viewport_navigation` detector
+(500 ms / 6 px thresholds) and calls the existing `reset_camera()` path on the
+qualifying second left press over the Viewport tab body. Whole-scene bounds and
+empty-scene fallback remain owned by `current_scene_bounds()` +
+`isometric_camera_for_bounds()` / `EditorCameraState::default()`. Single-click
+face-pick, wheel zoom, right-button orbit, middle-button pan, and View
+menu/Home reset routing remain unchanged; no command/menu/accelerator,
+host/UI, Cargo, CAD/projection/action, plugin runtime, clipboard, undo/dirty,
+render-path, persistence, pointer-capture, or generalized input surface changed.
+
 **2026-06-13 update:** ISSUE-373 published task 119, completing the
 viewport-only middle-button pan slice in `editor-shell`, and `c1daf94` added
 queue-owned stale-claim cleanup. The next scheduler tick reached task selection

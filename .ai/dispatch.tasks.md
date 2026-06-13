@@ -10687,7 +10687,7 @@ is the only safeguard against selector drift.
    - No bounded, source-safe candidate exists.
    - Describing task 121 would require editing a MUST-NOT path.
 
-121. **Add viewport-only left-double-click frame-all camera gesture in `editor-shell`.**
+121. **[DONE 2026-06-13 via ISSUE-375 pending review] Add viewport-only left-double-click frame-all camera gesture in `editor-shell`.**
    Add the smallest next camera/navigation slice after tasks 115 (wheel zoom),
    117 (right-button orbit), and 119 (middle-button pan). The reframe pipeline
    already exists: `EditorShell::reset_camera()`

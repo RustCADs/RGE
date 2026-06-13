@@ -27,6 +27,8 @@
 //! No `pub(crate)` promotions were required for the extraction; the
 //! tests were already touching only public API surface.
 
+use std::time::{Duration, Instant};
+
 use rge_cad_core::{BRepFaceId, BRepOwnerId, CuboidFaceTag};
 use winit::dpi::PhysicalPosition;
 use winit::event::MouseScrollDelta;
@@ -754,6 +756,120 @@ fn reset_camera_with_no_scene_falls_back_to_default() {
         glam::Vec3::new(3.0, 3.0, 3.0),
         "with nothing frameable, reset_camera falls back to the default camera pose"
     );
+}
+
+fn viewport_left_double_click_seed_shell() -> EditorShell {
+    let positions: Vec<[f32; 3]> = vec![[10.0, 20.0, 30.0], [12.0, 20.0, 30.0], [10.0, 22.0, 30.0]];
+    let indices: Vec<u32> = vec![0, 1, 2];
+    let mesh = rge_brep_render::RenderMesh::from_buffers(&positions, &indices, None);
+    EditorShell::with_render_mesh(mesh)
+}
+
+fn move_viewport_left_double_click_camera_off_scene(shell: &mut EditorShell) {
+    shell.editor_camera.target = glam::Vec3::splat(-100.0);
+    shell.editor_camera.eye = glam::Vec3::splat(999.0);
+}
+
+#[test]
+fn viewport_left_double_click_second_viewport_press_frames_prebuilt_scene() {
+    let expected = viewport_left_double_click_seed_shell().editor_camera;
+    let mut shell = viewport_left_double_click_seed_shell();
+    move_viewport_left_double_click_camera_off_scene(&mut shell);
+    let moved = shell.editor_camera;
+    let first = Instant::now();
+
+    shell.cursor_pos = Some([100.0, 200.0]);
+    shell.handle_viewport_left_press(true, true, first);
+
+    assert_camera_unchanged(moved, shell.editor_camera);
+
+    shell.cursor_pos = Some([103.0, 204.0]);
+    shell.handle_viewport_left_press(true, true, first + Duration::from_millis(250));
+
+    assert_camera_unchanged(expected, shell.editor_camera);
+}
+
+#[test]
+fn viewport_left_double_click_empty_scene_falls_back_to_default_camera() {
+    let mut shell = EditorShell::new();
+    move_viewport_left_double_click_camera_off_scene(&mut shell);
+    let first = Instant::now();
+
+    shell.cursor_pos = Some([40.0, 60.0]);
+    shell.handle_viewport_left_press(false, true, first);
+    shell.cursor_pos = Some([43.0, 64.0]);
+    shell.handle_viewport_left_press(false, true, first + Duration::from_millis(250));
+
+    assert_camera_unchanged(
+        crate::camera::EditorCameraState::default(),
+        shell.editor_camera,
+    );
+}
+
+#[test]
+fn viewport_left_double_click_outside_or_invalid_cursor_is_no_op_and_resets() {
+    let mut shell = viewport_left_double_click_seed_shell();
+    move_viewport_left_double_click_camera_off_scene(&mut shell);
+    let moved = shell.editor_camera;
+    let first = Instant::now();
+
+    shell.cursor_pos = Some([40.0, 60.0]);
+    shell.handle_viewport_left_press(true, false, first);
+    shell.cursor_pos = Some([43.0, 64.0]);
+    shell.handle_viewport_left_press(true, true, first + Duration::from_millis(250));
+    assert_camera_unchanged(moved, shell.editor_camera);
+
+    shell.cursor_pos = None;
+    shell.handle_viewport_left_press(true, true, first + Duration::from_millis(500));
+    shell.cursor_pos = Some([43.0, 64.0]);
+    shell.handle_viewport_left_press(true, true, first + Duration::from_millis(600));
+    assert_camera_unchanged(moved, shell.editor_camera);
+
+    shell.cursor_pos = Some([f32::NAN, 64.0]);
+    shell.handle_viewport_left_press(true, true, first + Duration::from_millis(700));
+    shell.cursor_pos = Some([43.0, 64.0]);
+    shell.handle_viewport_left_press(true, true, first + Duration::from_millis(800));
+    assert_camera_unchanged(moved, shell.editor_camera);
+}
+
+#[test]
+fn viewport_left_double_click_time_or_movement_threshold_miss_does_not_frame() {
+    let first = Instant::now();
+
+    let mut too_late = viewport_left_double_click_seed_shell();
+    move_viewport_left_double_click_camera_off_scene(&mut too_late);
+    let moved = too_late.editor_camera;
+    too_late.cursor_pos = Some([40.0, 60.0]);
+    too_late.handle_viewport_left_press(true, true, first);
+    too_late.cursor_pos = Some([40.0, 60.0]);
+    too_late.handle_viewport_left_press(true, true, first + Duration::from_secs(2));
+    assert_camera_unchanged(moved, too_late.editor_camera);
+
+    let mut too_far = viewport_left_double_click_seed_shell();
+    move_viewport_left_double_click_camera_off_scene(&mut too_far);
+    let moved = too_far.editor_camera;
+    too_far.cursor_pos = Some([40.0, 60.0]);
+    too_far.handle_viewport_left_press(true, true, first);
+    too_far.cursor_pos = Some([80.0, 60.0]);
+    too_far.handle_viewport_left_press(true, true, first + Duration::from_millis(250));
+    assert_camera_unchanged(moved, too_far.editor_camera);
+}
+
+#[test]
+fn viewport_left_double_click_single_press_preserves_face_pick_gate_and_does_not_frame() {
+    assert!(super::should_fire_face_pick(false, false));
+    assert!(super::should_fire_face_pick(false, true));
+    assert!(!super::should_fire_face_pick(true, false));
+    assert!(super::should_fire_face_pick(true, true));
+
+    let mut shell = viewport_left_double_click_seed_shell();
+    move_viewport_left_double_click_camera_off_scene(&mut shell);
+    let moved = shell.editor_camera;
+
+    shell.cursor_pos = Some([40.0, 60.0]);
+    shell.handle_viewport_left_press(false, true, Instant::now());
+
+    assert_camera_unchanged(moved, shell.editor_camera);
 }
 
 #[test]

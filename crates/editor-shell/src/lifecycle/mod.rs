@@ -582,6 +582,11 @@ pub struct EditorShell {
     /// [`Self::handle_left_click`] to compute the click ray.
     pub(crate) cursor_pos: Option<[f32; 2]>,
 
+    /// Viewport-only left double-click detector. A qualifying second left press
+    /// over the Viewport tab body reframes via [`Self::reset_camera`]; all
+    /// command/menu/accelerator routes remain separate.
+    viewport_left_double_click: viewport_navigation::ViewportLeftDoubleClick,
+
     /// Active right-button orbit drag over the Viewport tab body. Stores the
     /// previous cursor position so `CursorMoved` can convert motion into camera
     /// orbit deltas until right-button release.
@@ -809,6 +814,7 @@ impl EditorShell {
             light: None,
             meshes: Vec::new(),
             cursor_pos: None,
+            viewport_left_double_click: viewport_navigation::ViewportLeftDoubleClick::default(),
             viewport_orbit_drag: viewport_navigation::ViewportOrbitDrag::default(),
             viewport_pan_drag: viewport_navigation::ViewportPanDrag::default(),
             highlight_material: None,
@@ -1102,6 +1108,7 @@ impl EditorShell {
             light: None,
             meshes: Vec::new(),
             cursor_pos: None,
+            viewport_left_double_click: viewport_navigation::ViewportLeftDoubleClick::default(),
             viewport_orbit_drag: viewport_navigation::ViewportOrbitDrag::default(),
             viewport_pan_drag: viewport_navigation::ViewportPanDrag::default(),
             highlight_material: None,
@@ -1371,6 +1378,7 @@ impl EditorShell {
             light: None,
             meshes: Vec::new(),
             cursor_pos: None,
+            viewport_left_double_click: viewport_navigation::ViewportLeftDoubleClick::default(),
             viewport_orbit_drag: viewport_navigation::ViewportOrbitDrag::default(),
             viewport_pan_drag: viewport_navigation::ViewportPanDrag::default(),
             highlight_material: None,
@@ -2094,6 +2102,29 @@ impl EditorShell {
         }
     }
 
+    fn handle_viewport_left_press(
+        &mut self,
+        egui_consumed: bool,
+        over_viewport_tab: bool,
+        at: Instant,
+    ) {
+        let should_frame_all =
+            self.viewport_left_double_click
+                .left_press(self.cursor_pos, over_viewport_tab, at);
+
+        if should_fire_face_pick(egui_consumed, over_viewport_tab) {
+            self.handle_left_click();
+        }
+
+        if should_frame_all {
+            self.reset_camera();
+        }
+    }
+
+    fn reset_viewport_left_double_click(&mut self) {
+        self.viewport_left_double_click.reset();
+    }
+
     fn start_viewport_orbit_drag(&mut self, over_viewport_tab: bool) {
         if !over_viewport_tab {
             return;
@@ -2680,25 +2711,31 @@ impl ApplicationHandler<()> for EditorShell {
                 match (state, button) {
                     (ElementState::Pressed, MouseButton::Left) => {
                         let over_viewport = self.is_pointer_over_viewport_tab();
-                        if should_fire_face_pick(egui_consumed, over_viewport) {
-                            self.handle_left_click();
-                        }
+                        self.handle_viewport_left_press(
+                            egui_consumed,
+                            over_viewport,
+                            Instant::now(),
+                        );
                     }
                     (ElementState::Pressed, MouseButton::Right) => {
+                        self.reset_viewport_left_double_click();
                         let over_viewport = self.is_pointer_over_viewport_tab();
                         self.start_viewport_orbit_drag(over_viewport);
                     }
                     (ElementState::Released, MouseButton::Right) => {
+                        self.reset_viewport_left_double_click();
                         self.stop_viewport_orbit_drag();
                     }
                     (ElementState::Pressed, MouseButton::Middle) => {
+                        self.reset_viewport_left_double_click();
                         let over_viewport = self.is_pointer_over_viewport_tab();
                         self.start_viewport_pan_drag(over_viewport);
                     }
                     (ElementState::Released, MouseButton::Middle) => {
+                        self.reset_viewport_left_double_click();
                         self.stop_viewport_pan_drag();
                     }
-                    _ => {}
+                    _ => self.reset_viewport_left_double_click(),
                 }
             }
             WindowEvent::ModifiersChanged(new_modifiers) => {
