@@ -10687,7 +10687,7 @@ is the only safeguard against selector drift.
    - No bounded, source-safe candidate exists.
    - Describing task 121 would require editing a MUST-NOT path.
 
-121. **[DONE 2026-06-13 via ISSUE-375 pending review] Add viewport-only left-double-click frame-all camera gesture in `editor-shell`.**
+121. **[DONE 2026-06-13 via ISSUE-375 / commit `9720a10`] Add viewport-only left-double-click frame-all camera gesture in `editor-shell`.**
    Add the smallest next camera/navigation slice after tasks 115 (wheel zoom),
    117 (right-button orbit), and 119 (middle-button pan). The reframe pipeline
    already exists: `EditorShell::reset_camera()`
@@ -10802,3 +10802,75 @@ is the only safeguard against selector drift.
      unchanged, or single-left-click face-pick / orbit / pan / wheel-zoom behavior
      would change.
    - Verification gate fails, or `git diff --name-only` shows any MUST-NOT path.
+
+122. **Post-viewport-frame-all Phase 9 next-task source audit.**
+   Re-arm after task 121 (viewport-only left-double-click frame-all camera
+   gesture). This is a docs/source-read-only selection audit: inspect current
+   source and status after viewport wheel zoom, right-button orbit,
+   middle-button pan, and left-double-click frame-all have all shipped. Compare
+   the remaining Phase 9/editor-usability candidate classes and append exactly
+   one bounded implementation follow-up as task 123, or record `NEEDS_HUMAN`
+   with the blocking product/architecture question.
+
+   **GitHub state rule:** use the "Dispatcher GitHub state snapshot" that
+   `Invoke-AiDispatchAuto.ps1` injects into the filed issue body as the GitHub
+   queue/already-filed-task evidence. Do not call `gh` or the network from the
+   executor sandbox for that confirmation; use local source reads and `git grep`
+   for repo/source evidence.
+
+   **Candidate classes to compare (minimum):**
+   - Camera/navigation follow-up after zoom/orbit/pan/frame-all (for example
+     focus/stop/camera-state affordance), but only if it stays inside
+     `editor-shell` camera/input state and does not require selection/world-AABB,
+     pointer capture, persistence, or host/UI policy.
+   - Host-shell FIFO replacement or generalized registry execution after the
+     existing `MenuCommandHandoff` / `route_menu_command` path.
+   - Real plugin command execution beyond the injected `ExtensionCommandHandler`
+     seam, including runtime/discovery/loading/capability policy.
+   - Keybinding/remap/conflict policy beyond current projection diagnostics.
+   - OS/typed clipboard integration beyond shell-local entity clipboard.
+   - Authoritative CAD/editor mutation through `CommandBus`, including
+     projection, undo/dirty, and user-facing command semantics.
+
+   **MAY edit:**
+   - `.ai/dispatch.tasks.md`
+   - `Status.md`
+   - `HANDOFF.md`
+   - `plans/BASELINE.md`
+   - `change.md`
+   - generated ISSUE-<n> handoff/audit/log artifacts for this dispatch only
+
+   **MUST NOT edit:**
+   - Rust source or tests
+   - Cargo manifests or `Cargo.lock`
+   - GitHub workflows
+   - dispatch automation, guard, queue, scheduler, or verification scripts
+   - schemas, ADR files, architecture-lint rules/config, packet templates, or
+     existing unrelated handoff/log artifacts
+   - plugin runtime/discovery/loading implementation code
+
+   **Required source/status checks to record in the EXEC packet:**
+   - Confirm there is no open `ai-dispatch` issue and no already-filed task 123
+     using the dispatcher-provided GitHub snapshot plus `.ai/dispatch.tasks.md`.
+   - Re-grep current source for the shipped camera/navigation closures:
+     `git grep -n -E "zoom_camera|ViewportOrbitDrag|ViewportPanDrag|ViewportLeftDoubleClick|reset_camera|current_scene_bounds|isometric_camera_for_bounds|is_pointer_over_viewport_tab|MouseWheel|MouseButton::Right|MouseButton::Middle|MouseButton::Left" -- crates/editor-shell/src`
+   - Re-grep current routing/extension boundaries:
+     `git grep -n -E "MenuCommandHandoff|route_menu_command|ExtensionCommandHandler|ExtensionCommandEvent|Command::Custom|Command::Plugin|plugin runtime|PluginHost|PluginContext|clipboard|CommandBus|undo|dirty|shortcut.*conflict|keybinding|accelerator" -- crates editor runtime kernel Status.md HANDOFF.md plans/BASELINE.md .ai/dispatch.tasks.md`
+   - Include falsifying searches for stale claims before selecting task 123.
+
+   **Done criteria:**
+   - The audit compares every candidate class above against current source,
+     not stale roadmap prose.
+   - Exactly one task 123 is appended with clear MAY/MUST-NOT/Done/Verification/
+     Halt sections, OR the audit records `NEEDS_HUMAN` with concrete evidence.
+   - The selected task 123 is one-dispatch, bounded, source-grounded, and does
+     not depend on unapproved automation/tooling changes.
+   - Task 122 does not implement task 123.
+   - `git diff --name-only` shows only MAY-edit docs plus this dispatch's own
+     generated artifacts; `git diff --check` is clean.
+
+   **Halt conditions (hard):**
+   - This audit begins implementing task 123, writing Rust, editing Cargo,
+     changing workflows, or changing automation.
+   - No bounded, source-safe candidate exists.
+   - Describing task 123 would require editing a MUST-NOT path.

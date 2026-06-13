@@ -14,6 +14,15 @@ menu/Home reset routing remain unchanged; no command/menu/accelerator,
 host/UI, Cargo, CAD/projection/action, plugin runtime, clipboard, undo/dirty,
 render-path, persistence, pointer-capture, or generalized input surface changed.
 
+**2026-06-13 update 18:** task 121 is published as `9720a10`, #375 is closed,
+and the brief is re-armed with task 122: a docs/source-read-only post-frame-all
+audit. `Invoke-AiDispatchAuto.ps1` now injects a dispatcher-generated
+GitHub-state snapshot into auto-created issue bodies so audit executors can
+confirm queue/already-filed-task state without calling `gh` from the sandbox.
+Task 122 must compare the remaining editor-usability candidate classes after
+zoom/orbit/pan/frame-all and append one bounded task 123 or record
+`NEEDS_HUMAN`; it is not an implementation task.
+
 **2026-06-13 update:** ISSUE-373 published task 119, completing the
 viewport-only middle-button pan slice in `editor-shell`, and `c1daf94` added
 queue-owned stale-claim cleanup. The next scheduler tick reached task selection
