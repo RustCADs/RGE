@@ -23,6 +23,19 @@ Task 122 must compare the remaining editor-usability candidate classes after
 zoom/orbit/pan/frame-all and append one bounded task 123 or record
 `NEEDS_HUMAN`; it is not an implementation task.
 
+**2026-06-13 update 19:** ISSUE-376 completed task 122 as `NEEDS_HUMAN`.
+The audit used only the embedded dispatcher GitHub-state snapshot for queue
+evidence: no open `ai-dispatch` issue, no open failed autonomous issue, and no
+already-filed task 123. Source checks confirmed the safe viewport-local camera
+sequence is exhausted at wheel zoom, right-button orbit, middle-button pan, and
+left-double-click frame-all. The remaining candidate classes require a human
+product/architecture decision before the automation can name a bounded task:
+broader camera controller/persistence/pointer-capture/frame-selected semantics,
+host-shell command-route replacement, real plugin runtime/discovery/loading,
+keybinding/remap/conflict policy, OS/typed clipboard, or authoritative
+CAD/editor mutation through a richer CommandBus/undo/dirty model. No task 123
+was appended.
+
 **2026-06-13 update:** ISSUE-373 published task 119, completing the
 viewport-only middle-button pan slice in `editor-shell`, and `c1daf94` added
 queue-owned stale-claim cleanup. The next scheduler tick reached task selection

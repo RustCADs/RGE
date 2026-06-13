@@ -10803,7 +10803,7 @@ is the only safeguard against selector drift.
      would change.
    - Verification gate fails, or `git diff --name-only` shows any MUST-NOT path.
 
-122. **Post-viewport-frame-all Phase 9 next-task source audit.**
+122. **[NEEDS_HUMAN 2026-06-13 via ISSUE-376] Post-viewport-frame-all Phase 9 next-task source audit.**
    Re-arm after task 121 (viewport-only left-double-click frame-all camera
    gesture). This is a docs/source-read-only selection audit: inspect current
    source and status after viewport wheel zoom, right-button orbit,
@@ -10874,3 +10874,38 @@ is the only safeguard against selector drift.
      changing workflows, or changing automation.
    - No bounded, source-safe candidate exists.
    - Describing task 123 would require editing a MUST-NOT path.
+
+   **ISSUE-376 audit outcome: NEEDS_HUMAN.**
+   The dispatcher-provided GitHub snapshot embedded in the ISSUE-376 task packet
+   reported no open `ai-dispatch` issues before #376 was created, no open failed
+   autonomous issues, and an already-filed autonomous issue list that stops at
+   closed #375 with no task 123. Local `rg -n "^122\.|^123\." .ai/dispatch.tasks.md`
+   before editing found task 122 only and no `^123\.` entry.
+
+   Current source confirms the camera/navigation run is no longer carrying an
+   obvious one-dispatch local gesture: `editor-shell` has viewport-only
+   `MouseWheel` zoom, right-button `ViewportOrbitDrag`, middle-button
+   `ViewportPanDrag`, and left-double-click `ViewportLeftDoubleClick` frame-all,
+   all gated by the existing Viewport tab hit-test and `EditorCameraState`.
+   Further camera work now points at frame-selected/world-AABB selection,
+   pointer capture/window-grab, camera persistence/state policy, or a broader
+   camera-controller design instead of a small local input slice.
+
+   The non-camera candidates are also policy or architecture decisions in
+   current source: menu and palette execution still crosses
+   `MenuCommandHandoff` into `EditorShell::route_menu_command`; extension
+   activations stop at the injected `ExtensionCommandHandler` seam; real
+   plugin execution would require runtime/discovery/loading/capability policy;
+   shortcut conflicts remain projection diagnostics rather than remap/fatal
+   policy; clipboard behavior is shell-local entity data rather than OS/typed
+   clipboard semantics; and CAD/editor mutation through `CommandBus` remains
+   blocked on authoritative CAD/projection access plus undo/dirty semantics
+   beyond the current World-only `Action` contract.
+
+   No task 123 was appended. Blocking decision for the human reviewer: choose
+   which Phase 9 boundary to cross next and authorize its product/architecture
+   policy explicitly -- broader camera controller/persistence/pointer-capture,
+   host-shell command-route replacement, real plugin runtime/discovery/loading,
+   keybinding/remap/conflict policy, OS/typed clipboard semantics, or
+   authoritative CAD/editor mutation through a richer CommandBus/undo/dirty
+   model.

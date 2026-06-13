@@ -1,0 +1,20 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-376",
+    "packet_type": "EXEC",
+    "author": "Executor / Codex",
+    "timestamp": "2026-06-13_22-04-20+0300",
+    "related_files": [
+                          "ai_handoffs/ISSUE-376_TASK_2026-06-13_21-52-06+0300.md - consumed task packet and embedded dispatcher GitHub snapshot",
+                          ".ai/dispatch.tasks.md - marked task 122 NEEDS_HUMAN; no task 123 appended",
+                          "Status.md - added task-122 NEEDS_HUMAN snapshot",
+                          "HANDOFF.md - added task-122 NEEDS_HUMAN handoff snapshot",
+                          "plans/BASELINE.md - recorded Phase 9 task-122 NEEDS_HUMAN outcome",
+                          "change.md - appended task-122 audit history row",
+                          "ai_handoffs/ISSUE-376_EXEC_2026-06-13_22-04-20+0300.md - this report"
+                      ],
+    "status": "NEEDS_HUMAN",
+    "handoff_status": "NEEDS_HUMAN",
+    "next_role": "HUMAN_ARBITER",
+    "exit_code": 0
+}
