@@ -2,6 +2,18 @@
 
 ## Phase 9 editor-usability and dispatch-advisory closure
 
+**2026-06-13 update 21:** ISSUE-377 published task 123 as `540d16e`.
+Conflicted shortcuts remain diagnostic-visible but no longer execute through
+`ResolveResult::enabled_command_for_shortcut`; first-winner lookup remains
+available for display/introspection. The queue is empty and unblocked, and the
+brief is re-armed with task 124, a docs/source-read-only audit that must use the
+dispatcher-provided GitHub-state snapshot instead of live `gh`, compare the
+remaining Phase 9 editor-usability candidate classes, and append exactly one
+bounded implementation task 125 or record source-grounded `NEEDS_HUMAN`. The
+standing Human=Codex delegation is explicit for choosing the smallest policy
+boundary; task 124 must not implement task 125 or edit Rust/Cargo/workflows/
+automation.
+
 **2026-06-13 update 17:** ISSUE-375 implements task 121: viewport-only
 left-double-click frame-all in `editor-shell`. The gesture is handled inside
 the existing lifecycle mouse path with a private `viewport_navigation` detector

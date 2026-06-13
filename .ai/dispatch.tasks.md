@@ -11006,3 +11006,96 @@ is the only safeguard against selector drift.
    - The change would make disabled entries execute, or make hidden/predicate
      suppressed entries occupy shortcut slots.
    - Verification fails, or `git diff --name-only` shows any MUST-NOT path.
+
+124. **Post-conflicted-shortcut Phase 9 next-task audit.**
+   Perform a docs/source-read-only audit after task 123. Use the
+   dispatcher-provided GitHub-state snapshot embedded in the auto-created issue
+   body as the only GitHub queue/already-filed evidence; do not call `gh`,
+   network APIs, or browse. Re-check current local source and docs, compare the
+   remaining Phase 9/editor-usability candidate classes, and append exactly one
+   bounded implementation task 125, using the standing Human=Codex delegated
+   authorization to choose the smallest policy boundary when the evidence
+   requires a product/architecture choice. Record `NEEDS_HUMAN` only if the
+   local source evidence is contradictory or no bounded, source-safe task can be
+   specified even with delegated policy.
+
+   **Candidate classes to compare from current source:**
+   - Keybinding/remap policy after task 123: conflict diagnostics remain
+     visible and conflicted shortcuts no longer execute; remaining work includes
+     remapping UI, preferences/persistence, fatal startup policy, or narrower
+     diagnostics/policy slices.
+   - Host-shell command execution: menu, palette, and accelerator activation
+     still cross `MenuCommandHandoff` into `EditorShell::route_menu_command`;
+     replacing that route or generalizing registry execution is a broader
+     host-shell boundary unless a smaller source-safe slice exists.
+   - Real plugin command execution: extension commands stop at the injected
+     `ExtensionCommandHandler` seam; runtime/discovery/loading/capability
+     policy remains broader unless a bounded seam-only follow-up exists.
+   - OS/typed clipboard: Edit Cut/Copy/Paste is shell-local legacy-blob entity
+     data; OS clipboard, typed components, CAD identity, and cross-process
+     semantics remain broader unless a narrow policy/documented substrate slice
+     exists.
+   - CAD/editor mutation through CommandBus: current actions remain World-only;
+     authoritative CAD/projection mutation, undo/dirty authority, and save/load
+     semantics remain broader unless a bounded source-safe slice exists.
+   - Camera/navigation follow-up after wheel zoom, right-button orbit,
+     middle-button pan, and left-double-click frame-all: remaining work includes
+     frame-selected/world-AABB, pointer capture/window-grab, camera persistence,
+     or a broader controller policy.
+
+   **MAY edit:**
+   - `.ai/dispatch.tasks.md`
+   - `Status.md`
+   - `HANDOFF.md`
+   - `plans/BASELINE.md`
+   - `change.md`
+   - generated ISSUE-<n> handoff/audit/log artifacts for this dispatch only
+
+   **MUST NOT edit:**
+   - Rust source or tests under `crates/**`, `editor/**`, `kernel/**`,
+     `runtime/**`, or `tools/**`
+   - Cargo manifests or `Cargo.lock`
+   - GitHub workflows
+   - dispatch automation, guard, queue, scheduler, watcher, verification, or
+     health/trend scripts
+   - schemas, ADR files, architecture-lint rules/config, packet templates, or
+     existing unrelated handoff/log artifacts
+   - plugin runtime/discovery/loading implementation
+   - `MenuCommandHandoff` storage semantics, host-shell FIFO replacement, or
+     `EditorShell::route_menu_command`
+   - OS/typed clipboard behavior
+   - CAD graph/projection mutation, `CommandBus` action signatures,
+     undo/dirty/save-load authority, or save/load behavior
+   - camera/navigation behavior
+   - shortcut remapping UI, user preferences, persistence, or fatal startup
+     policy as implementation
+
+   **Done criteria:**
+   - The audit records the embedded GitHub-state snapshot facts and a local
+     `rg -n "^124\.|^125\." .ai/dispatch.tasks.md` check from before editing.
+   - The audit records source-grounded evidence for each candidate class above,
+     including at least one falsifying grep per class where practical.
+   - Exactly one bounded implementation task 125 is appended with explicit MAY
+     edit, MUST-NOT edit, done criteria, verification, and halt conditions; or
+     task 124 records `NEEDS_HUMAN` with concrete source evidence explaining
+     why no bounded task can be safely specified.
+   - If delegated policy is used, the selected policy is stated explicitly in
+     task 125 and kept to the smallest source-safe boundary.
+   - No implementation work for task 125 is done, and no task 126 is appended.
+   - `git diff --name-only` shows only MAY-edit docs plus this dispatch's own
+     generated artifacts; `git diff --check` is clean.
+
+   **Verification:**
+   - `rg -n "^124\.|^125\." .ai/dispatch.tasks.md`
+   - Candidate source greps covering keybinding/remap, command routing,
+     plugin/extension execution, clipboard, CommandBus/CAD mutation, and camera
+     follow-up surfaces
+   - `git diff --name-only`
+   - `git diff --check`
+
+   **Halt conditions:**
+   - The audit begins implementing task 125, writing Rust, editing Cargo,
+     changing workflows, or changing automation.
+   - The audit requires live GitHub/network evidence instead of the embedded
+     snapshot plus local source reads.
+   - No bounded task 125 can be specified without editing a MUST-NOT path.
