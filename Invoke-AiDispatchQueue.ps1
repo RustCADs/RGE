@@ -1097,6 +1097,85 @@ function Save-OrphanDispatchWorktree {
     }
 }
 
+function Release-OrphanHandoffClaim {
+    # Best-effort cleanup for queue-owned ADR-121 live claims left behind by
+    # an interrupted queue process. Orphan recovery has already established
+    # that no queue run holds the process lock, so a queue-owned live claim for
+    # the same dispatch is stale even when its long TTL has not expired.
+    param(
+        [Parameter(Mandatory = $true)][string]$DispatchId,
+        [Parameter(Mandatory = $true)][string]$Branch,
+        [AllowEmptyString()][string]$EventRoot = '',
+        [AllowEmptyString()][string]$Reason = ''
+    )
+
+    if ($SkipHandoffClaim) { return }
+    if (-not $script:RepoRoot) { return }
+
+    $claimDir = Join-Path (Join-Path $script:RepoRoot '.ai\handoff-claims') $DispatchId
+    $claimPath = Join-Path $claimDir 'claim.json'
+    if (-not (Test-Path -LiteralPath $claimPath)) { return }
+
+    try {
+        $record = Get-Content -Raw -LiteralPath $claimPath | ConvertFrom-Json
+    } catch {
+        Write-Output "  WARNING: could not parse ADR-121 claim for ${DispatchId}: $($_.Exception.Message)"
+        return
+    }
+
+    $harness = [string]$record.harness
+    if ($harness -ne 'Invoke-AiDispatchQueue.ps1') {
+        Write-Output "  WARNING: leaving non-queue ADR-121 claim for ${DispatchId} intact (harness=$harness)."
+        return
+    }
+
+    $actor = [string]$record.actor
+    if ([string]::IsNullOrWhiteSpace($actor)) {
+        Write-Output "  WARNING: leaving ADR-121 claim for ${DispatchId} intact because its actor is empty."
+        return
+    }
+
+    $claimBranch = [string]$record.branch
+    if ([string]::IsNullOrWhiteSpace($claimBranch)) { $claimBranch = $Branch }
+
+    $eventRootForRelease = $script:RepoRoot
+    if (-not [string]::IsNullOrWhiteSpace($EventRoot) -and (Test-Path -LiteralPath $EventRoot)) {
+        $eventRootForRelease = $EventRoot
+    }
+
+    $reasonText = if ($Reason) { " ($Reason)" } else { '' }
+    $claimHelper = if ($claimScript) { $claimScript } else { Join-Path $script:RepoRoot 'Invoke-HandoffClaim.ps1' }
+    if (-not (Test-Path -LiteralPath $claimHelper)) {
+        Write-Output "  WARNING: could not release ADR-121 claim for ${DispatchId}; helper missing: $claimHelper"
+        return
+    }
+
+    $claimArgs = New-HandoffClaimArguments -ClaimScript $claimHelper -Action 'Release' `
+        -DispatchId $DispatchId -Actor $actor -Harness 'Invoke-AiDispatchQueue.ps1' `
+        -Branch $claimBranch -Root $eventRootForRelease -LiveRoot $script:RepoRoot `
+        -TtlSeconds $HandoffClaimTtlSeconds
+    $release = Invoke-Tool -Exe 'powershell.exe' -CmdArgs $claimArgs
+    if ($release.Code -ne 0) {
+        Write-Output "  WARNING: could not release ADR-121 claim for ${DispatchId}$reasonText (exit $($release.Code)): $($release.Text)"
+        return
+    }
+
+    try {
+        $result = $release.Text | ConvertFrom-Json
+    } catch {
+        Write-Output "  WARNING: ADR-121 claim release for ${DispatchId}$reasonText returned unparseable JSON: $($_.Exception.Message)"
+        return
+    }
+
+    if ($result.status -eq 'RELEASED') {
+        Write-Output "  released stale ADR-121 claim for ${DispatchId}$reasonText."
+    } elseif ($result.status -eq 'AVAILABLE') {
+        Write-Output "  ADR-121 claim for ${DispatchId} was already available$reasonText."
+    } else {
+        Write-Output "  WARNING: ADR-121 claim cleanup for ${DispatchId}$reasonText returned status=$($result.status)."
+    }
+}
+
 function Invoke-OrphanRecovery {
     # Recover from a dispatch run killed mid-flight: an issue stuck in
     # <label>-running with no live queue process, a leftover dispatch branch,
@@ -1221,6 +1300,8 @@ function Invoke-OrphanRecovery {
                     if ($saveResult.ArchivePath) { $aheadArchive = $saveResult.ArchivePath }
                     if ($saveResult.ArchiveBranch) { $aheadCommentBranch = $saveResult.ArchiveBranch }
                 }
+                Release-OrphanHandoffClaim -DispatchId $aheadId -Branch $aheadBranch `
+                    -EventRoot $aheadArchive -Reason 'orphan recovery: interrupted publish'
                 $aheadBody = Format-DispatchOrphanRecoveryComment `
                     -Stage 'interrupted-publish' `
                     -DispatchId $aheadId `
@@ -1263,6 +1344,8 @@ function Invoke-OrphanRecovery {
             } elseif ((Invoke-Tool -Exe 'git' -CmdArgs @('branch', '--list', $obranch)).Text.Trim()) {
                 Invoke-Tool -Exe 'git' -CmdArgs @('branch', '-D', $obranch) | Out-Null
             }
+            Release-OrphanHandoffClaim -DispatchId $oid -Branch $obranch `
+                -EventRoot $archivePath -Reason 'orphan recovery: already published'
             Invoke-Tool -Exe 'gh' -CmdArgs @(
                 'issue', 'edit', "$($o.number)", '--repo', $RepoSlug,
                 '--remove-label', $RunLabel, '--remove-label', $QueueLabel,
@@ -1299,6 +1382,8 @@ function Invoke-OrphanRecovery {
             Write-Output "  deleting interrupted branch $obranch."
             Invoke-Tool -Exe 'git' -CmdArgs @('branch', '-D', $obranch) | Out-Null
         }
+        Release-OrphanHandoffClaim -DispatchId $oid -Branch $obranch `
+            -EventRoot $archivePath -Reason 'orphan recovery: interrupted run'
         # Archive the interrupted run's primary-side scratch dir if one is
         # still there. With ISSUE-231 worktree isolation the run dir lives
         # inside the worktree (covered by Save-OrphanDispatchWorktree above),
@@ -2423,6 +2508,9 @@ try {
             "remove it manually (`"git worktree remove `"$worktreePath`"`") " +
             "before re-queueing issue #$($issue.number).")
     }
+
+    Release-OrphanHandoffClaim -DispatchId $id -Branch $branch `
+        -Reason 'pre-claim queued issue cleanup'
 
     # --- Ensure bookkeeping labels exist (idempotent) ----------------------
 

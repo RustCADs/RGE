@@ -232,6 +232,71 @@ Describe 'Queue ADR-121 handoff claim command dry-run' {
         $acquireCall | Should -Match '-TtlSeconds\s+\$HandoffClaimTtlSeconds'
         $releaseCall | Should -Match '-TtlSeconds\s+\$HandoffClaimTtlSeconds'
     }
+
+    It 'exposes orphan claim cleanup for stale queue-owned claims' {
+        (Get-Command -Name Release-OrphanHandoffClaim -ErrorAction SilentlyContinue) |
+            Should -Not -BeNullOrEmpty
+    }
+
+    It 'releases a queue-owned live claim without waiting for the TTL' {
+        $oldRepoRoot = $script:RepoRoot
+        $oldClaimScript = $script:claimScript
+        $oldTtl = $HandoffClaimTtlSeconds
+        try {
+            $script:RepoRoot = $TestDrive
+            $script:claimScript = Join-Path $script:RepoRootForTest 'Invoke-HandoffClaim.ps1'
+            $script:HandoffClaimTtlSeconds = 43200
+
+            $claimDir = Join-Path $TestDrive '.ai\handoff-claims\ISSUE-STALE'
+            New-Item -ItemType Directory -Path $claimDir -Force | Out-Null
+            $claim = [pscustomobject][ordered]@{
+                dispatch_id = 'ISSUE-STALE'
+                actor       = 'Invoke-AiDispatchQueue.ps1:1234'
+                harness     = 'Invoke-AiDispatchQueue.ps1'
+                branch      = 'ai-dispatch/ISSUE-STALE'
+                timestamp   = '2026-06-13T12:00:00.0000000+03:00'
+                ttl_seconds = 43200
+                pid         = 1234
+            }
+            [System.IO.File]::WriteAllText(
+                (Join-Path $claimDir 'claim.json'),
+                ($claim | ConvertTo-Json -Depth 5),
+                [System.Text.UTF8Encoding]::new($false))
+
+            Release-OrphanHandoffClaim `
+                -DispatchId 'ISSUE-STALE' `
+                -Branch 'ai-dispatch/ISSUE-STALE' `
+                -EventRoot $TestDrive `
+                -Reason 'pester'
+
+            Test-Path -LiteralPath (Join-Path $claimDir 'claim.json') | Should -BeFalse
+            $releaseEvents = Get-ChildItem -LiteralPath (Join-Path $TestDrive 'ai_handoffs\claims') -Filter '*_release.json'
+            $releaseEvents.Count | Should -Be 1
+            $event = Get-Content -Raw -LiteralPath $releaseEvents[0].FullName | ConvertFrom-Json
+            $event.dispatch_id | Should -Be 'ISSUE-STALE'
+            $event.event | Should -Be 'release'
+        } finally {
+            $script:RepoRoot = $oldRepoRoot
+            $script:claimScript = $oldClaimScript
+            $script:HandoffClaimTtlSeconds = $oldTtl
+        }
+    }
+
+    It 'clears queue-owned claims during orphan recovery before requeueing or finalizing' {
+        $script:QueueScriptText | Should -Match "Release-OrphanHandoffClaim\s+(?:``\s*)?-DispatchId\s+\`$oid"
+        $script:QueueScriptText | Should -Match "Release-OrphanHandoffClaim\s+(?:``\s*)?-DispatchId\s+\`$aheadId"
+        $script:QueueScriptText | Should -Match "orphan recovery: interrupted run"
+        $script:QueueScriptText | Should -Match "orphan recovery: already published"
+        $script:QueueScriptText | Should -Match "orphan recovery: interrupted publish"
+    }
+
+    It 'pre-clears a queued issue claim before marking the issue running' {
+        $cleanupIdx = $script:QueueScriptText.IndexOf("pre-claim queued issue cleanup")
+        $labelSectionIdx = $script:QueueScriptText.IndexOf('# --- Mark running, build the goal')
+
+        $cleanupIdx | Should -BeGreaterThan -1
+        $labelSectionIdx | Should -BeGreaterThan $cleanupIdx
+    }
 }
 
 Describe 'Loop contains Codex gate and execution routing' {
