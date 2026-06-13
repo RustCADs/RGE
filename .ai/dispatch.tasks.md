@@ -10977,8 +10977,8 @@ is the only safeguard against selector drift.
    - The first-winner display/introspection behavior remains available through
      `command_for_shortcut` and/or `AcceleratorTable::resolve`.
    - Tests cover conflicted execution suppression, unconflicted execution,
-     disabled entry suppression, and predicate-filtered entries releasing their
-     shortcut slot.
+     disabled entry suppression, hidden entries releasing their shortcut slot,
+     and predicate-filtered entries releasing their shortcut slot.
    - Shell comments or parity tests are updated only as needed to make clear
      that keyboard dispatch goes through the conflict-aware
      `enabled_command_for_shortcut` path.
@@ -10991,6 +10991,8 @@ is the only safeguard against selector drift.
    - `cargo check -p rge-editor-ui -p rge-editor-shell --lib`
    - `cargo +nightly fmt --all -- --check`
    - `git diff --check`
+   - The EXEC packet records a Rule 8 falsifying search for hidden-entry slot
+     release, e.g. `rg -n -C 10 "visible == false|filter\(\|e\| e\.visible|with_visible\(false\)" crates/editor-ui/src/menus/registry.rs crates/editor-ui/src/menus/entry.rs crates/editor-ui/tests/menus_ordering.rs`, and summarizes the live evidence that `resolve_slot` filters `e.visible && e.predicate.evaluate(ctx)` before shortcut registration.
    - `git diff --name-only` contains only MAY-edit files plus this dispatch's
      generated artifacts.
 
