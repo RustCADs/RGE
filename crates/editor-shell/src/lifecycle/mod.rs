@@ -227,6 +227,8 @@ pub mod save_source;
 pub mod unsaved_changes;
 pub mod window_title;
 
+mod viewport_navigation;
+
 pub use accelerator::keycode_to_shortcut;
 pub use asset_reload::AssetReloadHook;
 pub use commands::{EditorKeyCommand, SetTimeScale};
@@ -570,6 +572,11 @@ pub struct EditorShell {
     /// [`Self::handle_left_click`] to compute the click ray.
     pub(crate) cursor_pos: Option<[f32; 2]>,
 
+    /// Active right-button orbit drag over the Viewport tab body. Stores the
+    /// previous cursor position so `CursorMoved` can convert motion into camera
+    /// orbit deltas until right-button release.
+    viewport_orbit_drag: viewport_navigation::ViewportOrbitDrag,
+
     // ---- sub-ε selection highlight overlay -------------------------------
     //
     // The picked face's triangles are drawn as a second `draw_indexed`
@@ -787,6 +794,7 @@ impl EditorShell {
             light: None,
             meshes: Vec::new(),
             cursor_pos: None,
+            viewport_orbit_drag: viewport_navigation::ViewportOrbitDrag::default(),
             highlight_material: None,
             highlight_index_buffer: None,
             texture_pool: None,
@@ -1078,6 +1086,7 @@ impl EditorShell {
             light: None,
             meshes: Vec::new(),
             cursor_pos: None,
+            viewport_orbit_drag: viewport_navigation::ViewportOrbitDrag::default(),
             highlight_material: None,
             highlight_index_buffer: None,
             texture_pool: None,
@@ -1345,6 +1354,7 @@ impl EditorShell {
             light: None,
             meshes: Vec::new(),
             cursor_pos: None,
+            viewport_orbit_drag: viewport_navigation::ViewportOrbitDrag::default(),
             highlight_material: None,
             highlight_index_buffer: None,
             texture_pool: None,
@@ -2066,6 +2076,30 @@ impl EditorShell {
         }
     }
 
+    fn start_viewport_orbit_drag(&mut self, over_viewport_tab: bool) {
+        if !over_viewport_tab {
+            return;
+        }
+        let Some(cursor_pos) = self.cursor_pos else {
+            return;
+        };
+        self.viewport_orbit_drag.start(cursor_pos);
+    }
+
+    fn update_viewport_orbit_drag(&mut self, cursor_pos: [f32; 2]) {
+        self.viewport_orbit_drag
+            .drag_to(cursor_pos, &mut self.editor_camera);
+    }
+
+    fn stop_viewport_orbit_drag(&mut self) {
+        self.viewport_orbit_drag.stop();
+    }
+
+    #[cfg(test)]
+    fn is_viewport_orbit_drag_active(&self) -> bool {
+        self.viewport_orbit_drag.is_active()
+    }
+
     fn zoom_camera_by(&mut self, factor: f32) {
         if !factor.is_finite() || factor <= 0.0 {
             return;
@@ -2571,16 +2605,18 @@ impl ApplicationHandler<()> for EditorShell {
                 // (sub-δ.2). winit 0.30 reports `CursorMoved.position` in
                 // physical pixels, matching `SurfaceConfiguration.width /
                 // height`; no DPI conversion needed.
-                self.cursor_pos = Some([position.x as f32, position.y as f32]);
+                let cursor_pos = [position.x as f32, position.y as f32];
+                self.update_viewport_orbit_drag(cursor_pos);
+                self.cursor_pos = Some(cursor_pos);
             }
             WindowEvent::MouseWheel { delta, .. } => {
                 let over_viewport = self.is_pointer_over_viewport_tab();
                 self.zoom_camera_for_viewport_mouse_wheel(&delta, over_viewport);
             }
             WindowEvent::MouseInput { state, button, .. } => {
-                // Sub-δ.2 single-select left-click. Other buttons /
-                // Released events are no-ops in v0; right / middle /
-                // scroll / drag / hover are non-goals (later dispatches).
+                // Sub-δ.2 single-select left-click plus the viewport-only
+                // right-button orbit path. Middle / generalized drag / hover
+                // remain non-goals.
                 //
                 // Phase 9 dispatch B: gate on `!egui_consumed` so clicks
                 // on an egui panel/widget don't also fall through to
@@ -2597,11 +2633,21 @@ impl ApplicationHandler<()> for EditorShell {
                 // cuboid. Inspector + tab-chrome clicks remain
                 // consumed (no accidental picking).
                 use winit::event::{ElementState, MouseButton};
-                if state == ElementState::Pressed && button == MouseButton::Left {
-                    let over_viewport = self.is_pointer_over_viewport_tab();
-                    if should_fire_face_pick(egui_consumed, over_viewport) {
-                        self.handle_left_click();
+                match (state, button) {
+                    (ElementState::Pressed, MouseButton::Left) => {
+                        let over_viewport = self.is_pointer_over_viewport_tab();
+                        if should_fire_face_pick(egui_consumed, over_viewport) {
+                            self.handle_left_click();
+                        }
                     }
+                    (ElementState::Pressed, MouseButton::Right) => {
+                        let over_viewport = self.is_pointer_over_viewport_tab();
+                        self.start_viewport_orbit_drag(over_viewport);
+                    }
+                    (ElementState::Released, MouseButton::Right) => {
+                        self.stop_viewport_orbit_drag();
+                    }
+                    _ => {}
                 }
             }
             WindowEvent::ModifiersChanged(new_modifiers) => {

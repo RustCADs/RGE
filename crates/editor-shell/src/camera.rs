@@ -52,7 +52,7 @@
 //! `Option<Ray>` is the existing picker's input shape, so this module
 //! sits at the "editor coordination ↔ projection query" seam.
 
-use glam::{Mat4, Vec3, Vec4};
+use glam::{Mat4, Quat, Vec3, Vec4};
 use rge_cad_core::OperatorGraph;
 use rge_cad_projection::picking::Ray;
 use rge_cad_projection::CadProjection;
@@ -74,8 +74,8 @@ use rge_kernel_ecs::World;
 /// 1×1×1 cuboid at the origin (the +X / +Y / +Z faces) are visible from
 /// this vantage point with a directional light from `-1, -1, -1`,
 /// producing the Lambert+Phong shading variation that the visual
-/// verification looks for. No orbit / pan / zoom controls (a later
-/// dispatch).
+/// verification looks for. Initial viewport navigation shipped later on top of
+/// this same camera state rather than replacing it with a separate controller.
 ///
 /// [`EditorCameraState::to_camera_view`] composes this struct into a
 /// [`CameraView`] suitable for the existing
@@ -143,6 +143,52 @@ impl EditorCameraState {
             view_proj: self.view_proj(aspect),
             viewport_size,
         }
+    }
+
+    /// Rotate [`Self::eye`] around [`Self::target`] while preserving the
+    /// target, distance, up vector, FOV, and clip planes.
+    pub(crate) fn orbit_around_target(&mut self, yaw_radians: f32, pitch_radians: f32) {
+        if !yaw_radians.is_finite() || !pitch_radians.is_finite() {
+            return;
+        }
+        if yaw_radians == 0.0 && pitch_radians == 0.0 {
+            return;
+        }
+
+        let offset = self.eye - self.target;
+        let distance = offset.length();
+        if !offset.is_finite() || !distance.is_finite() || distance <= 1e-6 {
+            return;
+        }
+
+        let up_len = self.up.length();
+        if !self.up.is_finite() || !up_len.is_finite() || up_len <= 1e-6 {
+            return;
+        }
+        let up = self.up / up_len;
+
+        let yawed = Quat::from_axis_angle(up, yaw_radians) * offset;
+        if !yawed.is_finite() {
+            return;
+        }
+
+        let pitch_axis = yawed.cross(up);
+        let pitch_axis_len = pitch_axis.length();
+        let pitched = if pitch_radians != 0.0
+            && pitch_axis.is_finite()
+            && pitch_axis_len.is_finite()
+            && pitch_axis_len > 1e-6
+        {
+            Quat::from_axis_angle(pitch_axis / pitch_axis_len, pitch_radians) * yawed
+        } else {
+            yawed
+        };
+        let pitched_len = pitched.length();
+        if !pitched.is_finite() || !pitched_len.is_finite() || pitched_len <= 1e-6 {
+            return;
+        }
+
+        self.eye = self.target + pitched * (distance / pitched_len);
     }
 }
 

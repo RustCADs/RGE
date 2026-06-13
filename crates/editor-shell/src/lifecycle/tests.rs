@@ -840,6 +840,26 @@ fn assert_camera_unchanged(
     assert_eq!(after.far, before.far);
 }
 
+fn assert_camera_orbit_invariants_preserved(
+    before: crate::camera::EditorCameraState,
+    after: crate::camera::EditorCameraState,
+) {
+    assert_eq!(after.target, before.target);
+    assert_eq!(after.up, before.up);
+    assert_eq!(after.fov_y_radians, before.fov_y_radians);
+    assert_eq!(after.near, before.near);
+    assert_eq!(after.far, before.far);
+    assert!(after.eye.is_finite(), "orbit eye must stay finite");
+    assert!(after.target.is_finite(), "orbit target must stay finite");
+
+    let before_distance = (before.eye - before.target).length();
+    let after_distance = (after.eye - after.target).length();
+    assert!(
+        (after_distance - before_distance).abs() < 1e-5,
+        "orbit should preserve eye-target distance; before={before_distance}, after={after_distance}"
+    );
+}
+
 #[test]
 fn viewport_mouse_wheel_signs_map_line_and_pixel_vertical_delta() {
     assert_eq!(
@@ -959,6 +979,72 @@ fn viewport_mouse_wheel_no_cursor_or_no_host_is_no_op() {
     );
 
     assert_camera_unchanged(before, no_host.editor_camera);
+}
+
+#[test]
+fn viewport_right_button_orbit_starts_only_with_cursor_and_viewport_hit() {
+    let mut shell = wheel_zoom_seed_shell();
+
+    shell.start_viewport_orbit_drag(true);
+    assert!(!shell.is_viewport_orbit_drag_active());
+
+    shell.cursor_pos = Some([40.0, 60.0]);
+    shell.start_viewport_orbit_drag(false);
+    assert!(!shell.is_viewport_orbit_drag_active());
+
+    shell.start_viewport_orbit_drag(true);
+    assert!(shell.is_viewport_orbit_drag_active());
+}
+
+#[test]
+fn viewport_right_button_orbit_cursor_delta_rotates_eye_preserving_camera_invariants() {
+    let mut shell = wheel_zoom_seed_shell();
+    shell.cursor_pos = Some([40.0, 60.0]);
+    shell.start_viewport_orbit_drag(true);
+    let before = shell.editor_camera;
+
+    shell.update_viewport_orbit_drag([72.0, 84.0]);
+
+    assert!(shell.is_viewport_orbit_drag_active());
+    assert_camera_orbit_invariants_preserved(before, shell.editor_camera);
+    assert!(
+        (shell.editor_camera.eye - before.eye).length() > 1e-5,
+        "non-zero orbit drag should move the eye around the target"
+    );
+}
+
+#[test]
+fn viewport_right_button_orbit_release_stops_future_cursor_rotation() {
+    let mut shell = wheel_zoom_seed_shell();
+    shell.cursor_pos = Some([40.0, 60.0]);
+    shell.start_viewport_orbit_drag(true);
+    shell.update_viewport_orbit_drag([72.0, 84.0]);
+    shell.stop_viewport_orbit_drag();
+    assert!(!shell.is_viewport_orbit_drag_active());
+    let after_release = shell.editor_camera;
+
+    shell.update_viewport_orbit_drag([120.0, 160.0]);
+
+    assert_camera_unchanged(after_release, shell.editor_camera);
+}
+
+#[test]
+fn viewport_right_button_orbit_no_active_or_non_finite_cursor_is_no_op() {
+    let mut shell = wheel_zoom_seed_shell();
+    let before = shell.editor_camera;
+
+    shell.update_viewport_orbit_drag([72.0, 84.0]);
+
+    assert_camera_unchanged(before, shell.editor_camera);
+
+    shell.cursor_pos = Some([40.0, 60.0]);
+    shell.start_viewport_orbit_drag(true);
+    let before_non_finite_drag = shell.editor_camera;
+
+    shell.update_viewport_orbit_drag([f32::NAN, 84.0]);
+
+    assert!(shell.is_viewport_orbit_drag_active());
+    assert_camera_unchanged(before_non_finite_drag, shell.editor_camera);
 }
 
 #[test]

@@ -10296,7 +10296,7 @@ is the only safeguard against selector drift.
      than forcing a selection.
    - Describing task 117 would require editing any MUST-NOT path.
 
-117. **Add viewport-only right-button camera orbit in `editor-shell`.**
+117. **[DONE 2026-06-13 via ISSUE-371] Add viewport-only right-button camera orbit in `editor-shell`.**
    Add the smallest next camera/navigation slice after task 115's viewport
    mouse-wheel zoom. Current source now has `WindowEvent::MouseWheel` routed
    through `zoom_camera_for_viewport_mouse_wheel`, `cursor_pos` tracking from

@@ -155,6 +155,18 @@ scoped to right-button orbit only, with no commands, accelerators, host/UI edit,
 route replacement, plugin runtime/discovery/loading, Cargo change, clipboard,
 CAD mutation, undo/dirty change, or implementation work in the selection audit.
 
+**2026-06-13 update 14:** ISSUE-371 implemented task 117. `editor-shell` now
+has viewport-only right-button orbit using the existing cursor tracking,
+viewport hit-test boundary, and `EditorCameraState`: a right press over the
+Viewport tab starts a private drag, cursor movement rotates the eye around the
+current target while preserving target/distance/up/FOV/clip invariants, and
+right release stops the drag. Missing cursor/host/viewport-hit and inactive
+drags remain no-ops. This closes the selected orbit slice without adding
+commands, accelerators, menu entries, host/UI edits, route replacement, plugin
+runtime/discovery/loading, Cargo change, clipboard behavior, CAD mutation,
+undo/dirty behavior, pan, frame/focus, camera persistence, or generalized input
+routing.
+
 ---
 
 ## Phase 9 editor-usability task-104 selection audit
