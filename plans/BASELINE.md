@@ -2,6 +2,19 @@
 
 ## Phase 9 editor-usability and dispatch-advisory closure
 
+**2026-06-14 update 45:** ISSUE-394 completed task 140 as a source-read-only
+Phase 9 editor-usability audit. Queue/already-filed evidence used only the
+dispatcher snapshot embedded in
+`ai_handoffs/ISSUE-394_TASK_2026-06-14_22-14-21+0300.md`, generated
+`2026-06-14T22:13:56.8779920+03:00`; no live `gh`, browser, network, or
+GitHub API command was run. The audit compared keybinding/remap/preferences
+and fatal policy, host-shell routing, plugin execution, OS/typed clipboard,
+CAD/CommandBus mutation, and camera/navigation. Task 141 is appended as the
+next bounded implementation task: reset stale viewport left-double-click state
+on window focus loss while preserving existing focus-loss drag cancellation and
+cursor-grab release behavior. No task 141 implementation was done and no task
+142 was appended.
+
 **2026-06-14 update 44:** After ISSUE-393 published task 139 as `3beb79b`,
 the queue had no open `ai-dispatch` or `ai-dispatch-failed` issue, no live
 issue claim directory, and the task brief was exhausted. The brief is re-armed
