@@ -1,0 +1,20 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-398",
+    "packet_type": "EXEC",
+    "author": "Executor / Codex",
+    "timestamp": "2026-06-15_02-06-37+0300",
+    "related_files": [
+                          "ai_handoffs/ISSUE-398_TASK_2026-06-15_01-53-21+0300.md - task packet executed",
+                          ".ai/dispatch.tasks.md - task 144 audit recorded; exactly one bounded task 145 appended",
+                          "Status.md - top snapshot updated for ISSUE-398/task 144 outcome",
+                          "HANDOFF.md - top snapshot updated for ISSUE-398/task 144 outcome",
+                          "plans/BASELINE.md - Phase 9 update 49 added",
+                          "change.md - chronological ISSUE-398 audit entry added",
+                          "ai_handoffs/ISSUE-398_EXEC_2026-06-15_02-06-37+0300.md - this execution report"
+                      ],
+    "status": "AWAITING_REVIEW",
+    "handoff_status": "COMPLETE",
+    "next_role": "REVIEWER_AI",
+    "exit_code": 0
+}

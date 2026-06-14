@@ -2,6 +2,19 @@
 
 ## Phase 9 editor-usability and dispatch-advisory closure
 
+**2026-06-15 update 49:** ISSUE-398 completed task 144 as a
+source-read-only Phase 9 editor-usability audit. Queue/already-filed evidence
+used only the dispatcher snapshot embedded in the ISSUE-398 task packet,
+generated `2026-06-15T01:52:55.9305454+03:00`; no live `gh`, browser,
+network, or GitHub API command was run. The audit compared
+keybinding/remap/preferences and fatal policy, host-shell routing, plugin
+execution, OS/typed clipboard, CAD/CommandBus mutation, and camera/navigation.
+Task 145 is appended as the next bounded implementation task: reset stale
+viewport left-double-click state on View/Home reset-camera framing while
+preserving existing reset-camera framing/default fallback and valid
+consecutive-left-click scene/selected-CAD framing. No task 145 implementation
+was done and no task 146 was appended.
+
 **2026-06-15 update 48:** ISSUE-397 implemented task 143. Mouse-wheel
 handling now resets pending viewport left-double-click state before preserving
 the existing wheel zoom/no-op decision, so a left press before wheel input
