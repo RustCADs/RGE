@@ -1,0 +1,19 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-392",
+    "packet_type": "EXEC",
+    "author": "Executor / Codex",
+    "timestamp": "2026-06-14_12-23-48+0300",
+    "related_files": [
+                          ".ai/dispatch.tasks.md - marked task 138 done and appended one bounded task 139",
+                          "Status.md - added ISSUE-392 audit snapshot",
+                          "HANDOFF.md - added ISSUE-392 audit snapshot",
+                          "plans/BASELINE.md - added update 42 for task 138 / task 139 selection",
+                          "change.md - added ISSUE-392 audit log entry",
+                          "ai_handoffs/ISSUE-392_EXEC_2026-06-14_12-23-48+0300.md - execution report"
+                      ],
+    "status": "AWAITING_REVIEW",
+    "handoff_status": "COMPLETE",
+    "next_role": "REVIEWER_AI",
+    "exit_code": 0
+}

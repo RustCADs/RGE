@@ -2,6 +2,21 @@
 
 ## Phase 9 editor-usability and dispatch-advisory closure
 
+**2026-06-14 update 42:** ISSUE-392 completed task 138 as a
+docs/source-read-only selection audit. The audit used only the embedded
+dispatcher snapshot from the ISSUE-392 TASK packet for GitHub queue evidence;
+no `gh` or network command was run. Source checks compared the remaining
+keybinding/remap/preferences/fatal-policy, host-shell routing, plugin
+execution, OS/typed clipboard, CAD/CommandBus mutation, and camera/navigation
+follow-up classes. The smallest source-safe remaining implementation boundary
+is task 139: make viewport left-double-click frame selected CAD projection
+entity bounds, or the selected CAD projection entity union, through existing
+read-only render-mesh/AABB helpers before falling back to the current
+scene-wide frame-all behavior. Broader remapping, host-shell route replacement,
+real plugin runtime/discovery/loading, OS clipboard, CAD/CommandBus mutation,
+and new View-menu command work remain deferred. Task 138 did not implement
+task 139 and did not append task 140.
+
 **2026-06-14 update 41:** After ISSUE-391 published task 137 as `8fe95bc`,
 the queue had no open `ai-dispatch` or `ai-dispatch-failed` issue, no live
 issue claim directory, and the task brief was exhausted. The brief is re-armed
