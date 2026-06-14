@@ -12878,7 +12878,7 @@ is the only safeguard against selector drift.
    - No implementation work for task 137 was done, and no task 138 was
      appended by this audit.
 
-137. **Cancel viewport drag state when the cursor leaves the window.**
+137. **[DONE 2026-06-14 via ISSUE-391] Cancel viewport drag state when the cursor leaves the window.**
    Implement one bounded `editor-shell` camera/navigation lifecycle polish:
    when the window reports a cursor-leave event while a viewport right-button
    orbit drag and/or middle-button pan drag is active, cancel the active

@@ -2275,6 +2275,16 @@ impl EditorShell {
     }
 
     fn cancel_viewport_drags_for_focus_loss(&mut self) {
+        self.cancel_active_viewport_drags();
+    }
+
+    fn handle_cursor_left(&mut self) {
+        self.cursor_pos = None;
+        self.reset_viewport_left_double_click();
+        self.cancel_active_viewport_drags();
+    }
+
+    fn cancel_active_viewport_drags(&mut self) {
         let was_active = self.is_viewport_drag_active();
         self.viewport_orbit_drag.stop();
         self.viewport_pan_drag.stop();
@@ -2785,6 +2795,9 @@ impl ApplicationHandler<()> for EditorShell {
             }
             WindowEvent::Focused(focused) => {
                 self.handle_window_focus_change(focused);
+            }
+            WindowEvent::CursorLeft { .. } => {
+                self.handle_cursor_left();
             }
             WindowEvent::CursorMoved { position, .. } => {
                 // Track the latest cursor position for the next left-click

@@ -1586,6 +1586,128 @@ fn viewport_focus_loss_focused_true_preserves_active_drag_state() {
 }
 
 #[test]
+fn viewport_cursor_left_active_orbit_cancels_and_releases_cursor_grab() {
+    let mut shell = wheel_zoom_seed_shell();
+    shell.set_viewport_cursor_grab_test_window_available(true);
+    shell.cursor_pos = Some([40.0, 60.0]);
+    shell.start_viewport_orbit_drag(true);
+    shell.update_viewport_orbit_drag([72.0, 84.0]);
+    let after_drag = shell.editor_camera;
+
+    shell.handle_cursor_left();
+
+    assert!(shell.cursor_pos.is_none());
+    assert!(!shell.is_viewport_orbit_drag_active());
+    assert!(!shell.is_viewport_pan_drag_active());
+    assert_eq!(
+        shell.viewport_cursor_grab_test_events(),
+        &[
+            ViewportCursorGrabTestEvent::Grab,
+            ViewportCursorGrabTestEvent::Release,
+        ]
+    );
+
+    shell.update_viewport_orbit_drag([120.0, 160.0]);
+    assert_camera_unchanged(after_drag, shell.editor_camera);
+}
+
+#[test]
+fn viewport_cursor_left_active_pan_cancels_and_releases_cursor_grab() {
+    let mut shell = wheel_zoom_seed_shell();
+    shell.set_viewport_cursor_grab_test_window_available(true);
+    shell.cursor_pos = Some([40.0, 60.0]);
+    shell.start_viewport_pan_drag(true);
+    shell.update_viewport_pan_drag([72.0, 84.0]);
+    let after_drag = shell.editor_camera;
+
+    shell.handle_cursor_left();
+
+    assert!(shell.cursor_pos.is_none());
+    assert!(!shell.is_viewport_orbit_drag_active());
+    assert!(!shell.is_viewport_pan_drag_active());
+    assert_eq!(
+        shell.viewport_cursor_grab_test_events(),
+        &[
+            ViewportCursorGrabTestEvent::Grab,
+            ViewportCursorGrabTestEvent::Release,
+        ]
+    );
+
+    shell.update_viewport_pan_drag([120.0, 160.0]);
+    assert_camera_unchanged(after_drag, shell.editor_camera);
+}
+
+#[test]
+fn viewport_cursor_left_combined_drag_releases_once_after_both_cancel() {
+    let mut shell = wheel_zoom_seed_shell();
+    shell.set_viewport_cursor_grab_test_window_available(true);
+    shell.cursor_pos = Some([40.0, 60.0]);
+    shell.start_viewport_orbit_drag(true);
+    shell.start_viewport_pan_drag(true);
+
+    shell.handle_cursor_left();
+
+    assert!(shell.cursor_pos.is_none());
+    assert!(!shell.is_viewport_orbit_drag_active());
+    assert!(!shell.is_viewport_pan_drag_active());
+    assert_eq!(
+        shell.viewport_cursor_grab_test_events(),
+        &[
+            ViewportCursorGrabTestEvent::Grab,
+            ViewportCursorGrabTestEvent::Grab,
+            ViewportCursorGrabTestEvent::Release,
+        ]
+    );
+}
+
+#[test]
+fn viewport_cursor_left_without_active_drag_does_not_release_cursor_grab() {
+    let mut shell = wheel_zoom_seed_shell();
+    shell.set_viewport_cursor_grab_test_window_available(true);
+    shell.cursor_pos = Some([40.0, 60.0]);
+
+    shell.handle_cursor_left();
+
+    assert!(shell.cursor_pos.is_none());
+    assert!(!shell.is_viewport_orbit_drag_active());
+    assert!(!shell.is_viewport_pan_drag_active());
+    assert!(shell.viewport_cursor_grab_test_events().is_empty());
+}
+
+#[test]
+fn viewport_cursor_left_clears_cursor_position_without_reinstalling_one() {
+    let mut shell = wheel_zoom_seed_shell();
+    shell.cursor_pos = Some([40.0, 60.0]);
+
+    shell.handle_cursor_left();
+    shell.start_viewport_orbit_drag(true);
+
+    assert!(shell.cursor_pos.is_none());
+    assert!(!shell.is_viewport_orbit_drag_active());
+}
+
+#[test]
+fn viewport_cursor_left_resets_stale_left_double_click() {
+    let expected_framed = viewport_left_double_click_seed_shell().editor_camera;
+    let mut shell = viewport_left_double_click_seed_shell();
+    move_viewport_left_double_click_camera_off_scene(&mut shell);
+    let moved = shell.editor_camera;
+    assert_ne!(
+        moved.eye, expected_framed.eye,
+        "test setup must distinguish stale double-click framing from no-op"
+    );
+    let first = Instant::now();
+
+    shell.cursor_pos = Some([40.0, 60.0]);
+    shell.handle_viewport_left_press(true, true, first);
+    shell.handle_cursor_left();
+    shell.cursor_pos = Some([43.0, 64.0]);
+    shell.handle_viewport_left_press(true, true, first + Duration::from_millis(250));
+
+    assert_camera_unchanged(moved, shell.editor_camera);
+}
+
+#[test]
 fn zoom_camera_degenerate_eye_target_uses_default_direction() {
     let mut shell = EditorShell::new();
     shell.editor_camera.target = glam::Vec3::new(5.0, 6.0, 7.0);

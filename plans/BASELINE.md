@@ -2,6 +2,16 @@
 
 ## Phase 9 editor-usability and dispatch-advisory closure
 
+**2026-06-14 update 40:** ISSUE-391 implemented task 137. The lifecycle
+`WindowEvent::CursorLeft` path now clears stale cursor position, resets the
+viewport left-double-click tracker, cancels active viewport orbit/pan drags,
+and releases the viewport drag cursor grab only when at least one viewport drag
+was active before cursor leave. Focus loss shares the same active-drag
+cancellation helper, preserving ISSUE-389 focus-loss behavior. Focused tests
+cover active orbit, active pan, combined active drags with one release,
+no-active no-release, cursor-position clearing, and stale double-click reset.
+Task 137 is marked done and no task 138 was appended.
+
 **2026-06-14 update 39:** ISSUE-390 completed task 136 as a
 docs/source-read-only selection audit. The audit used only the embedded
 dispatcher snapshot from the ISSUE-390 TASK packet for GitHub queue evidence;
