@@ -2,6 +2,20 @@
 
 ## Phase 9 editor-usability and dispatch-advisory closure
 
+**2026-06-14 update 33:** ISSUE-386 completed task 132 as a
+docs/source-read-only selection audit. The audit used only the embedded
+dispatcher snapshot from the ISSUE-386 TASK packet for GitHub queue evidence;
+no `gh` or network command was run. Source checks confirmed that shortcut
+conflict diagnostics now reach Shortcut Conflicts, Keyboard Shortcuts help,
+command-palette rows, and main-menu rows. The remaining bounded camera gap is
+cursor grab/release for the already-existing viewport-only right-button orbit
+and middle-button pan drags: the drag start/stop methods and tests exist, while
+`CursorGrabMode` / `set_cursor_grab` / pointer-capture searches have no
+matches. Task 133 is appended for that narrow editor-shell follow-up. Broader
+remapping/preferences/fatal policy, route replacement, real plugin execution,
+OS/typed clipboard, CAD/CommandBus mutation, and camera math/persistence policy
+remain deferred. Task 132 did not implement task 133 or append task 134.
+
 **2026-06-14 update 32:** ISSUE-385 was manually salvaged and published as
 `187e5bc` after the queue preserved the run as blocked. The remaining blocker
 was the Codex executor sandbox failing `cargo deny` because it could not lock
