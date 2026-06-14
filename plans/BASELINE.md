@@ -2,6 +2,18 @@
 
 ## Phase 9 editor-usability and dispatch-advisory closure
 
+**2026-06-14 update 35:** After ISSUE-387 published task 133 as `53644c2`,
+the queue had no open `ai-dispatch` or `ai-dispatch-failed` issue and the task
+brief was exhausted. The brief is re-armed with task 134, a
+docs/source-read-only Phase 9 audit after viewport cursor grab. Task 134 must
+use the dispatcher-provided GitHub-state snapshot instead of live `gh`, compare
+remaining keybinding/remap, host-shell routing, plugin execution, OS/typed
+clipboard, CAD/CommandBus mutation, and camera/navigation follow-up candidates
+from current local source, and append exactly one bounded task 135 or record
+source-grounded `NEEDS_HUMAN`. The stale-claim mechanism is already active
+from `fe6dbb4`; this update fixes the separate idle condition where no task
+remained to select.
+
 **2026-06-14 update 34:** ISSUE-387 implemented task 133. `editor-shell`
 now attempts `CursorGrabMode::Confined` through the existing optional winit
 `Window` when a valid viewport right-button orbit or middle-button pan drag

@@ -12380,3 +12380,112 @@ is the only safeguard against selector drift.
    an OS cursor grab. Focused lifecycle tests cover orbit start gating, pan
    start gating, failed/no-window grab behavior, and right/middle release
    ordering while both drags are active. No task 134 was appended.
+
+134. **Post-viewport-cursor-grab Phase 9 next-task source audit.**
+   Run a docs/source-read-only audit after ISSUE-387 / task 133. Use current
+   local source reads plus the dispatcher-provided GitHub-state snapshot from
+   the auto-created issue body for queue/already-filed-task evidence; do not
+   call `gh`, browse the network, or use live GitHub state from inside the
+   executor sandbox. Compare the remaining editor-usability candidate classes
+   after viewport wheel zoom, right-button orbit, middle-button pan,
+   left-double-click frame-all, and cursor grab/release all exist:
+
+   - keybinding/remap/preferences/fatal-policy work after tasks 123, 125, 127,
+     129, and 131;
+   - host-shell command routing through `MenuCommandHandoff` /
+     `EditorShell::route_menu_command`;
+   - real plugin command execution after the injected extension-command seam;
+   - OS/typed clipboard behavior beyond the current shell-local clipboard;
+   - CAD/editor mutation through `CommandBus`, projection, undo/dirty, and
+     save/load authority;
+   - camera/navigation follow-up after wheel zoom, orbit, pan, frame-all, and
+     drag cursor grab/release.
+
+   Append exactly one bounded implementation follow-up as task 135, or record
+   source-grounded `NEEDS_HUMAN` if every remaining candidate crosses a policy
+   or architecture boundary that cannot be safely delegated.
+
+   **Context snapshot:**
+   - Task 133 shipped as ISSUE-387 / commit `53644c2`: valid viewport
+     right-button orbit and middle-button pan drag starts now attempt
+     `CursorGrabMode::Confined` through the existing optional winit `Window`;
+     failures are warn-logged and non-fatal, and `CursorGrabMode::None` is
+     requested only after the final active viewport drag stops. Headless or
+     no-window shells keep existing drag behavior without an OS cursor grab.
+   - Existing camera reset/frame, wheel zoom, orbit/pan math, viewport hit
+     testing, face picking, left-double-click frame-all, View menu commands,
+     command routing, shortcuts, plugin runtime/discovery/loading, OS
+     clipboard, CAD/projection/CommandBus mutation, undo/dirty/save-load
+     behavior, Cargo metadata, workflows, automation, schemas, and non-
+     `editor-shell` subsystems were unchanged by task 133.
+   - Re-arm check before authoring task 134: `origin/main` and local `main`
+     were synced at `53644c2`; `gh issue list --repo RustCADs/RGE --state open
+     --label ai-dispatch --json number,title,labels,url` returned `[]`;
+     `gh issue list --repo RustCADs/RGE --state open --label ai-dispatch-failed
+     --json number,title,labels,url` returned `[]`; and
+     `rg -n "^132\.|^133\.|^134\." .ai/dispatch.tasks.md` showed task 132
+     DONE, task 133 DONE, and no task 134.
+   - The queue has stale-claim protection from `fe6dbb4` / the dispatch
+     stale-claim hardening update: `Invoke-AiDispatchQueue.ps1` sweeps
+     queue-owned ADR-121 claims at startup and releases claims whose
+     `Invoke-AiDispatchQueue.ps1:<pid>` owner is dead, no longer a queue
+     process, or recycled after the claim timestamp. This re-arm addresses the
+     different idle condition: the task brief was exhausted.
+   - The auto-created issue body will include the dispatcher GitHub-state
+     snapshot. The audit must use that embedded snapshot, or an exact local
+     artifact/read path to it, for GitHub queue/already-filed-task evidence.
+     Do not call `gh` or the network from inside the executor sandbox for those
+     claims.
+
+   **MAY edit:**
+   - `.ai/dispatch.tasks.md`
+   - `Status.md`
+   - `HANDOFF.md`
+   - `plans/BASELINE.md`
+   - `change.md`
+   - generated ISSUE-<n> handoff/audit/log artifacts for this dispatch only
+
+   **MUST NOT edit:**
+   - Rust source or tests
+   - Cargo manifests or `Cargo.lock`
+   - workflows
+   - dispatch automation, guard, queue, scheduler, watcher, verification, or
+     health/trend scripts
+   - schemas, ADR files, architecture-lint rules/config, packet templates, or
+     unrelated existing handoff/log artifacts
+   - plugin runtime/discovery/loading code, command routing, shortcut
+     execution, remapping/persistence/fatal policy, OS clipboard behavior,
+     CAD/projection/CommandBus mutation, undo/dirty/save-load authority, or
+     camera/navigation behavior
+
+   **Done criteria:**
+   - The audit records the pre-edit task-heading check for
+     `^132\.|^133\.|^134\.|^135\.`.
+   - Queue/already-filed-task claims cite only the dispatcher-provided snapshot
+     embedded in the issue body or an exact local artifact path copied from it;
+     no live `gh`/network query is run by the sandboxed executor.
+   - Each candidate class above has positive source references and falsifying
+     searches for negative claims where practical.
+   - Exactly one bounded implementation task 135 is appended with explicit
+     `MAY edit`, `MUST NOT edit`, `Done criteria`, `Verification`, and `Halt
+     conditions`, or a source-grounded `NEEDS_HUMAN` record is written.
+   - No implementation work for task 135 is done, and no task 136 is appended.
+
+   **Verification:**
+   - `rg -n "^132\.|^133\.|^134\.|^135\." .ai/dispatch.tasks.md` before edits
+     and after edits
+   - status-doc cross-check against `Status.md`, `HANDOFF.md`,
+     `plans/BASELINE.md`, and `change.md`
+   - candidate-class source greps recorded in the audit
+   - `git diff --name-only`
+   - `git diff --check`
+   - `.\new-handoff.ps1 -Finalize -PacketPath <EXEC_PACKET> -DryRun`
+
+   **Halt conditions:**
+   - The executor cannot cite the dispatcher-provided GitHub-state snapshot
+     without live `gh`/network access.
+   - The audit would require editing a MUST-NOT path or implementing task 135.
+   - More than one implementation follow-up would be required to make the
+     selected boundary coherent.
+   - No bounded task 135 can be specified without crossing a policy or
+     architecture boundary; record `NEEDS_HUMAN` instead of forcing a task.
