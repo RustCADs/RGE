@@ -2,6 +2,16 @@
 
 ## Phase 9 editor-usability and dispatch-advisory closure
 
+**2026-06-14 update 29:** After ISSUE-383 published task 129 as
+`64061a5`, the task brief was exhausted again. The queue is empty and
+unblocked, so `.ai/dispatch.tasks.md` is re-armed with task 130: a
+docs/source-read-only audit after command-palette conflict annotation. Task 130
+must use the dispatcher-provided GitHub-state snapshot instead of live `gh`,
+compare current keybinding/remap, host-shell execution, plugin execution,
+OS/typed clipboard, CAD/CommandBus mutation, and camera/navigation follow-up
+candidates, and append exactly one bounded task 131 or record source-grounded
+`NEEDS_HUMAN`. No implementation work is authorized in task 130.
+
 **2026-06-14 update 28:** ISSUE-383 implemented task 129. The
 command-palette projection now exposes ordered conflict peer entry ids on
 enabled rows whose displayed shortcut exactly matches an existing
