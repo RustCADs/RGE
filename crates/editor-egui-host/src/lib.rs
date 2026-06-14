@@ -156,8 +156,8 @@ pub use handoff::{
     InspectorHandoff, MenuCommandHandoff, PredicateContextHandoff, SaveStatusHandoff,
 };
 use menu::{
-    command_palette_entries, command_palette_window, menu_item, project_main_menu,
-    register_menu_entry as register_entry,
+    annotated_main_menu_items, command_palette_entries, command_palette_window, project_main_menu,
+    register_menu_entry as register_entry, selected_main_menu_command,
 };
 use palette_pinned as pinned;
 use palette_recent::{
@@ -826,6 +826,12 @@ impl EguiHost {
             .map(|arc| (*arc).clone())
             .unwrap_or_default();
         let main_menu = project_main_menu(&self.menu_registry, &ctx);
+        let file_menu_items = annotated_main_menu_items(&main_menu.file, &main_menu.conflicts);
+        let edit_menu_items = annotated_main_menu_items(&main_menu.edit, &main_menu.conflicts);
+        let play_menu_items = annotated_main_menu_items(&main_menu.play, &main_menu.conflicts);
+        let view_menu_items = annotated_main_menu_items(&main_menu.view, &main_menu.conflicts);
+        let plugins_menu_items =
+            annotated_main_menu_items(&main_menu.plugins, &main_menu.conflicts);
         let command_palette_entries = command_palette_entries(&main_menu);
         let command_palette_open = &mut self.command_palette_open;
         let command_palette_filter = &mut self.command_palette_filter;
@@ -846,55 +852,32 @@ impl EguiHost {
                 egui::MenuBar::new().ui(ui, |ui| {
                     // Existing projected entries enqueue Commands; diagnostics do not.
                     ui.menu_button("File", |ui| {
-                        for (label, shortcut, cmd, enabled) in &main_menu.file {
-                            if menu_item(ui, *enabled, label.as_str(), shortcut.as_deref())
-                                .clicked()
-                            {
-                                menu_commands.push(cmd.clone());
-                                ui.close();
-                            }
+                        if let Some(command) = selected_main_menu_command(ui, &file_menu_items) {
+                            menu_commands.push(command);
                         }
                     });
                     ui.menu_button("Edit", |ui| {
-                        for (label, shortcut, cmd, enabled) in &main_menu.edit {
-                            if menu_item(ui, *enabled, label.as_str(), shortcut.as_deref())
-                                .clicked()
-                            {
-                                menu_commands.push(cmd.clone());
-                                ui.close();
-                            }
+                        if let Some(command) = selected_main_menu_command(ui, &edit_menu_items) {
+                            menu_commands.push(command);
                         }
                     });
                     ui.menu_button("Play", |ui| {
-                        for (label, shortcut, cmd, enabled) in &main_menu.play {
-                            if menu_item(ui, *enabled, label.as_str(), shortcut.as_deref())
-                                .clicked()
-                            {
-                                menu_commands.push(cmd.clone());
-                                ui.close();
-                            }
+                        if let Some(command) = selected_main_menu_command(ui, &play_menu_items) {
+                            menu_commands.push(command);
                         }
                     });
                     ui.menu_button("View", |ui| {
-                        for (label, shortcut, cmd, enabled) in &main_menu.view {
-                            if menu_item(ui, *enabled, label.as_str(), shortcut.as_deref())
-                                .clicked()
-                            {
-                                menu_commands.push(cmd.clone());
-                                ui.close();
-                            }
+                        if let Some(command) = selected_main_menu_command(ui, &view_menu_items) {
+                            menu_commands.push(command);
                         }
                         shortcut_help::view_menu_affordance(ui, shortcut_help_open);
                     });
-                    if !main_menu.plugins.is_empty() {
+                    if !plugins_menu_items.is_empty() {
                         ui.menu_button("Plugins", |ui| {
-                            for (label, shortcut, cmd, enabled) in &main_menu.plugins {
-                                if menu_item(ui, *enabled, label.as_str(), shortcut.as_deref())
-                                    .clicked()
-                                {
-                                    menu_commands.push(cmd.clone());
-                                    ui.close();
-                                }
+                            if let Some(command) =
+                                selected_main_menu_command(ui, &plugins_menu_items)
+                            {
+                                menu_commands.push(command);
                             }
                         });
                     }

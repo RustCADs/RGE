@@ -2,6 +2,18 @@
 
 ## Phase 9 editor-usability and dispatch-advisory closure
 
+**2026-06-14 update 31:** ISSUE-385 implemented task 131. The
+`editor-egui-host` main-menu presentation now derives annotated rows from the
+already-projected `ProjectedMainMenu.conflicts` data, copying ordered peer
+entry ids only when an enabled menu item's displayed shortcut exactly matches a
+projected conflict shortcut. The annotation is non-command informational text
+beside the existing `menu_item` response; it does not change menu order, labels,
+shortcut text, disabled behavior, command enqueueing, command-palette
+projection/activation, shortcut-help rows, Shortcut Conflicts rows, shortcut
+execution, routing, remapping/persistence/fatal policy, plugin runtime,
+OS/typed clipboard, CAD/CommandBus mutation, save/load, or camera behavior.
+Task 131 is marked done and no task 132 was appended.
+
 **2026-06-14 update 30:** ISSUE-384 completed task 130 as a
 docs/source-read-only selection audit. The audit used only the embedded
 dispatcher snapshot from the TASK packet for GitHub queue evidence; no `gh` or

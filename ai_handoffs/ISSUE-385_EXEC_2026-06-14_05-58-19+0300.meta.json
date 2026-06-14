@@ -1,0 +1,19 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-385",
+    "packet_type": "EXEC",
+    "author": "Executor / Codex",
+    "timestamp": "2026-06-14_05-58-19+0300",
+    "related_files": [
+                          "ai_handoffs/ISSUE-385_TASK_2026-06-14_05-23-28+0300.md - governing task packet",
+                          "ai_handoffs/ISSUE-385_CORRECT_2026-06-14_05-52-04+0300.md - active correction packet",
+                          "ai_handoffs/ISSUE-385_EXEC_2026-06-14_05-45-04+0300.md - prior execution report whose canonical verification was superseded",
+                          ".ai/dispatch-ISSUE-385/verification.round0.log - prior canonical verification failure showing the split-exemption violation",
+                          "crates/editor-egui-host/src/lib.rs - replaced repeated menu rendering loops with calls to the existing menu module helper path; file is now 979 lines",
+                          "crates/editor-egui-host/src/menu.rs - added the shared selected_main_menu_command helper used by the crate root"
+                      ],
+    "status": "NEEDS_HUMAN",
+    "handoff_status": "NEEDS_HUMAN",
+    "next_role": "HUMAN_ARBITER",
+    "exit_code": 1
+}

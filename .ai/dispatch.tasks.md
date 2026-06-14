@@ -11985,7 +11985,7 @@ is the only safeguard against selector drift.
    performed, no Rust/Cargo/workflow/automation files were edited, and no task
    132 was appended.
 
-131. **Annotate main-menu shortcut conflicts.**
+131. **[DONE 2026-06-14 via ISSUE-385] Annotate main-menu shortcut conflicts.**
    Extend the host-local main-menu item presentation so a menu item whose
    displayed shortcut is currently conflicted exposes that conflict as
    informational item detail. Source the annotation only from the existing
@@ -12083,3 +12083,23 @@ is the only safeguard against selector drift.
      the main-menu rendering path.
    - Verification fails, or `git diff --name-only` shows any file outside the
      MAY-edit list plus generated artifacts for this dispatch.
+
+   **Implementation result (ISSUE-385):**
+   Added a host-local `ProjectedMainMenuItem` annotation path in
+   `editor-egui-host` that copies ordered conflict peer ids only from the
+   matching already-projected `ProjectedMainMenu.conflicts` entry when the row
+   is enabled and its displayed shortcut matches exactly. `EguiHost::render`
+   now threads those annotated rows into the existing `menu_item` click response;
+   `menu_item` exposes peer ids as non-command informational text beside the
+   button response, so no second command target, menu entry, shortcut text
+   mutation, top-level menu change, or command routing change is introduced.
+   Focused `menu_tests.rs` coverage pins
+   enabled conflicted, unconflicted enabled, disabled-conflicted, and
+   plugin-projected annotation behavior, including row order, shortcut text,
+   command identity, and enabled state preservation.
+
+   **Explicit non-changes:** no task 132 was appended, and no shortcut help,
+   Shortcut Conflicts, palette recent/pinned, `editor-ui`, `editor-shell`,
+   `editor-actions`, Cargo, workflow, automation, schema, ADR, plugin runtime,
+   routing, shortcut execution, remapping/persistence/fatal policy, OS
+   clipboard, CAD/CommandBus, save/load, or camera/navigation behavior changed.

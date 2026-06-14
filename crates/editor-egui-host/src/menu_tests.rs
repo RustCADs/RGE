@@ -32,14 +32,14 @@ use rge_editor_ui::menus::{
 
 use super::MenuCommandHandoff;
 use crate::menu::{
-    command_palette_entries, command_palette_row_is_selected, command_palette_selected_index,
-    command_palette_selected_index_for_filter_change, filter_command_palette_entries,
-    filter_command_palette_entries_with_pinned_and_recents,
+    annotated_main_menu_items, command_palette_entries, command_palette_row_is_selected,
+    command_palette_selected_index, command_palette_selected_index_for_filter_change,
+    filter_command_palette_entries, filter_command_palette_entries_with_pinned_and_recents,
     filter_command_palette_entries_with_recents, move_command_palette_selected_index,
     project_main_menu, record_command_palette_recent_command, register_menu_entry,
     selected_command_palette_entry, take_command_palette_search_focus_request,
     CommandPaletteSelectionDirection, ProjectedCommandPaletteEntry, ProjectedMainMenu,
-    ProjectedShortcutConflict, COMMAND_PALETTE_PINNED_COMMAND_LIMIT,
+    ProjectedMainMenuItem, ProjectedShortcutConflict, COMMAND_PALETTE_PINNED_COMMAND_LIMIT,
     COMMAND_PALETTE_RECENT_COMMAND_LIMIT,
 };
 use crate::palette_pinned::{
@@ -558,6 +558,98 @@ fn command_palette_entries_preserve_disabled_state() {
         .expect("Save is present even when disabled");
     assert_eq!(save.label, "File: Save");
     assert!(!save.enabled, "palette preserves menu enablement");
+}
+
+#[test]
+fn main_menu_items_annotate_enabled_shortcut_conflicts_from_projected_menu() {
+    let plugin_command = Command::Plugin {
+        plugin_id: "com.example.mesh-audit".to_owned(),
+        action_id: "save".to_owned(),
+    };
+    let main_menu = ProjectedMainMenu {
+        file: vec![
+            (
+                "Save".to_owned(),
+                Some("Ctrl+S".to_owned()),
+                Command::Save,
+                true,
+            ),
+            (
+                "Open".to_owned(),
+                Some("Ctrl+O".to_owned()),
+                Command::OpenFile,
+                true,
+            ),
+            (
+                "Close".to_owned(),
+                Some("Ctrl+W".to_owned()),
+                Command::Close,
+                false,
+            ),
+        ],
+        plugins: vec![(
+            "Plugin Save".to_owned(),
+            Some("Ctrl+S".to_owned()),
+            plugin_command.clone(),
+            true,
+        )],
+        conflicts: vec![
+            ProjectedShortcutConflict {
+                shortcut: "Ctrl+S".to_owned(),
+                entries: vec!["file.save".to_owned(), "plugin.mesh_audit.save".to_owned()],
+            },
+            ProjectedShortcutConflict {
+                shortcut: "Ctrl+W".to_owned(),
+                entries: vec!["file.close".to_owned(), "plugin.close".to_owned()],
+            },
+        ],
+        ..ProjectedMainMenu::default()
+    };
+
+    assert_eq!(
+        annotated_main_menu_items(&main_menu.file, &main_menu.conflicts),
+        vec![
+            ProjectedMainMenuItem {
+                label: "Save".to_owned(),
+                shortcut: Some("Ctrl+S".to_owned()),
+                command: Command::Save,
+                enabled: true,
+                conflict_peer_entry_ids: vec![
+                    "file.save".to_owned(),
+                    "plugin.mesh_audit.save".to_owned(),
+                ],
+            },
+            ProjectedMainMenuItem {
+                label: "Open".to_owned(),
+                shortcut: Some("Ctrl+O".to_owned()),
+                command: Command::OpenFile,
+                enabled: true,
+                conflict_peer_entry_ids: Vec::new(),
+            },
+            ProjectedMainMenuItem {
+                label: "Close".to_owned(),
+                shortcut: Some("Ctrl+W".to_owned()),
+                command: Command::Close,
+                enabled: false,
+                conflict_peer_entry_ids: Vec::new(),
+            },
+        ],
+        "main-menu annotation preserves row order, shortcut text, commands, and disabled state"
+    );
+    assert_eq!(
+        annotated_main_menu_items(&main_menu.plugins, &main_menu.conflicts),
+        vec![ProjectedMainMenuItem {
+            label: "Plugin Save".to_owned(),
+            shortcut: Some("Ctrl+S".to_owned()),
+            command: plugin_command,
+            enabled: true,
+            conflict_peer_entry_ids: vec![
+                "file.save".to_owned(),
+                "plugin.mesh_audit.save".to_owned(),
+            ],
+        }],
+        "plugin menu entries use the same projected shortcut conflict detail"
+    );
 }
 
 #[test]

@@ -1,0 +1,18 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-385",
+    "packet_type": "CORRECT",
+    "author": "Planner / OpenAI Codex",
+    "timestamp": "2026-06-14_05-52-04+0300",
+    "related_files": [
+                          "ai_handoffs/ISSUE-385_TASK_2026-06-14_05-23-28+0300.md",
+                          "ai_handoffs/ISSUE-385_EXEC_2026-06-14_05-45-04+0300.md",
+                          ".ai/dispatch-ISSUE-385/verification.round0.log",
+                          "crates/editor-egui-host/src/lib.rs",
+                          "crates/editor-egui-host/src/menu.rs"
+                      ],
+    "status": "CORRECTION_OPEN",
+    "handoff_status": "COMPLETE",
+    "next_role": "EXECUTOR_AI",
+    "exit_code": 0
+}

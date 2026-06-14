@@ -50,6 +50,21 @@ pub(crate) struct ProjectedCommandPaletteEntry {
     pub conflict_peer_entry_ids: Vec<String>,
 }
 
+/// Host-owned main-menu item with informational shortcut-conflict detail.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ProjectedMainMenuItem {
+    /// Display label for the menu item.
+    pub label: String,
+    /// Optional shortcut display carried from the projected menu entry.
+    pub shortcut: Option<String>,
+    /// Command enqueued if the item is clicked.
+    pub command: Command,
+    /// Whether the command is currently enabled in the live menu context.
+    pub enabled: bool,
+    /// Ordered peer entry ids for the matching projected shortcut conflict.
+    pub conflict_peer_entry_ids: Vec<String>,
+}
+
 /// Direction for command-palette keyboard selection movement.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CommandPaletteSelectionDirection {
@@ -167,7 +182,7 @@ pub(crate) fn command_palette_entries(
                 shortcut: shortcut.clone(),
                 command: command.clone(),
                 enabled: *enabled,
-                conflict_peer_entry_ids: command_palette_conflict_peer_entry_ids(
+                conflict_peer_entry_ids: projected_conflict_peer_entry_ids(
                     shortcut.as_deref(),
                     *enabled,
                     conflicts,
@@ -190,7 +205,30 @@ pub(crate) fn command_palette_entries(
     out
 }
 
-fn command_palette_conflict_peer_entry_ids(
+/// Annotate projected main-menu rows with already-projected shortcut conflicts.
+pub(crate) fn annotated_main_menu_items(
+    entries: &[ProjectedMenuEntry],
+    conflicts: &[ProjectedShortcutConflict],
+) -> Vec<ProjectedMainMenuItem> {
+    entries
+        .iter()
+        .map(
+            |(label, shortcut, command, enabled)| ProjectedMainMenuItem {
+                label: label.clone(),
+                shortcut: shortcut.clone(),
+                command: command.clone(),
+                enabled: *enabled,
+                conflict_peer_entry_ids: projected_conflict_peer_entry_ids(
+                    shortcut.as_deref(),
+                    *enabled,
+                    conflicts,
+                ),
+            },
+        )
+        .collect()
+}
+
+pub(crate) fn projected_conflict_peer_entry_ids(
     shortcut: Option<&str>,
     enabled: bool,
     conflicts: &[ProjectedShortcutConflict],
@@ -715,12 +753,44 @@ pub(crate) fn menu_item(
     enabled: bool,
     label: &str,
     shortcut: Option<&str>,
+    conflict_peer_entry_ids: &[String],
 ) -> egui::Response {
     let mut button = egui::Button::new(label);
     if let Some(text) = shortcut {
         button = button.shortcut_text(text);
     }
-    ui.add_enabled(enabled, button)
+    if conflict_peer_entry_ids.is_empty() {
+        ui.add_enabled(enabled, button)
+    } else {
+        ui.horizontal(|ui| {
+            let response = ui.add_enabled(enabled, button);
+            ui.label(egui::RichText::new("Conflict peers:").small());
+            ui.monospace(conflict_peer_entry_ids.join(", "));
+            response
+        })
+        .inner
+    }
+}
+
+pub(crate) fn selected_main_menu_command(
+    ui: &mut egui::Ui,
+    items: &[ProjectedMainMenuItem],
+) -> Option<Command> {
+    for item in items {
+        if menu_item(
+            ui,
+            item.enabled,
+            item.label.as_str(),
+            item.shortcut.as_deref(),
+            item.conflict_peer_entry_ids.as_slice(),
+        )
+        .clicked()
+        {
+            ui.close();
+            return Some(item.command.clone());
+        }
+    }
+    None
 }
 
 fn command_palette_menu_item(
