@@ -2,6 +2,18 @@
 
 ## Phase 9 editor-usability and dispatch-advisory closure
 
+**2026-06-15 update 47:** ISSUE-396 completed task 142 as a
+source-read-only Phase 9 editor-usability audit. Queue/already-filed evidence
+used only the dispatcher snapshot embedded in the ISSUE-396 task packet,
+generated `2026-06-15T00:02:36.6430933+03:00`; no live `gh`, browser,
+network, or GitHub API command was run. The audit compared
+keybinding/remap/preferences and fatal policy, host-shell routing, plugin
+execution, OS/typed clipboard, CAD/CommandBus mutation, and camera/navigation.
+Task 143 is appended as the next bounded implementation task: reset stale
+viewport left-double-click state on mouse-wheel input while preserving existing
+wheel zoom behavior and valid consecutive-left-click framing. No task 143
+implementation was done and no task 144 was appended.
+
 **2026-06-14 update 46:** ISSUE-395 implemented task 141. Window focus loss
 now resets pending viewport left-double-click state before preserving the
 existing focus-loss drag cancellation and cursor-grab release behavior, so a

@@ -1,0 +1,19 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-396",
+    "packet_type": "EXEC",
+    "author": "Executor / Codex",
+    "timestamp": "2026-06-15_00-16-59+0300",
+    "related_files": [
+                          ".ai/dispatch.tasks.md - marked task 142 done, recorded the audit, and appended task 143.",
+                          "Status.md - added the ISSUE-396 task-142 audit snapshot.",
+                          "HANDOFF.md - added the ISSUE-396 task-142 audit snapshot.",
+                          "plans/BASELINE.md - added update 47 for the ISSUE-396 audit result.",
+                          "change.md - appended the ISSUE-396 task-142 audit log entry.",
+                          "ai_handoffs/ISSUE-396_EXEC_2026-06-15_00-16-59+0300.md - execution report."
+                      ],
+    "status": "AWAITING_REVIEW",
+    "handoff_status": "COMPLETE",
+    "next_role": "REVIEWER_AI",
+    "exit_code": 0
+}
