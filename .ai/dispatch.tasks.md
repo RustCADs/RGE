@@ -11795,7 +11795,7 @@ is the only safeguard against selector drift.
    - Verification fails, or `git diff --name-only` shows any file outside the
      MAY-edit list plus generated artifacts for this dispatch.
 
-130. **Post-command-palette-conflict Phase 9 next-task source audit.**
+130. **[DONE 2026-06-14 via ISSUE-384] Post-command-palette-conflict Phase 9 next-task source audit.**
    Perform a docs/source-read-only audit after task 129. Re-check current local
    source and status docs, compare the remaining Phase 9/editor-usability
    candidate classes, and append exactly one bounded implementation follow-up
@@ -11913,3 +11913,173 @@ is the only safeguard against selector drift.
    - The audit requires live GitHub/network evidence instead of the embedded
      snapshot plus local source reads.
    - No bounded task 131 can be specified without editing a MUST-NOT path.
+
+   **Audit result (ISSUE-384):**
+   Used only the embedded dispatcher GitHub snapshot in the ISSUE-384 TASK
+   packet for queue/already-filed-task claims: it was generated at
+   `2026-06-14T04:41:54.2273051+03:00`, showed no open `ai-dispatch` issue
+   before ISSUE-384 was created, no open failed autonomous issues, and the
+   relevant already-filed autonomous tail through closed #383. No `gh` or
+   network command was run for those claims.
+
+   Required pre-edit task-list check:
+   `rg -n "^128\.|^129\.|^130\.|^131\." .ai/dispatch.tasks.md` ->
+   `11504:128. **[DONE 2026-06-14 via ISSUE-382] Post-shortcut-conflict-help Phase 9 next-task audit.**`;
+   `11705:129. **[DONE 2026-06-14 via ISSUE-383] Annotate command-palette shortcut conflicts.**`;
+   `11798:130. **Post-command-palette-conflict Phase 9 next-task source audit.**`;
+   no `131.` match.
+
+   Source audit:
+   - Keybinding/remap: `rg -n "struct ProjectedMenuEntry|ProjectedCommandPaletteEntry|ProjectedShortcutConflict|ProjectedMainMenu|pub\(crate\) fn project_main_menu|pub\(crate\) fn command_palette_entries|command_palette_conflict_peer_entry_ids|pub\(crate\) fn menu_item|fn command_palette_menu_item|conflict_peer_entry_ids|conflicted" crates/editor-egui-host/src/menu.rs`
+     and
+     `rg -n "menu_item\(|conflict_peer_entry_ids|shortcut_conflict_rows|shortcut_help_rows|command_palette_entries" crates/editor-egui-host/src/lib.rs crates/editor-egui-host/src/menu.rs crates/editor-egui-host/src/shortcut_conflicts.rs crates/editor-egui-host/src/shortcut_help.rs`
+     confirmed that `ProjectedMainMenu.conflicts` feeds Shortcut Conflicts,
+     Keyboard Shortcuts help, and command-palette conflict peer ids, while
+     `menu_item` and its File/Edit/Play/View/Plugins call sites still receive
+     only enabled/label/shortcut. The falsifying search
+     `rg -n "conflict_peer_entry_ids|conflicted|shortcut_text|menu_item|Project(ed)?MenuEntry" crates/editor-egui-host/src/menu_tests.rs`
+     found conflict-peer assertions only for command-palette entries, not for
+     main-menu item presentation. This leaves one narrow host-local diagnostic
+     slice before any remapping/preferences/fatal-policy work.
+   - Host-shell command routing:
+     `rg -n "MenuCommandHandoff|drain_and_route_menu_commands|route_menu_command|command_palette_window|selected_command_palette_entry|enabled_command_for_shortcut|WindowEvent::KeyboardInput|menu_command_handoff" crates/editor-egui-host/src crates/editor-shell/src crates/editor-ui/src/menus`
+     confirmed menu clicks and command-palette activations still enqueue to
+     `MenuCommandHandoff`, `EditorShell::drain_and_route_menu_commands` drains
+     at frame top, and `EditorShell::route_menu_command` remains the route
+     owner. Replacing the FIFO, route owner, or generalized registry execution
+     remains broader than a presentation-only menu annotation.
+   - Plugin execution:
+     `rg -n "ExtensionCommandHandler|extension_command|plugin command|PluginCommand|Command::Plugin|Command::Custom|PluginHost|PluginContext|plugin_discovery|plugin-discovery|runtime_wasmtime|runtime-wasmtime" crates/editor-shell/src crates/editor-ui/src crates/plugin-discovery/src crates/runtime-wasmtime/src crates/runtime-wasmtime-engine/src editor/rge-editor/src`
+     showed `Command::Custom` / `Command::Plugin` capture plus the injected
+     `ExtensionCommandHandler` seam, a `rge-plugin-discovery` stub, and
+     runtime crates, but no bounded editor-side real plugin discovery/loading
+     route. Real plugin execution remains broader.
+   - OS/typed clipboard:
+     `rg -n "clipboard|Cut|Copy|Paste|Duplicate|Delete|legacy|entity_clipboard|clone_entity_blobs|paste_copied_entities|copy_selected_entities|cut_selected_entities|OS clipboard|system clipboard|arboard|copypasta|Clipboard" crates/editor-shell/src crates/editor-actions/src crates/editor-egui-host/src crates/editor-ui/src Cargo.toml crates`
+     confirmed the current Edit Cut/Copy/Paste path is shell-local
+     `entity_clipboard` / legacy component blobs and is explicitly not OS
+     clipboard, typed kernel components, CAD graph/projection data, render
+     meshes, command bus, or dirty/undo state. OS/typed clipboard semantics
+     remain a product/substrate decision.
+   - CAD/CommandBus mutation:
+     `rg -n "CommandBus|Action|Cad|cad_|projection|dirty|undo|save|load|CadCheckpoint|CadGraph|CadProjection|fn submit\(|fn mark_saved\(|fn is_dirty\(|save_source|render_mesh_for" crates/editor-shell/src crates/editor-actions/src crates/cad-core/src crates/cad-projection/src`
+     confirmed `CommandBus::submit` still accepts `Action` over `World`,
+     dirty/save state is tied to the command bus/save source, and CAD graph plus
+     projection remain separate surfaces. Authoritative CAD/projection mutation
+     through the bus remains too broad for one editor-usability follow-up.
+   - Camera/navigation:
+     `rg -n "MouseWheel|right|middle|double|frame|reset_camera|is_pointer_over_viewport_tab|pointer capture|window grab|camera|viewport_navigation|current_scene_bounds|frame_selected|ViewportLeftDoubleClick|ViewportOrbitDrag|ViewportPanDrag|zoom_camera_for_viewport_mouse_wheel" crates/editor-shell/src`
+     confirmed viewport wheel zoom, right-button orbit, middle-button pan,
+     left-double-click frame-all, `reset_camera`, scene bounds framing, and
+     viewport hit gating are present. The falsifying grep
+     `rg -n "frame_selected|selected.*frame|selection.*frame|pointer capture|window grab|camera persistence|persist.*camera|camera.*persist" crates/editor-shell/src`
+     returned no matches, so frame-selected, pointer capture/window grab, and
+     camera persistence remain policy/substrate work.
+
+   Selection: under the standing delegated Human=Codex / non-stop policy, the
+   smallest source-safe boundary is task 131, a host-local main-menu shortcut
+   conflict annotation that reuses already-projected conflict data. Broader
+   remapping/preferences/fatal startup policy, host-shell route replacement,
+   real plugin execution, OS/typed clipboard, CAD/CommandBus mutation, and
+   camera/navigation policy remain deferred. No task 131 implementation was
+   performed, no Rust/Cargo/workflow/automation files were edited, and no task
+   132 was appended.
+
+131. **Annotate main-menu shortcut conflicts.**
+   Extend the host-local main-menu item presentation so a menu item whose
+   displayed shortcut is currently conflicted exposes that conflict as
+   informational item detail. Source the annotation only from the existing
+   `ProjectedMainMenu.conflicts` projection, preserve current menu-click,
+   command-palette, and accelerator behavior, and do not add remapping,
+   preferences, persistence, fatal startup policy, routing changes, or shortcut
+   execution changes.
+
+   **Policy boundary:**
+   Standing delegated Human=Codex / non-stop policy is used only to choose the
+   smallest source-safe diagnostic boundary. The established policy remains:
+   shortcut conflicts are visible diagnostics and are not executable through
+   keyboard accelerators, but they are not fatal and are not remapped here.
+   Task 131 only makes the same conflict fact visible on the main-menu item
+   that already displays the shortcut hint.
+
+   **MAY edit:**
+   - `crates/editor-egui-host/src/menu.rs`
+   - `crates/editor-egui-host/src/menu_tests.rs`
+   - `crates/editor-egui-host/src/lib.rs` only if needed to thread already-
+     projected conflict detail into existing `menu_item` call sites
+   - `.ai/dispatch.tasks.md`
+   - `Status.md`
+   - `HANDOFF.md`
+   - `plans/BASELINE.md`
+   - `change.md`
+   - generated ISSUE-<n> handoff/audit/log artifacts for this dispatch only
+
+   **MUST NOT edit:**
+   - `crates/editor-egui-host/src/shortcut_help.rs`
+   - `crates/editor-egui-host/src/shortcut_conflicts.rs`
+   - `crates/editor-egui-host/src/palette_recent.rs`
+   - `crates/editor-egui-host/src/palette_pinned.rs`
+   - `crates/editor-ui/**`
+   - `crates/editor-shell/**`
+   - `crates/editor-actions/**`
+   - `kernel/**`, `runtime/**`, `tools/**`, `editor/**`, `plugins/**`
+   - Cargo manifests or `Cargo.lock`
+   - GitHub workflows
+   - dispatch automation, guard, queue, scheduler, watcher, verification, or
+     health/trend scripts
+   - schemas, ADR files, architecture-lint rules/config, packet templates, or
+     existing unrelated handoff/log artifacts
+   - `MenuCommandHandoff` storage semantics, host-shell FIFO replacement,
+     `EditorShell::route_menu_command`, command-palette activation semantics,
+     accelerator execution semantics, menu-click behavior, shortcut remapping
+     UI, user preferences, shortcut persistence, fatal startup policy,
+     plugin runtime/discovery/loading, OS/typed clipboard behavior, CAD graph
+     or projection mutation, `CommandBus` action signatures, undo/dirty/save-
+     load authority, save/load behavior, or camera/navigation behavior
+
+   **Done criteria:**
+   - Enabled main-menu entries whose displayed shortcut matches one
+     `ProjectedMainMenu.conflicts` shortcut expose deterministic conflict
+     detail sourced only from that matching `ProjectedShortcutConflict.entries`
+     vector, preserving projection order.
+   - Unconflicted enabled entries expose no conflict detail. Disabled entries
+     keep their existing disabled menu behavior and are not made activatable by
+     the annotation.
+   - The menu item UI renders the conflict detail as informational text or a
+     stable item state without changing top-level menu ordering, shortcut text,
+     hover/click behavior, command enqueueing, command-palette projection,
+     shortcut-help rows, or Shortcut Conflicts rows.
+   - Projected plugin menu entries can carry conflict detail when the existing
+     projected menu data says they are enabled and conflicted; no plugin
+     runtime/discovery/loading or registry re-resolution is added.
+   - Existing read-only guarantees remain: building/rendering menu item
+     annotations does not enqueue menu commands, mutate command-palette
+     recents/pins/search state, open/close diagnostic windows, or alter the
+     projected menu.
+   - `.ai/dispatch.tasks.md`, `Status.md`, `HANDOFF.md`,
+     `plans/BASELINE.md`, and `change.md` mark task 131 complete when
+     implemented, and no task 132 is appended by the implementation unless a
+     later audit packet explicitly authorizes it.
+
+   **Verification:**
+   - `cargo test -p rge-editor-egui-host --lib menu`
+   - `cargo test -p rge-editor-egui-host --lib command_palette`
+   - `cargo test -p rge-editor-egui-host --lib shortcut_conflict`
+   - `cargo check -p rge-editor-egui-host --lib`
+   - `cargo +nightly fmt --all -- --check`
+   - `rg -n "^130\.|^131\.|^132\." .ai/dispatch.tasks.md`
+   - `git diff --name-only`
+   - `git diff --check`
+
+   **Halt conditions:**
+   - The implementation needs to edit any MUST-NOT path or change command
+     routing, menu-click behavior, command-palette activation, shortcut
+     execution, remapping, persistence, fatal policy, plugin runtime/discovery/
+     loading, OS clipboard, CAD/CommandBus, save/load, or camera behavior.
+   - Conflict detail cannot be sourced solely from the already-projected
+     `ProjectedMainMenu.conflicts` data.
+   - The UI change requires adding a command, menu entry, accelerator,
+     preferences surface, new diagnostics window, or registry re-resolution in
+     the main-menu rendering path.
+   - Verification fails, or `git diff --name-only` shows any file outside the
+     MAY-edit list plus generated artifacts for this dispatch.

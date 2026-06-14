@@ -1,0 +1,20 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-384",
+    "packet_type": "TASK",
+    "author": "Planner / OpenAI Codex",
+    "timestamp": "2026-06-14_04-42-26+0300",
+    "related_files": [
+                          ".ai/dispatch.tasks.md",
+                          "Status.md",
+                          "HANDOFF.md",
+                          "plans/BASELINE.md",
+                          "change.md",
+                          "ai_handoffs/ISSUE-384_*",
+                          ".ai/dispatch-ISSUE-384/**"
+                      ],
+    "status": "OPEN",
+    "handoff_status": "COMPLETE",
+    "next_role": "EXECUTOR_AI",
+    "exit_code": 0
+}

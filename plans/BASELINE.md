@@ -2,6 +2,19 @@
 
 ## Phase 9 editor-usability and dispatch-advisory closure
 
+**2026-06-14 update 30:** ISSUE-384 completed task 130 as a
+docs/source-read-only selection audit. The audit used only the embedded
+dispatcher snapshot from the TASK packet for GitHub queue evidence; no `gh` or
+network command was run. Source checks confirmed that conflict data now reaches
+Shortcut Conflicts, Keyboard Shortcuts help, and command-palette rows, while
+the main-menu `menu_item` presentation still receives only enabled/label/
+shortcut. The selected task 131 is a narrow host-local diagnostic: annotate
+main-menu items whose displayed shortcut is conflicted from existing
+`ProjectedMainMenu.conflicts`, preserving menu-click behavior, command-palette
+activation, shortcut execution, routing, remapping/persistence/fatal policy,
+plugin runtime, OS/typed clipboard, CAD/CommandBus mutation, and camera
+behavior. Task 130 did not implement task 131 or append task 132.
+
 **2026-06-14 update 29:** After ISSUE-383 published task 129 as
 `64061a5`, the task brief was exhausted again. The queue is empty and
 unblocked, so `.ai/dispatch.tasks.md` is re-armed with task 130: a
