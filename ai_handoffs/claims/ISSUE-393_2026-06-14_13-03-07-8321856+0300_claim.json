@@ -1,0 +1,9 @@
+{
+    "dispatch_id":  "ISSUE-393",
+    "event":  "claim",
+    "actor":  "Invoke-AiDispatchQueue.ps1:1555012",
+    "harness":  "Invoke-AiDispatchQueue.ps1",
+    "branch":  "ai-dispatch/ISSUE-393",
+    "timestamp":  "2026-06-14T13:03:07.8321856+03:00",
+    "ttl_seconds":  43200
+}

@@ -13178,7 +13178,7 @@ is the only safeguard against selector drift.
    - Task 138 did not implement task 139, did not edit Rust/Cargo/workflows or
      automation, and did not append task 140.
 
-139. **Frame selected CAD entities on viewport left double-click.**
+139. **[DONE 2026-06-14 via ISSUE-393] Frame selected CAD entities on viewport left double-click.**
    Implement one bounded `editor-shell` camera/navigation polish: when a
    qualifying viewport left double-click occurs, first attempt to frame the
    currently selected CAD projection entity or selected CAD projection entity

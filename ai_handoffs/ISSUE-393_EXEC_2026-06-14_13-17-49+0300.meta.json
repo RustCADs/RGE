@@ -1,0 +1,21 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-393",
+    "packet_type": "EXEC",
+    "author": "Executor / Codex",
+    "timestamp": "2026-06-14_13-17-49+0300",
+    "related_files": [
+                          "crates/editor-shell/src/lifecycle/mod.rs - selected-CAD bounds helper and double-click framing fallback",
+                          "crates/editor-shell/src/lifecycle/tests.rs - selected-CAD double-click framing and fallback tests",
+                          ".ai/dispatch.tasks.md - marked task 139 done, with no task 140 appended",
+                          "Status.md - added ISSUE-393 status snapshot",
+                          "HANDOFF.md - added ISSUE-393 handoff snapshot",
+                          "plans/BASELINE.md - added update 43 for task 139 completion",
+                          "change.md - added ISSUE-393 change-log entry",
+                          "ai_handoffs/ISSUE-393_EXEC_2026-06-14_13-17-49+0300.md - execution report"
+                      ],
+    "status": "AWAITING_REVIEW",
+    "handoff_status": "COMPLETE",
+    "next_role": "REVIEWER_AI",
+    "exit_code": 0
+}

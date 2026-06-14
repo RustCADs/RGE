@@ -770,6 +770,123 @@ fn move_viewport_left_double_click_camera_off_scene(shell: &mut EditorShell) {
     shell.editor_camera.eye = glam::Vec3::splat(999.0);
 }
 
+fn viewport_left_double_click_cad_shell() -> (
+    EditorShell,
+    rge_kernel_ecs::EntityId,
+    rge_kernel_ecs::EntityId,
+) {
+    use rge_cad_core::{CadGraph, CuboidOp, OperatorNode, Tolerance, TransformOp};
+    use rge_cad_projection::{BRepHandle, CadProjection};
+    use rge_kernel_ecs::World;
+
+    let mut graph = CadGraph::new();
+    graph
+        .begin_operation()
+        .expect("CadGraph::begin_operation: no in-progress op pre-seed");
+    let (origin_node, offset_node) = {
+        let graph_mut = graph
+            .graph_mut()
+            .expect("CadGraph::graph_mut: in-progress op was just begun");
+        let origin_node = graph_mut
+            .add_operator(OperatorNode::Cuboid(CuboidOp {
+                width: 2.0,
+                height: 2.0,
+                depth: 2.0,
+            }))
+            .expect("OperatorGraph::add_operator: origin cuboid is unique");
+        let offset_raw = graph_mut
+            .add_operator(OperatorNode::Cuboid(CuboidOp {
+                width: 1.0,
+                height: 1.5,
+                depth: 1.0,
+            }))
+            .expect("OperatorGraph::add_operator: offset cuboid is unique");
+        let offset_node = graph_mut
+            .add_operator(OperatorNode::Transform(TransformOp {
+                translation: [10.0, 0.0, 0.0],
+                ..TransformOp::default()
+            }))
+            .expect("OperatorGraph::add_operator: offset transform is unique");
+        graph_mut
+            .connect(offset_raw, offset_node, 0)
+            .expect("OperatorGraph::connect: offset cuboid feeds transform");
+        graph_mut
+            .set_root(origin_node)
+            .expect("OperatorGraph::set_root: origin cuboid is a valid root");
+        (origin_node, offset_node)
+    };
+    graph
+        .commit("issue-393-selected-cad-double-click")
+        .expect("CadGraph::commit: in-progress op has a root");
+
+    let tolerance = Tolerance::new(0.001).expect("Tolerance::new(0.001): finite positive");
+    let mut projection = CadProjection::new();
+    let mut world = World::new();
+    world.register_snapshot_component::<BRepHandle>();
+    let origin_entity = projection
+        .spawn_brep_entity(&mut world, origin_node)
+        .expect("CadProjection::spawn_brep_entity: origin node exists");
+    projection
+        .tick(&mut world, &graph, tolerance)
+        .expect("CadProjection::tick: origin entity projects");
+    let mut shell = EditorShell::with_world_projection_graph(world, projection, graph);
+
+    let offset_entity = {
+        let projection = shell
+            .projection
+            .as_mut()
+            .expect("CAD shell carries projection");
+        let cad_world = shell.cad_world.as_mut().expect("CAD shell carries world");
+        projection
+            .spawn_brep_entity(cad_world, offset_node)
+            .expect("CadProjection::spawn_brep_entity: offset node exists")
+    };
+    {
+        let projection = shell
+            .projection
+            .as_mut()
+            .expect("CAD shell carries projection");
+        let cad_world = shell.cad_world.as_mut().expect("CAD shell carries world");
+        let cad_graph = shell.cad_graph.as_ref().expect("CAD shell carries graph");
+        projection
+            .tick(cad_world, cad_graph, tolerance)
+            .expect("CadProjection::tick: offset entity projects");
+    }
+
+    (shell, origin_entity, offset_entity)
+}
+
+fn camera_for_cad_entities(
+    shell: &EditorShell,
+    entities: &[rge_kernel_ecs::EntityId],
+) -> crate::camera::EditorCameraState {
+    let projection = shell
+        .projection
+        .as_ref()
+        .expect("CAD shell carries projection");
+    let cad_world = shell.cad_world.as_ref().expect("CAD shell carries world");
+    let meshes = entities
+        .iter()
+        .map(|entity| {
+            projection
+                .render_mesh_for(*entity, cad_world)
+                .expect("selected CAD entity has projected render mesh")
+        })
+        .collect::<Vec<_>>();
+    let (min, max) =
+        super::compute_aabb_union(&meshes).expect("selected CAD render meshes have finite bounds");
+    super::isometric_camera_for_bounds(min, max)
+}
+
+fn perform_viewport_left_double_click(shell: &mut EditorShell) {
+    let first = Instant::now();
+
+    shell.cursor_pos = Some([100.0, 200.0]);
+    shell.handle_viewport_left_press(true, true, first);
+    shell.cursor_pos = Some([103.0, 204.0]);
+    shell.handle_viewport_left_press(true, true, first + Duration::from_millis(250));
+}
+
 #[test]
 fn viewport_left_double_click_second_viewport_press_frames_prebuilt_scene() {
     let expected = viewport_left_double_click_seed_shell().editor_camera;
@@ -787,6 +904,86 @@ fn viewport_left_double_click_second_viewport_press_frames_prebuilt_scene() {
     shell.handle_viewport_left_press(true, true, first + Duration::from_millis(250));
 
     assert_camera_unchanged(expected, shell.editor_camera);
+}
+
+#[test]
+fn viewport_left_double_click_selected_cad_entity_frames_selected_bounds() {
+    let (mut shell, origin_entity, offset_entity) = viewport_left_double_click_cad_shell();
+    let scene_expected = camera_for_cad_entities(&shell, &[origin_entity]);
+    let selected_expected = camera_for_cad_entities(&shell, &[offset_entity]);
+    assert_ne!(
+        scene_expected.target, selected_expected.target,
+        "test setup must distinguish selected CAD framing from scene-wide fallback"
+    );
+
+    shell.coord_mut().selection.add(offset_entity);
+    move_viewport_left_double_click_camera_off_scene(&mut shell);
+
+    perform_viewport_left_double_click(&mut shell);
+
+    assert_camera_unchanged(selected_expected, shell.editor_camera);
+}
+
+#[test]
+fn viewport_left_double_click_multiple_selected_cad_entities_frames_union() {
+    let (mut shell, origin_entity, offset_entity) = viewport_left_double_click_cad_shell();
+    let origin_expected = camera_for_cad_entities(&shell, &[origin_entity]);
+    let offset_expected = camera_for_cad_entities(&shell, &[offset_entity]);
+    let union_expected = camera_for_cad_entities(&shell, &[origin_entity, offset_entity]);
+    assert_ne!(
+        union_expected.target, origin_expected.target,
+        "test setup must distinguish selected union from the first CAD entity"
+    );
+    assert_ne!(
+        union_expected.target, offset_expected.target,
+        "test setup must distinguish selected union from the second CAD entity"
+    );
+
+    shell.coord_mut().selection.add(origin_entity);
+    shell.coord_mut().selection.add(offset_entity);
+    move_viewport_left_double_click_camera_off_scene(&mut shell);
+
+    perform_viewport_left_double_click(&mut shell);
+
+    assert_camera_unchanged(union_expected, shell.editor_camera);
+}
+
+#[test]
+fn viewport_left_double_click_cad_no_selection_falls_back_to_scene_bounds() {
+    let (mut shell, origin_entity, offset_entity) = viewport_left_double_click_cad_shell();
+    let scene_expected = camera_for_cad_entities(&shell, &[origin_entity]);
+    let offset_expected = camera_for_cad_entities(&shell, &[offset_entity]);
+    assert_ne!(
+        scene_expected.target, offset_expected.target,
+        "test setup must distinguish scene fallback from the unselected CAD entity"
+    );
+
+    move_viewport_left_double_click_camera_off_scene(&mut shell);
+
+    perform_viewport_left_double_click(&mut shell);
+
+    assert_camera_unchanged(scene_expected, shell.editor_camera);
+}
+
+#[test]
+fn viewport_left_double_click_unresolved_selected_cad_entity_falls_back_to_scene_bounds() {
+    let (mut shell, origin_entity, offset_entity) = viewport_left_double_click_cad_shell();
+    let scene_expected = camera_for_cad_entities(&shell, &[origin_entity]);
+    let offset_expected = camera_for_cad_entities(&shell, &[offset_entity]);
+    assert_ne!(
+        scene_expected.target, offset_expected.target,
+        "test setup must distinguish scene fallback from a valid selected CAD entity"
+    );
+
+    shell
+        .coord_mut()
+        .selection
+        .add(rge_kernel_ecs::EntityId::new());
+    move_viewport_left_double_click_camera_off_scene(&mut shell);
+
+    perform_viewport_left_double_click(&mut shell);
+
+    assert_camera_unchanged(scene_expected, shell.editor_camera);
 }
 
 #[test]
@@ -870,6 +1067,33 @@ fn viewport_left_double_click_single_press_preserves_face_pick_gate_and_does_not
     shell.handle_viewport_left_press(false, true, Instant::now());
 
     assert_camera_unchanged(moved, shell.editor_camera);
+}
+
+#[test]
+fn viewport_left_double_click_selected_cad_single_press_preserves_face_pick_gate() {
+    assert!(super::should_fire_face_pick(false, false));
+    assert!(super::should_fire_face_pick(false, true));
+    assert!(!super::should_fire_face_pick(true, false));
+    assert!(super::should_fire_face_pick(true, true));
+
+    let (mut shell, _origin_entity, offset_entity) = viewport_left_double_click_cad_shell();
+    let selected_expected = camera_for_cad_entities(&shell, &[offset_entity]);
+    shell.coord_mut().selection.add(offset_entity);
+    move_viewport_left_double_click_camera_off_scene(&mut shell);
+    let moved = shell.editor_camera;
+    assert_ne!(
+        moved.eye, selected_expected.eye,
+        "test setup must distinguish first-press no-op from selected framing"
+    );
+
+    shell.cursor_pos = Some([40.0, 60.0]);
+    shell.handle_viewport_left_press(false, true, Instant::now());
+
+    assert_camera_unchanged(moved, shell.editor_camera);
+    assert!(
+        shell.coord().face_selection.is_empty(),
+        "headless lifecycle face-pick path remains a no-op without surface context"
+    );
 }
 
 #[test]

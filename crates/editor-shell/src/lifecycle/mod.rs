@@ -598,8 +598,9 @@ pub struct EditorShell {
     pub(crate) cursor_pos: Option<[f32; 2]>,
 
     /// Viewport-only left double-click detector. A qualifying second left press
-    /// over the Viewport tab body reframes via [`Self::reset_camera`]; all
-    /// command/menu/accelerator routes remain separate.
+    /// over the Viewport tab body reframes selected CAD bounds first, then
+    /// falls back to [`Self::reset_camera`]; all command/menu/accelerator
+    /// routes remain separate.
     viewport_left_double_click: viewport_navigation::ViewportLeftDoubleClick,
 
     /// Active right-button orbit drag over the Viewport tab body. Stores the
@@ -2080,6 +2081,25 @@ impl EditorShell {
         }
     }
 
+    fn selected_cad_scene_bounds(&self) -> Option<Aabb> {
+        if self.coord.selection.is_empty() {
+            return None;
+        }
+        let (Some(projection), Some(cad_world)) =
+            (self.projection.as_ref(), self.cad_world.as_ref())
+        else {
+            return None;
+        };
+
+        let meshes = self
+            .coord
+            .selection
+            .iter()
+            .filter_map(|entity| projection.render_mesh_for(entity, cad_world))
+            .collect::<Vec<_>>();
+        compute_aabb_union(&meshes)
+    }
+
     /// View → Reset Camera. Reframe [`Self::editor_camera`] to the
     /// isometric view of the live scene's AABB union (via
     /// [`compute_aabb_union`] + [`isometric_camera_for_bounds`]),
@@ -2096,6 +2116,14 @@ impl EditorShell {
             Some((min, max)) => isometric_camera_for_bounds(min, max),
             None => EditorCameraState::default(),
         };
+    }
+
+    fn frame_cad_selection_or_reset_camera(&mut self) {
+        if let Some((min, max)) = self.selected_cad_scene_bounds() {
+            self.editor_camera = isometric_camera_for_bounds(min, max);
+        } else {
+            self.reset_camera();
+        }
     }
 
     /// View -> Zoom In. Move [`Self::editor_camera`] closer to its target while
@@ -2141,7 +2169,7 @@ impl EditorShell {
         }
 
         if should_frame_all {
-            self.reset_camera();
+            self.frame_cad_selection_or_reset_camera();
         }
     }
 

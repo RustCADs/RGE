@@ -2,6 +2,18 @@
 
 ## Phase 9 editor-usability and dispatch-advisory closure
 
+**2026-06-14 update 43:** ISSUE-393 implemented task 139. A qualifying
+viewport left double-click still uses the existing `ViewportLeftDoubleClick`
+detector and left-click face-pick gate, then privately frames selected CAD
+projection entity bounds when any selected entities resolve through existing
+read-only projection/render-mesh helpers. Multiple selected CAD entities frame
+their selected-bounds union; no selection, unresolved selected entities,
+empty/non-finite selected bounds, or prebuilt render-only paths fall back to the
+unchanged scene-wide `reset_camera()` behavior. View menu/Home camera routing
+therefore remains scene-wide. Focused lifecycle tests cover selected single-CAD
+framing, selected multi-CAD union framing, fallback cases, and first-press
+face-pick gating. Task 139 is marked done and no task 140 was appended.
+
 **2026-06-14 update 42:** ISSUE-392 completed task 138 as a
 docs/source-read-only selection audit. The audit used only the embedded
 dispatcher snapshot from the ISSUE-392 TASK packet for GitHub queue evidence;
