@@ -1,0 +1,26 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-400",
+    "packet_type": "EXEC",
+    "author": "Executor / Codex",
+    "timestamp": "2026-06-15_03-42-54+0300",
+    "related_files": [
+                          ".ai/dispatch.tasks.md - marked task 146 done, recorded the audit, and appended task 147",
+                          "Status.md - added the ISSUE-400 status snapshot",
+                          "HANDOFF.md - added the ISSUE-400 handoff snapshot",
+                          "plans/BASELINE.md - added update 50 for ISSUE-400",
+                          "change.md - appended the ISSUE-400 chronological entry",
+                          "crates/editor-ui/src/menus/** - read-only source evidence for menus, shortcuts, and clipboard predicates",
+                          "crates/editor-egui-host/src/** - read-only source evidence for host routing, shortcut diagnostics, and handoff state",
+                          "crates/editor-shell/src/lifecycle/** - read-only source evidence for camera/input lifecycle, clipboard, save/dirty, and tests",
+                          "crates/editor-shell/src/render_path.rs - read-only source evidence for command routing",
+                          "crates/editor-actions/** - read-only source evidence for CommandBus authority",
+                          "crates/cad-projection/** - read-only source evidence for projection/read paths",
+                          "crates/plugin-discovery/** - read-only source evidence for plugin-discovery stub state",
+                          "runtime/** - read-only search scope for plugin runtime evidence"
+                      ],
+    "status": "AWAITING_REVIEW",
+    "handoff_status": "COMPLETE",
+    "next_role": "REVIEWER_AI",
+    "exit_code": 0
+}
