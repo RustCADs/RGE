@@ -15752,3 +15752,36 @@ Recommendation for human approval
      next feature boundary.
    - Appending exactly one `NEEDS_HUMAN_RECORDED:` marker plus the required
      recommendation block would disturb existing task provenance.
+
+   NEEDS_HUMAN_RECORDED: 2026-06-16 - stale tracked-CAD cleanup helper is implemented and tested, but approving its first production caller needs a human decision
+
+   Recommendation for human approval:
+   - Proposed next feature: wire `EditorShell::clear_stale_tracked_cad_entity`
+     into the existing `add_cad_cuboid_to_empty_scene` empty-scene preflight so
+     a stale stored `cad_entity` alone can be cleared before the current
+     first-cuboid add guard runs, while preserving the existing rejection for
+     installed CAD graph/projection/world state, render-only content, and other
+     partial/non-empty scenes.
+   - Exact edit surface: `crates/editor-shell/src/lifecycle/commands.rs` and
+     `crates/editor-shell/src/lifecycle/tests.rs`; use
+     `crates/editor-shell/src/lifecycle/mod.rs` only if an adjacent lifecycle
+     export or route adjustment is strictly required; generated current-dispatch
+     handoff/audit artifacts only.
+   - Risks: the helper currently has no production caller; routing it through
+     UI, CommandBus, dirty/save, graph restore, projection despawn, render
+     refresh, mesh upload, or GPU paths would expand authority beyond the
+     cleanup primitive. The approved feature should only normalize stale
+     tracked-id state before the existing add preflight and should not turn
+     render-mesh absence into a cleanup predicate.
+   - Verification: run focused `clear_stale_tracked_cad_entity` and
+     `cad_scene_inspection` lifecycle tests, add a route-specific lifecycle test
+     for stale-id-only preflight normalization, run
+     `cargo check -p rge-editor-shell --lib`,
+     `cargo +nightly fmt --all -- --check`, the lifecycle/projection evidence
+     greps from this audit, `git diff --name-only`, and `git diff --check`.
+   - Why this is the smallest coherent next step: current source already has a
+     narrow stale-id cleanup primitive and tests, and `rg` shows it is not wired
+     to a production caller. The proposed follow-up decides one caller boundary
+     without changing graph/projection cleanup policy, render behavior,
+     CommandBus/undo/dirty/save authority, UI routing, CAD-core, or
+     cad-projection.
