@@ -2112,6 +2112,7 @@ impl EditorShell {
     /// swallow (contrast the A3 Play items' `route_play_button`, whose
     /// `handle_button` can return a benign invalid-state error).
     pub fn reset_camera(&mut self) {
+        self.reset_viewport_left_double_click();
         self.editor_camera = match self.current_scene_bounds() {
             Some((min, max)) => isometric_camera_for_bounds(min, max),
             None => EditorCameraState::default(),
