@@ -14754,4 +14754,101 @@ is the only safeguard against selector drift.
      broader camera architecture boundaries. No implementation work for task
      149 was performed and no task 149 or task 150 was appended.
 
-NEEDS_HUMAN_RECORDED: 2026-06-15 - No bounded in-policy task 149 remains after the camera stale-state sequence; remaining candidates require human product/architecture decisions across remapping/fatal-policy, route ownership, plugin runtime, OS/typed clipboard, or CAD/CommandBus authority.
+149. **Read-only preflight: smallest-safe CAD/CommandBus first-mutation boundary (recommendation only).**
+   Perform a docs/source-read-only Phase 9 preflight of the CAD/CommandBus
+   editor-mutation boundary that triggered the prior `NEEDS_HUMAN_RECORDED`.
+   Identify the single smallest coherent first real CAD/editor mutation that
+   could route through the existing `CommandBus` authority, and produce a
+   concrete recommendation for human approval. This is analysis ONLY: no source,
+   test, or behavior change. Use current local source reads plus the
+   dispatcher-provided GitHub-state snapshot from the auto-created issue body for
+   queue/already-filed evidence; do not call `gh` or the network from inside the
+   executor sandbox.
+
+   **Self-re-arm (final step, required) — RECORD A RECOMMENDATION AS NEEDS_HUMAN; DO NOT APPEND AN IMPLEMENTATION TASK.**
+   This task is explicitly gated: it MUST NOT append task 150 or any other
+   implementation/feature task, and MUST NOT self-re-arm with a follow-up task.
+   Instead, as its final step, append to "## Tasks" exactly one
+   `NEEDS_HUMAN_RECORDED: <ISO-date> - CAD/CommandBus first-mutation recommendation`
+   marker line, immediately followed by a "Recommendation for human approval"
+   block containing all five of:
+   - **Proposed mutation** — the single smallest coherent first CAD/editor
+     mutation, and the exact `CommandBus` / `Action` path it routes through.
+   - **Exact edit surface** — the precise files / functions / types a future
+     implementation would touch, and which it must not.
+   - **Risks** — projection invalidation, undo/dirty, save-mark, save/load
+     authority, and any cross-cutting concerns.
+   - **Verification** — the test/verify plan a future implementation would run.
+   - **Why smallest coherent boundary** — why this is the minimal in-policy first
+     step vs. the alternatives, and the exact human product/architecture decision
+     that must be approved before any code ships.
+   Editing `.ai/dispatch.tasks.md` for this purpose is in `MAY edit`. The
+   autonomous driver detects the marker, files a `needs-human` review issue, and
+   pauses for human approval — no code is authored or shipped from this task.
+
+   **Context snapshot:**
+   - Tasks 143-148 cleaned up stale viewport left-double-click state across
+     focus-loss, mouse-wheel, reset-camera, and zoom commands; task 148's audit
+     recorded `NEEDS_HUMAN` (no bounded in-policy task remained).
+   - An operator-requested Codex preflight flagged that a CAD/editor mutation
+     path may already exist via `CommandBus::submit`
+     (`crates/editor-actions/src/bus.rs`), with CAD projection read-side in the
+     shell via `render_mesh_for` / `selected_cad_scene_bounds`
+     (`crates/cad-projection/src/render_adapter.rs`,
+     `crates/editor-shell/src/lifecycle/mod.rs`). The preflight must confirm or
+     falsify this and scope the smallest first mutation accordingly.
+
+   **MAY edit:**
+   - `.ai/dispatch.tasks.md`
+   - `Status.md`
+   - `HANDOFF.md`
+   - `plans/BASELINE.md`
+   - `change.md`
+   - generated ISSUE-<n> handoff/audit/log artifacts for this dispatch only
+
+   **MUST NOT edit:**
+   - Rust source or tests
+   - Cargo manifests or `Cargo.lock`
+   - workflows; dispatch automation / guard / queue / scheduler / watcher /
+     verification / health scripts
+   - schemas, ADR files, architecture-lint rules/config, packet templates
+   - command routing, plugin runtime/discovery/loading, OS clipboard behavior,
+     shortcut remapping/fatal policy, camera/navigation behavior,
+     CAD/projection/CommandBus mutation, undo/dirty/save-load authority, or
+     viewport hit testing
+
+   **Done criteria:**
+   - The audit records the pre-edit task-heading check for
+     `^148\.|^149\.|^150\.` and the prior `NEEDS_HUMAN_RECORDED` marker state.
+   - The audit answers a 5-question CAD/CommandBus boundary preflight: (Q1) the
+     current `CommandBus` public contract and action context; (Q2) where CAD
+     projection, selected-CAD bounds, open/save/load, undo, dirty, and save-mark
+     authority currently live; (Q3) which candidate first mutations are possible
+     and which require wider architecture; (Q4) the exact human decision needed
+     before implementation; (Q5) the single smallest coherent recommended first
+     mutation.
+   - Exactly one `NEEDS_HUMAN_RECORDED:` marker plus the five-part Recommendation
+     block is appended. NO task 150 or any other task is appended, and NO
+     implementation work is done.
+   - Negative claims include falsifying `rg` searches where practical.
+
+   **Verification:**
+   - `rg -n "^148\.|^149\.|^150\.|NEEDS_HUMAN_RECORDED" .ai/dispatch.tasks.md`
+     before and after edits
+   - source greps for `CommandBus::submit`, `submit_action`, `undo_command`,
+     `redo_command`, `mark_saved_command`, `render_mesh_for`,
+     `selected_cad_scene_bounds`, `replace_world`, `handle_open_request`,
+     `handle_save_request`
+   - status-doc cross-check against `Status.md`, `HANDOFF.md`,
+     `plans/BASELINE.md`, and `change.md`
+   - `git diff --name-only`
+   - `git diff --check`
+
+   **Halt conditions:**
+   - Any source, test, Cargo, workflow, script, schema, ADR, lint, routing,
+     plugin, clipboard, shortcut-policy, camera, CAD, projection, undo/dirty, or
+     save/load edit is required.
+   - The preflight cannot name a single smallest coherent first mutation without
+     more than one architecture/product decision — in that case the
+     Recommendation must say so explicitly and still record `NEEDS_HUMAN`
+     (never append task 150).
