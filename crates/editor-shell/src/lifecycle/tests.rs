@@ -2323,6 +2323,8 @@ fn cad_scene_inspection_reports_fresh_empty_shell() {
             cad_world_present: false,
             cad_projection_present: false,
             tracked_cad_entity_present: false,
+            tracked_cad_entity_live: false,
+            tracked_cad_entity_render_mesh_present: false,
             cad_graph_head: None,
             cad_graph_root_present: false,
             cad_graph_node_count: 0,
@@ -2352,6 +2354,8 @@ fn cad_scene_inspection_reports_first_cuboid_add() {
     assert!(inspection.cad_world_present);
     assert!(inspection.cad_projection_present);
     assert!(inspection.tracked_cad_entity_present);
+    assert!(inspection.tracked_cad_entity_live);
+    assert!(inspection.tracked_cad_entity_render_mesh_present);
     assert_eq!(inspection.cad_graph_head, Some(added.committed_head));
     assert!(
         inspection.cad_graph_root_present,
@@ -2456,6 +2460,14 @@ fn cad_scene_inspection_reports_restore_despawn_cleanup() {
     assert!(
         inspection.tracked_cad_entity_present,
         "the shell still remembers the former single-CAD entity until lifecycle cleanup clears it"
+    );
+    assert!(
+        !inspection.tracked_cad_entity_live,
+        "the tracked CAD entity id is stale after projection cleanup despawns it"
+    );
+    assert!(
+        !inspection.tracked_cad_entity_render_mesh_present,
+        "the stale tracked CAD entity has no render_mesh_for mesh after cleanup"
     );
     assert_eq!(inspection.cad_graph_head, Some(added.pre_add_head));
     assert!(!inspection.cad_graph_root_present);

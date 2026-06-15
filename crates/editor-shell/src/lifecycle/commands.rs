@@ -192,6 +192,11 @@ pub struct CadSceneInspection {
     pub cad_projection_present: bool,
     /// Whether the shell tracks a CAD entity for the single-CAD render path.
     pub tracked_cad_entity_present: bool,
+    /// Whether the tracked CAD entity is still live in the CAD world.
+    pub tracked_cad_entity_live: bool,
+    /// Whether the tracked CAD entity currently resolves through
+    /// [`CadProjection::render_mesh_for`].
+    pub tracked_cad_entity_render_mesh_present: bool,
     /// Current CAD graph checkpoint head, when a graph is installed.
     pub cad_graph_head: Option<CheckpointId>,
     /// Whether the installed CAD graph has a root node.
@@ -290,11 +295,35 @@ impl EditorShell {
             0
         };
 
+        let tracked_cad_entity_live = if let (Some(cad_world), Some(cad_entity)) =
+            (self.cad_world.as_ref(), self.cad_entity)
+        {
+            cad_world
+                .entity(cad_entity)
+                .map(|entity| entity.get::<BRepHandle>().is_some())
+                .unwrap_or(false)
+        } else {
+            false
+        };
+
+        let tracked_cad_entity_render_mesh_present =
+            if let (Some(projection), Some(cad_world), Some(cad_entity)) = (
+                self.projection.as_ref(),
+                self.cad_world.as_ref(),
+                self.cad_entity,
+            ) {
+                projection.render_mesh_for(cad_entity, cad_world).is_some()
+            } else {
+                false
+            };
+
         CadSceneInspection {
             cad_graph_present: self.cad_graph.is_some(),
             cad_world_present: self.cad_world.is_some(),
             cad_projection_present: self.projection.is_some(),
             tracked_cad_entity_present: self.cad_entity.is_some(),
+            tracked_cad_entity_live,
+            tracked_cad_entity_render_mesh_present,
             cad_graph_head,
             cad_graph_root_present,
             cad_graph_node_count,
