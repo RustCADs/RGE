@@ -2,6 +2,22 @@
 
 ## Phase 9 editor-usability and dispatch-advisory closure
 
+**2026-06-15 update 53:** ISSUE-410 completed task 155 as a
+source/docs-read-only audit after the tracked-CAD liveness inspection fields.
+Queue/already-filed evidence used only the dispatcher snapshot embedded in
+`ai_handoffs/ISSUE-410_TASK_2026-06-15_22-44-39+0300.md`, generated
+`2026-06-15T22:44:09.6818191+03:00`; no live `gh`, browser, network,
+GitHub API, or web lookup was run. Current source shows
+`CadSceneInspection` separates stored tracked-CAD id presence, CAD-world
+liveness, and `render_mesh_for` availability, with focused tests for fresh,
+added, rejected-add, and restore/despawn cleanup states. The selected next
+bounded feature is task 156: add an `editor-shell` lifecycle-only helper that
+clears only `self.cad_entity` when the stored tracked CAD id is stale against
+the installed CAD world. The audit did not implement task 156, did not append
+task 157, and did not change Rust source/tests, Cargo metadata, workflows,
+schemas, automation, render path, CAD-core, cad-projection, CommandBus,
+undo/dirty/save-load, UI/host routing, or unrelated artifacts.
+
 **2026-06-15 update 52:** ISSUE-402 completed task 148 as a
 source-read-only Phase 9 editor-usability audit and recorded `NEEDS_HUMAN`
 instead of appending task 149. Queue/already-filed evidence used only the
