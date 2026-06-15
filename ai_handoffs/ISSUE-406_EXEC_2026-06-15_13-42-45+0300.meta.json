@@ -1,0 +1,24 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-406",
+    "packet_type": "EXEC",
+    "author": "Executor / Codex",
+    "timestamp": "2026-06-15_13-42-45+0300",
+    "related_files": [
+                          ".ai/dispatch.tasks.md - appended exactly one bounded FEATURE task 152.",
+                          "ai_handoffs/ISSUE-406_TASK_2026-06-15_13-23-56+0300.md - consumed as the active task packet.",
+                          "ai_handoffs/ISSUE-406_EXEC_2026-06-15_13-42-45+0300.md - this execution report and source-grounded audit.",
+                          ".ai/dispatch-ISSUE-406/codex.plan.rev1.log - local artifact containing the dispatcher GitHub-state snapshot copied from the issue body.",
+                          "crates/editor-shell/src/lifecycle/commands.rs - read-only source evidence for the cuboid add entry point and CommandBus boundary.",
+                          "crates/editor-shell/src/lifecycle/mod.rs - read-only source evidence for CAD state fields and frame/bounds paths.",
+                          "crates/editor-shell/src/lifecycle/tests.rs - read-only source evidence for cuboid add, restore cleanup, and private test helpers.",
+                          "crates/editor-shell/src/render_path.rs - read-only source evidence for Phase-1/Phase-2 render initialization and mesh upload.",
+                          "crates/editor-actions/src/** - read-only source evidence for Action and CommandBus authority.",
+                          "crates/cad-core/src/checkpoints/mod.rs - read-only source evidence for restore_to semantics.",
+                          "crates/cad-projection/src/lib.rs - read-only source evidence for despawn_brep_entity and projection cleanup."
+                      ],
+    "status": "AWAITING_REVIEW",
+    "handoff_status": "COMPLETE",
+    "next_role": "REVIEWER_AI",
+    "exit_code": 0
+}

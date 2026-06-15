@@ -15060,3 +15060,115 @@ Recommendation for human approval
    - No bounded task 152 can be specified without crossing a policy or
      architecture boundary; record `NEEDS_HUMAN_RECORDED` instead of forcing a
      task.
+
+152. **Add a headless CAD scene inspection snapshot for the first cuboid add path (editor-shell only).**
+   Add one read-only editor-shell lifecycle API that reports the current CAD
+   scene/projection/renderability shape after `add_cad_cuboid_to_empty_scene`,
+   so headless callers and tests can observe the first CAD mutation without
+   reaching into private shell fields or routing through UI, menus, shortcuts,
+   CommandBus, save/load, or GPU render refresh behavior.
+
+   The bounded target is an inspection snapshot, not a new mutation path. A
+   suitable shape is a small public result type plus a method such as
+   `EditorShell::cad_scene_inspection()` that reads existing shell state and
+   reports counts / booleans for the installed CAD graph, CAD world,
+   projection, tracked CAD entity, graph head/root/node count, `BRepHandle`
+   entity count, `render_mesh_for` mesh count, prebuilt render mesh count,
+   uploaded mesh count, and whether current/selected CAD bounds are frameable.
+   The executor may adjust exact field names if the implementation proves a
+   tighter equivalent, but the API must stay read-only and headless.
+
+   **Self-re-arm (final step, required):** After the implementation is complete
+   and verified, follow the Self-re-arm protocol in this file's header: append
+   exactly one bounded next-task-source AUDIT task as task 153 - a
+   source/docs-read-only audit of the post-inspection CAD/editor-shell feature
+   boundary - or, if no bounded in-policy next task exists, append a single
+   `NEEDS_HUMAN_RECORDED: <ISO-date> - <reason>` line instead. The task 153
+   audit must require dispatcher-provided GitHub-state snapshot evidence for
+   queue/already-filed-task claims, must compare current source before choosing
+   the next feature, and must itself carry this Self-rearm final-step
+   requirement. Edit `.ai/dispatch.tasks.md` to do this.
+
+   **MAY edit:**
+   - `crates/editor-shell/src/lifecycle/commands.rs`
+   - `crates/editor-shell/src/lifecycle/mod.rs`
+   - `crates/editor-shell/src/lifecycle/tests.rs`
+   - `.ai/dispatch.tasks.md`
+   - generated ISSUE-<n> handoff/audit/log artifacts for the dispatch
+
+   **MUST NOT edit:**
+   - `crates/editor-actions/**`
+   - `crates/cad-core/**`
+   - `crates/cad-projection/**`
+   - `crates/editor-shell/src/render_path.rs`
+   - `crates/editor-shell/src/lifecycle/open_request.rs`
+   - `crates/editor-shell/src/lifecycle/save_request.rs`
+   - `crates/editor-ui/**`
+   - `crates/editor-egui-host/**`
+   - `editor/**`
+   - `runtime/**`
+   - `tools/**`
+   - Cargo manifests or `Cargo.lock`
+   - workflows, dispatch automation, guard, queue, scheduler, watcher,
+     verification, health/trend scripts, schemas, ADR files,
+     architecture-lint rules/config, packet templates, or unrelated existing
+     handoff/log artifacts
+   - plugin runtime/discovery/loading code, command routing, shortcut
+     execution, remapping/persistence/fatal policy, OS clipboard behavior,
+     CAD/projection/CommandBus mutation behavior, undo/dirty/save-load
+     authority, camera/navigation behavior, camera math, viewport hit testing,
+     face-pick policy, render architecture, render-path behavior,
+     mesh-upload behavior, or GPU resource lifetime behavior
+
+   **Done criteria:**
+   - A public headless read-only CAD inspection API exists on `EditorShell`
+     with a small returned snapshot type; it does not expose mutable handles,
+     does not enqueue actions, and does not mutate CAD graph/projection/world,
+     selection, camera, CommandBus, dirty/save state, render assets, or GPU
+     state.
+   - The snapshot distinguishes at least these states: fresh empty shell,
+     successful first cuboid add, rejected non-empty add state, and
+     restore/despawn cleanup after the captured `pre_add_head`.
+   - Focused lifecycle tests assert the snapshot's counts/booleans after
+     `add_cad_cuboid_to_empty_scene`, including one CAD node/root, one
+     `BRepHandle` entity, one `render_mesh_for` mesh, no prebuilt-render
+     substitution, and no stale entity/mesh after restore plus projection
+     cleanup.
+   - No menu item, shortcut, command-palette entry, UI/host route, plugin
+     command, CommandBus `Action`, global undo/redo, dirty/save-mark,
+     save/load/open/close behavior, camera behavior, viewport behavior,
+     render-path refresh, CAD-core behavior, or cad-projection behavior is
+     added or changed.
+   - Exactly one bounded next-task-source audit task 153 is appended per the
+     Self-rearm protocol, carrying its own `MAY edit`, `MUST NOT edit`,
+     `Done criteria`, `Verification`, `Halt conditions`, dispatcher-snapshot
+     evidence rule, and copied Self-rearm requirement, or a single
+     `NEEDS_HUMAN_RECORDED:` line is appended instead. No other task is added.
+
+   **Verification:**
+   - `cargo test -p rge-editor-shell --lib cad_scene_inspection --no-fail-fast`
+   - `cargo test -p rge-editor-shell --lib add_cad_cuboid --no-fail-fast`
+   - `cargo check -p rge-editor-shell --lib`
+   - `cargo +nightly fmt --all -- --check`
+   - `rg -n "cad_scene_inspection|CadSceneInspection|add_cad_cuboid_to_empty_scene|render_mesh_for|BRepHandle" crates/editor-shell/src/lifecycle`
+   - `rg -n "CommandBus|Action|submit\\(|undo_command|redo_command|mark_saved_command" crates/editor-actions/src crates/editor-shell/src/lifecycle/commands.rs` expected read-only confirmation only; no diff under `crates/editor-actions/**`
+   - `rg -n "^152\\.|^153\\.|NEEDS_HUMAN_RECORDED" .ai/dispatch.tasks.md`
+   - `git diff --name-only`
+   - `git diff --check`
+
+   **Halt conditions:**
+   - The inspection API cannot be implemented without editing any MUST-NOT
+     path, widening CAD-core/cad-projection, touching render-path/GPU upload
+     behavior, or routing through menus, shortcuts, plugins, CommandBus,
+     save/load, undo/dirty/save-mark, camera, viewport, or UI/host code.
+   - The implementation would need to mutate CAD graph/projection/world,
+     selection, camera, render assets, or GPU state while answering an
+     inspection query.
+   - The snapshot cannot distinguish the done-criteria states without
+     broadening the first-cuboid product boundary into multi-root composition,
+     deletion, transforms, parameter editing, global undo, persistence, or
+     render refresh work.
+   - Tests require constructing real `wgpu` resources instead of staying
+     strictly headless.
+   - Appending exactly one task 153 or one `NEEDS_HUMAN_RECORDED:` marker would
+     disturb existing task provenance.
