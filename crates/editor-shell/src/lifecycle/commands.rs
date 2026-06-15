@@ -258,7 +258,37 @@ impl From<ProjectionError> for CadCuboidAddError {
     }
 }
 
+fn cad_entity_has_live_brep_handle(cad_world: &KernelWorld, cad_entity: KernelEntityId) -> bool {
+    cad_world
+        .entity(cad_entity)
+        .map(|entity| entity.get::<BRepHandle>().is_some())
+        .unwrap_or(false)
+}
+
 impl EditorShell {
+    /// Clear the stored single-CAD entity id only when it no longer resolves
+    /// to a live CAD-world entity carrying [`BRepHandle`].
+    ///
+    /// This is intentionally narrower than projection cleanup: render-mesh
+    /// availability is inspection data, not the stale-id predicate. The helper
+    /// mutates only `self.cad_entity`.
+    pub fn clear_stale_tracked_cad_entity(&mut self) -> bool {
+        let Some(cad_entity) = self.cad_entity else {
+            return false;
+        };
+        let tracked_entity_live = self
+            .cad_world
+            .as_ref()
+            .map(|cad_world| cad_entity_has_live_brep_handle(cad_world, cad_entity))
+            .unwrap_or(false);
+        if tracked_entity_live {
+            return false;
+        }
+
+        self.cad_entity = None;
+        true
+    }
+
     /// Inspect the shell's current CAD scene shape without mutating editor state.
     ///
     /// The uploaded mesh count is a pure read of `self.meshes.len()`. This method
@@ -298,10 +328,7 @@ impl EditorShell {
         let tracked_cad_entity_live = if let (Some(cad_world), Some(cad_entity)) =
             (self.cad_world.as_ref(), self.cad_entity)
         {
-            cad_world
-                .entity(cad_entity)
-                .map(|entity| entity.get::<BRepHandle>().is_some())
-                .unwrap_or(false)
+            cad_entity_has_live_brep_handle(cad_world, cad_entity)
         } else {
             false
         };

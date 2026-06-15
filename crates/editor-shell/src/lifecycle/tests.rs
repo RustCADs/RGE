@@ -35,9 +35,9 @@ use winit::event::MouseScrollDelta;
 
 use super::window_title::editor_window_title;
 use super::{
-    CadCuboidAddError, CadSceneInspection, EditorShell, SaveSource, UnsavedChangesContext,
-    UnsavedChangesDecision, UnsavedChangesDialog, UnsavedChangesRequest, UnsavedChangesSourceKind,
-    ViewportCursorGrabTestEvent,
+    CadCuboidAddError, CadCuboidAddResult, CadSceneInspection, EditorShell, SaveSource,
+    UnsavedChangesContext, UnsavedChangesDecision, UnsavedChangesDialog, UnsavedChangesRequest,
+    UnsavedChangesSourceKind, ViewportCursorGrabTestEvent,
 };
 use crate::audit::AuditEvent;
 use crate::coord::FaceSelection;
@@ -2312,30 +2312,78 @@ fn cad_render_meshes(shell: &EditorShell) -> Vec<rge_brep_render::RenderMesh> {
         .collect()
 }
 
+fn fresh_empty_cad_scene_inspection() -> CadSceneInspection {
+    CadSceneInspection {
+        cad_graph_present: false,
+        cad_world_present: false,
+        cad_projection_present: false,
+        tracked_cad_entity_present: false,
+        tracked_cad_entity_live: false,
+        tracked_cad_entity_render_mesh_present: false,
+        cad_graph_head: None,
+        cad_graph_root_present: false,
+        cad_graph_node_count: 0,
+        live_brep_entity_count: 0,
+        projection_render_mesh_count: 0,
+        prebuilt_render_mesh_count: 0,
+        uploaded_mesh_count: 0,
+        current_scene_frameable: false,
+        selected_cad_scene_frameable: false,
+    }
+}
+
+fn restore_to_pre_add_head_and_despawn_cuboid(shell: &mut EditorShell, added: CadCuboidAddResult) {
+    use rge_cad_core::Tolerance;
+
+    {
+        let graph = shell.cad_graph.as_mut().expect("add installs a CAD graph");
+        graph
+            .restore_to(added.pre_add_head)
+            .expect("restore_to accepts the captured pre-add checkpoint");
+    }
+
+    {
+        let projection = shell.projection.as_mut().expect("add installs projection");
+        let cad_world = shell.cad_world.as_mut().expect("add installs CAD world");
+        assert!(
+            projection.despawn_brep_entity(cad_world, added.entity),
+            "projection cleanup despawns the entity spawned by the add"
+        );
+        let tolerance =
+            Tolerance::new(0.001).expect("literal 0.001 tolerance is positive and finite");
+        let cad_graph = shell
+            .cad_graph
+            .as_ref()
+            .expect("CAD graph remains installed");
+        projection
+            .tick(cad_world, cad_graph, tolerance)
+            .expect("projection tick with no entities is a valid cleanup state");
+    }
+}
+
 #[test]
 fn cad_scene_inspection_reports_fresh_empty_shell() {
     let shell = EditorShell::new();
 
     assert_eq!(
         shell.cad_scene_inspection(),
-        CadSceneInspection {
-            cad_graph_present: false,
-            cad_world_present: false,
-            cad_projection_present: false,
-            tracked_cad_entity_present: false,
-            tracked_cad_entity_live: false,
-            tracked_cad_entity_render_mesh_present: false,
-            cad_graph_head: None,
-            cad_graph_root_present: false,
-            cad_graph_node_count: 0,
-            live_brep_entity_count: 0,
-            projection_render_mesh_count: 0,
-            prebuilt_render_mesh_count: 0,
-            uploaded_mesh_count: 0,
-            current_scene_frameable: false,
-            selected_cad_scene_frameable: false,
-        },
+        fresh_empty_cad_scene_inspection(),
         "a fresh headless shell has no CAD/projection/renderability state"
+    );
+}
+
+#[test]
+fn clear_stale_tracked_cad_entity_fresh_shell_noop_preserves_empty_inspection() {
+    let mut shell = EditorShell::new();
+
+    assert!(
+        !shell.clear_stale_tracked_cad_entity(),
+        "fresh shells have no tracked CAD entity id to clear"
+    );
+    assert_eq!(
+        shell.cad_scene_inspection(),
+        fresh_empty_cad_scene_inspection(),
+        "fresh-shell cleanup is a no-op and inspection remains the empty snapshot"
     );
 }
 
@@ -2394,6 +2442,29 @@ fn cad_scene_inspection_reports_first_cuboid_add() {
     assert!(
         shell.cad_scene_inspection().selected_cad_scene_frameable,
         "selecting the cuboid entity makes selected-CAD bounds frameable"
+    );
+}
+
+#[test]
+fn clear_stale_tracked_cad_entity_live_first_cuboid_noop() {
+    let mut shell = EditorShell::new();
+    let added = shell
+        .add_cad_cuboid_to_empty_scene()
+        .expect("fresh shell is an empty CAD scene");
+    let before = shell.cad_scene_inspection();
+    assert!(before.tracked_cad_entity_present);
+    assert!(before.tracked_cad_entity_live);
+    assert!(before.tracked_cad_entity_render_mesh_present);
+
+    assert!(
+        !shell.clear_stale_tracked_cad_entity(),
+        "a tracked id that still resolves to a live BRepHandle entity is not stale"
+    );
+    assert_eq!(shell.cad_entity, Some(added.entity));
+    assert_eq!(
+        shell.cad_scene_inspection(),
+        before,
+        "live tracked-id cleanup is a no-op and inspection remains consistent"
     );
 }
 
@@ -2492,6 +2563,55 @@ fn cad_scene_inspection_reports_restore_despawn_cleanup() {
     assert!(
         !shell.cad_scene_inspection().selected_cad_scene_frameable,
         "selecting the cleaned-up entity does not create stale selected-CAD bounds"
+    );
+}
+
+#[test]
+fn clear_stale_tracked_cad_entity_stale_after_restore_despawn_clears_tracked_id() {
+    let mut shell = EditorShell::new();
+    let added = shell
+        .add_cad_cuboid_to_empty_scene()
+        .expect("fresh shell is an empty CAD scene");
+
+    restore_to_pre_add_head_and_despawn_cuboid(&mut shell, added);
+
+    let before = shell.cad_scene_inspection();
+    assert!(
+        before.tracked_cad_entity_present,
+        "the shell still stores the formerly projected CAD entity id"
+    );
+    assert!(
+        !before.tracked_cad_entity_live,
+        "the stored CAD entity id no longer resolves to a live BRepHandle entity"
+    );
+    assert!(
+        !before.tracked_cad_entity_render_mesh_present,
+        "the stale tracked CAD entity has no render_mesh_for mesh"
+    );
+
+    assert!(
+        shell.clear_stale_tracked_cad_entity(),
+        "stale tracked CAD entity id is cleared"
+    );
+    assert_eq!(shell.cad_entity, None);
+    let after = shell.cad_scene_inspection();
+    assert!(
+        !after.tracked_cad_entity_present,
+        "cleanup clears the stored tracked CAD entity id"
+    );
+    assert!(!after.tracked_cad_entity_live);
+    assert!(!after.tracked_cad_entity_render_mesh_present);
+    assert_eq!(
+        after.cad_graph_head, before.cad_graph_head,
+        "cleanup does not restore or roll back graph state"
+    );
+    assert_eq!(
+        after.live_brep_entity_count, before.live_brep_entity_count,
+        "cleanup does not despawn CAD-world entities"
+    );
+    assert_eq!(
+        after.projection_render_mesh_count, before.projection_render_mesh_count,
+        "cleanup does not tick or mutate projection state"
     );
 }
 
