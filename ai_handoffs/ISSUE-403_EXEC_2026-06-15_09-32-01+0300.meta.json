@@ -1,0 +1,28 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-403",
+    "packet_type": "EXEC",
+    "author": "Executor / Codex",
+    "timestamp": "2026-06-15_09-32-01+0300",
+    "related_files": [
+                          ".ai/dispatch.tasks.md - appended the required ISSUE-403 NEEDS_HUMAN recommendation marker/block",
+                          "crates/editor-actions/src/lib.rs - read-only CommandBus contract reference",
+                          "crates/editor-actions/src/action.rs - read-only Action trait/context reference",
+                          "crates/editor-actions/src/bus.rs - read-only submit/undo/redo/dirty/save-mark reference",
+                          "crates/editor-actions/src/undo_stack.rs - read-only SaveMark/is_dirty reference",
+                          "crates/editor-shell/src/lifecycle/commands.rs - read-only shell CommandBus wrapper and SetTimeScale action reference",
+                          "crates/editor-shell/src/lifecycle/mod.rs - read-only CAD state, lifecycle reset, selection, and selected-CAD bounds reference",
+                          "crates/editor-shell/src/lifecycle/open_request.rs - read-only open/load authority reference",
+                          "crates/editor-shell/src/lifecycle/save_request.rs - read-only save/save-mark authority reference",
+                          "crates/editor-shell/src/render_path.rs - read-only menu routing and render upload reference",
+                          "crates/cad-projection/src/lib.rs - read-only projection/tick/spawn/despawn authority reference",
+                          "crates/cad-projection/src/render_adapter.rs - read-only render_mesh_for reference",
+                          "crates/cad-core/src/checkpoints/mod.rs - read-only CadGraph transaction reference",
+                          "crates/cad-core/src/graph/operator_graph.rs - read-only operator graph mutation reference",
+                          "crates/cad-core/src/operators/mod.rs - read-only operator variant reference"
+                      ],
+    "status": "AWAITING_REVIEW",
+    "handoff_status": "COMPLETE",
+    "next_role": "REVIEWER_AI",
+    "exit_code": 0
+}
