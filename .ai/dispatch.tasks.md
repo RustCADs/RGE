@@ -15753,7 +15753,7 @@ Recommendation for human approval
    - Appending exactly one `NEEDS_HUMAN_RECORDED:` marker plus the required
      recommendation block would disturb existing task provenance.
 
-   NEEDS_HUMAN_RECORDED: 2026-06-16 - stale tracked-CAD cleanup helper is implemented and tested, but approving its first production caller needs a human decision
+RESOLVED 2026-06-16 (approved via task 158) - prior NEEDS_HUMAN stale tracked-CAD cleanup caller recommendation, kept for provenance:
 
    Recommendation for human approval:
    - Proposed next feature: wire `EditorShell::clear_stale_tracked_cad_entity`
@@ -15785,3 +15785,123 @@ Recommendation for human approval
      without changing graph/projection cleanup policy, render behavior,
      CommandBus/undo/dirty/save authority, UI routing, CAD-core, or
      cad-projection.
+
+158. **Wire stale tracked-CAD cleanup into the first-cuboid empty-scene preflight (editor-shell only).**
+   Give `EditorShell::clear_stale_tracked_cad_entity` exactly one production
+   caller by invoking it inside `EditorShell::add_cad_cuboid_to_empty_scene`
+   before the existing empty-scene guard rejects `self.cad_entity`. This task
+   normalizes only a stale stored `cad_entity` residue. It must not make any
+   installed CAD graph, CAD projection, CAD world, render-only content, uploaded
+   mesh state, or other partial/non-empty scene eligible for first-cuboid add.
+
+   The intended behavior is deliberately narrow:
+   - A fresh shell still adds one default cuboid exactly as before.
+   - A shell whose only non-empty CAD state is a stale stored `cad_entity` is
+     normalized by `clear_stale_tracked_cad_entity()` and may then proceed
+     through the current first-cuboid add path.
+   - A shell with a live tracked `cad_entity` carrying `BRepHandle`, or with any
+     installed CAD graph/projection/world/render state, still returns
+     `CadCuboidAddError::SceneNotEmpty`.
+   - Render-mesh absence alone must not become a cleanup predicate; cleanup is
+     still the helper's liveness-only `BRepHandle` predicate.
+
+   **Self-re-arm (final step, required) - BRIEF-ENFORCED PAUSE (operator decision):**
+   After implementation and verification, append exactly one bounded
+   source/docs-read-only AUDIT task as task 159 - an audit of the post-stale-id
+   preflight-normalization boundary. Task 159 is a GATED audit: it MUST NOT
+   append task 160 or any feature/implementation task, and MUST NOT self-re-arm
+   with a follow-up feature. Instead, task 159's final step MUST record its
+   conclusion as a single `NEEDS_HUMAN_RECORDED: <ISO-date> - <reason>` marker
+   line immediately followed by a `Recommendation for human approval` block
+   covering proposed next feature, exact edit surface, risks, verification, and
+   why it is the smallest coherent next step. The autonomous driver then detects
+   the marker, files a `needs-human` review issue, and pauses for operator
+   approval. Task 159 must require dispatcher-provided GitHub-state snapshot
+   evidence for queue/already-filed-task claims, compare current source, and
+   carry this same gated-audit instruction (record NEEDS_HUMAN, do NOT append a
+   feature) into the task 159 block it authors. Edit `.ai/dispatch.tasks.md` to
+   do this.
+
+   **MAY edit:**
+   - `crates/editor-shell/src/lifecycle/commands.rs`
+   - `crates/editor-shell/src/lifecycle/tests.rs`
+   - `crates/editor-shell/src/lifecycle/mod.rs` only if an adjacent lifecycle
+     export or route adjustment is strictly required
+   - `.ai/dispatch.tasks.md`
+   - generated ISSUE-<n> handoff/audit/log artifacts for the dispatch
+
+   **MUST NOT edit:**
+   - `crates/editor-actions/**`
+   - `crates/cad-core/**`
+   - `crates/cad-projection/**`
+   - `crates/editor-shell/src/render_path.rs`
+   - `crates/editor-shell/src/lifecycle/open_request.rs`
+   - `crates/editor-shell/src/lifecycle/save_request.rs`
+   - `crates/editor-shell/src/lifecycle/save_source.rs`
+   - `crates/editor-ui/**`
+   - `crates/editor-egui-host/**`
+   - `editor/**`
+   - `runtime/**`
+   - `kernel/**`
+   - `tools/**`
+   - Cargo manifests or `Cargo.lock`
+   - workflows, dispatch automation, guard, queue, scheduler, watcher,
+     verification, health/trend scripts, schemas, ADR files,
+     architecture-lint rules/config, packet templates, or unrelated existing
+     handoff/log artifacts
+   - CommandBus/action routing, undo/redo behavior, dirty/save-mark behavior,
+     save/load/open/close behavior, graph restore/rollback policy, projection
+     despawn policy, entity deletion policy, CAD-core behavior, cad-projection
+     behavior, render architecture, render-path behavior, mesh-upload behavior,
+     GPU resource lifetime behavior, camera/navigation behavior, camera math,
+     viewport hit testing, face-pick policy, UI/host behavior, plugin routing,
+     shortcut routing, or command-palette behavior
+
+   **Done criteria:**
+   - `add_cad_cuboid_to_empty_scene` invokes the existing
+     `clear_stale_tracked_cad_entity` helper before the current empty-scene
+     guard evaluates `self.cad_entity`.
+   - The call path clears only stale `self.cad_entity` state and does not
+     mutate CAD graph/projection/world state, selection, camera, CommandBus,
+     dirty/save state, render assets, GPU state, open/save/load state, or UI/host
+     routing.
+   - A focused lifecycle test proves a stale-`cad_entity`-only shell can add the
+     first cuboid after preflight normalization.
+   - Existing rejection behavior remains intact for live tracked CAD entities,
+     installed CAD graph/projection/world state, render-only content, uploaded
+     meshes, and other partial/non-empty scenes.
+   - Existing `clear_stale_tracked_cad_entity` and `cad_scene_inspection`
+     behavior remains liveness-only and read-only where applicable.
+   - Exactly one bounded next-task-source audit task 159 is appended per the
+     Self-rearm protocol, carrying its own `MAY edit`, `MUST NOT edit`, `Done
+     criteria`, `Verification`, `Halt conditions`, dispatcher-snapshot evidence
+     rule, and copied gated-audit requirement; or a single
+     `NEEDS_HUMAN_RECORDED:` line is appended instead. No other task is added.
+
+   **Verification:**
+   - `cargo test -p rge-editor-shell --lib add_cad_cuboid_to_empty_scene --no-fail-fast`
+   - `cargo test -p rge-editor-shell --lib clear_stale_tracked_cad_entity --no-fail-fast`
+   - `cargo test -p rge-editor-shell --lib cad_scene_inspection --no-fail-fast`
+   - `cargo check -p rge-editor-shell --lib`
+   - `cargo +nightly fmt --all -- --check`
+   - `rg -n "add_cad_cuboid_to_empty_scene|clear_stale_tracked_cad_entity|cad_entity_has_live_brep_handle|tracked_cad_entity_live|tracked_cad_entity_render_mesh_present|CadSceneInspection|cad_scene_inspection" crates/editor-shell/src/lifecycle`
+   - `rg -n "CommandBus|Action|submit\\(|undo_command|redo_command|mark_saved_command" crates/editor-actions/src crates/editor-shell/src/lifecycle/commands.rs` expected read-only confirmation only; no diff under `crates/editor-actions/**`
+   - `rg -n "^157\\.|^158\\.|^159\\.|^160\\.|NEEDS_HUMAN_RECORDED" .ai/dispatch.tasks.md`
+   - `git diff --name-only`
+   - `git diff --check`
+
+   **Halt conditions:**
+   - The preflight normalization cannot be implemented by calling the existing
+     helper before the existing `cad_entity` empty-scene check.
+   - The feature requires editing CAD-core, cad-projection, render-path, mesh
+     upload, GPU lifetime, UI/host routing, CommandBus, undo/dirty/save-load,
+     open/close, camera, viewport, or another MUST-NOT surface.
+   - The feature would make installed CAD graph/projection/world state,
+     render-only content, uploaded meshes, or another partial/non-empty scene
+     eligible for first-cuboid add.
+   - The implementation would clear anything other than `self.cad_entity`, or
+     would treat render-mesh absence alone as stale tracked-CAD state.
+   - Tests require constructing real `wgpu` resources instead of staying
+     strictly headless.
+   - Appending exactly one task 159 or one `NEEDS_HUMAN_RECORDED:` marker would
+     disturb existing task provenance.
