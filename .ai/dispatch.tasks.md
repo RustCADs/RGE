@@ -16235,3 +16235,10 @@ Recommendation for human approval:
      more than one coherent next feature boundary.
    - Recording exactly one `NEEDS_HUMAN_RECORDED:` marker plus the required
      recommendation block would disturb existing task provenance.
+   NEEDS_HUMAN_RECORDED: 2026-06-18 - Audit confirms editor-actions remains generic while editor-shell owns the bounded first CAD cuboid CommandBus mutation; expanding beyond add/undo/redo needs human approval.
+   Recommendation for human approval:
+   - Proposed next feature: add a headless, shell-owned, CommandBus-routed delete-current-CAD-cuboid action for the single tracked cuboid created by `add_cad_cuboid_to_empty_scene`.
+   - Exact edit surface: `crates/editor-shell/src/lifecycle/commands.rs` and `crates/editor-shell/src/lifecycle/tests.rs` only, plus generated current-dispatch handoff/log artifacts; no `rge-editor-actions`, CAD crates, render path, UI/menu/shortcut, save/load, Cargo, workflow, schema, script, docs, or task-brief expansion unless a new task explicitly authorizes it.
+   - Risks: deleting a CAD root must keep `CadGraph`, `CadProjection`, `cad_world`, `cad_entity`, selection, dirty/save-mark cursor, and stale render-mesh lookup coherent; this should remain single-root/single-tracked-entity only.
+   - Verification: targeted lifecycle tests for delete, undo, redo, rejected delete on empty or stale state, no stale `render_mesh_for` lookup, bus cursor/save-mark movement, plus `cargo test -p rge-editor-shell --lib <targeted CAD delete filters>` and `cargo check -p rge-editor-shell`.
+   - Smallest coherent next step: it reuses the shell-owned action/context boundary proven by task 160 and this audit, exercises the same graph/projection/world cleanup invariants from the bus-routed add, and does not require generic bus changes or UI/render/persistence authority.

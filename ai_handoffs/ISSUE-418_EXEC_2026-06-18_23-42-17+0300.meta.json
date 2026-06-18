@@ -1,0 +1,23 @@
+{
+    "schema_version": "handoff-sidecar-v1",
+    "dispatch_id": "ISSUE-418",
+    "packet_type": "EXEC",
+    "author": "Executor / Codex",
+    "timestamp": "2026-06-18_23-42-17+0300",
+    "related_files": [
+                          ".ai/dispatch.tasks.md - added the task 161 human-decision marker and immediately following recommendation block only.",
+                          "ai_handoffs/ISSUE-418_TASK_2026-06-18_23-22-33+0300.md - active task packet consumed for scope and dispatcher snapshot facts.",
+                          "crates/editor-actions/src/action.rs - read-only audit evidence for generic ActionContext, ActionContextFamily, ActionView, ActionViewRef, and Action.",
+                          "crates/editor-actions/src/bus.rs - read-only audit evidence for generic BusEntry and CommandBus.",
+                          "crates/editor-actions/src/undo_stack.rs - read-only audit evidence for generic UndoStack and dirty/save-mark state.",
+                          "crates/editor-actions/src/lib.rs - read-only audit evidence for generic public re-exports.",
+                          "crates/editor-actions/tests/test_actions.rs - read-only audit evidence for generic ActionView test usage.",
+                          "crates/editor-shell/src/lifecycle/commands.rs - read-only audit evidence for shell-owned CAD action/context and bus routing.",
+                          "crates/editor-shell/src/lifecycle/mod.rs - read-only audit evidence for the shell-typed CommandBus field.",
+                          "crates/editor-shell/src/lifecycle/tests.rs - read-only audit evidence for bus-routed CAD add undo/redo and rejected-add coverage."
+                      ],
+    "status": "AWAITING_REVIEW",
+    "handoff_status": "COMPLETE",
+    "next_role": "REVIEWER_AI",
+    "exit_code": 0
+}
