@@ -16375,3 +16375,71 @@ Recommendation for human approval:
    `NEEDS_HUMAN_RECORDED` marker UNLESS it cannot safely append the task 163 audit -
    appending task 163 is the required primary outcome. Edit `.ai/dispatch.tasks.md`
    to do this.
+
+163. **GATED audit post-delete CAD mutation boundary before approving any next feature.**
+
+   Audit the post-delete CAD mutation boundary after task 162: delete is routed
+   through CommandBus, `editor-actions` remains generic, and the shell-owned
+   tracked-entity lifecycle remains coherent across add+delete+undo+redo.
+
+   **Scope guard (operator decision - non-negotiable):**
+   - READ source/docs only for the audit. Do not implement a feature.
+   - MAY inspect `crates/editor-shell/src/lifecycle/commands.rs`,
+     `crates/editor-shell/src/lifecycle/tests.rs`, `.ai/dispatch.tasks.md`, and
+     generated current-dispatch handoff/audit/log artifacts.
+   - MAY inspect `crates/editor-actions/src` and `crates/editor-actions/Cargo.toml`
+     only to verify the generic-context boundary stayed frozen.
+   - MUST NOT edit production source, tests, Cargo metadata, scripts, schemas,
+     workflows, packet templates, or unrelated handoff/log artifacts.
+   - MUST NOT append task 164 or any feature task.
+
+   **Audit questions:**
+   - Does `EditorShell::delete_current_cad_cuboid` submit an immutable
+     shell-owned action through the existing generic `CommandBus` context?
+   - Does the action avoid any `rge-editor-actions` CAD/shell/projection coupling?
+   - Are add+delete+undo+redo coherent for graph head, tracked entity id,
+     projection cache, CAD-world liveness, selection pruning, dirty state, and bus
+     cursor movement?
+   - Are rejected empty, stale, partial, non-live, and non-empty-parent states
+     rejected without mutation or undo-stack growth?
+
+   **Verification:**
+   - `cargo test -p rge-editor-shell --lib -- delete_current_cad_cuboid`
+   - `cargo test -p rge-editor-shell --lib -- add_cad_cuboid_to_empty_scene`
+   - `cargo test -p rge-editor-shell --lib -- clear_stale_tracked_cad_entity`
+   - `cargo test -p rge-editor-shell --lib -- cad_scene_inspection`
+   - `cargo check -p rge-editor-actions -p rge-editor-shell`
+   - `cargo +nightly fmt --all -- --check`
+   - `rg -n "editor_shell|editor-shell|cad_core|cad-core|cad_projection|cad-projection|CadGraph|CadProjection|cad_world" crates/editor-actions/src crates/editor-actions/Cargo.toml`
+     EXPECTING NO MATCHES.
+   - `rg -n "^162\.|^163\.|^164\.|NEEDS_HUMAN_RECORDED" .ai/dispatch.tasks.md`
+     EXPECTING task 162 and exactly one task 163; no task 164; no task-162
+     direct marker.
+   - `git diff --name-only`
+   - `git diff --check`
+
+   **Done criteria:**
+   - A source/docs-read-only audit records whether the task 162 implementation
+     preserved the CAD mutation boundary and generic action contract.
+   - Any risks are classified as audit findings only; no correction is performed
+     without a fresh Planner packet.
+   - The final audit step records exactly one
+     `NEEDS_HUMAN_RECORDED: <ISO-date> - <reason>` marker plus a
+     "Recommendation for human approval" block (proposed next feature, exact edit
+     surface, risks, verification, why smallest).
+   - No task 164 or feature task is appended.
+
+   **Self-re-arm (final step, required) - BRIEF-ENFORCED PAUSE (operator decision):**
+   After implementation and verification, APPEND exactly one bounded
+   source/docs-read-only AUDIT task as task 163 - an audit of the post-delete
+   CAD-mutation boundary (delete routed through CommandBus, editor-actions still
+   generic, shell-owned tracked-entity lifecycle coherent across
+   add+delete+undo+redo). Task 163 is a GATED audit: it MUST NOT append task 164 or
+   any feature task, and its final step MUST record the next
+   `NEEDS_HUMAN_RECORDED: <ISO-date> - <reason>` marker plus a "Recommendation for
+   human approval" block (proposed next feature, exact edit surface, risks,
+   verification, why smallest). Carry this gated-audit instruction verbatim into
+   the task 163 block it authors. Task 162 itself MUST NOT directly record a
+   `NEEDS_HUMAN_RECORDED` marker UNLESS it cannot safely append the task 163 audit
+   - appending task 163 is the required primary outcome. Edit
+   `.ai/dispatch.tasks.md` to do this.

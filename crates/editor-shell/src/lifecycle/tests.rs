@@ -29,10 +29,11 @@
 
 use std::time::{Duration, Instant};
 
-use rge_cad_core::{BRepFaceId, BRepOwnerId, CuboidFaceTag};
+use rge_cad_core::{BRepFaceId, BRepOwnerId, CuboidFaceTag, OperatorNode, TransformOp};
 use winit::dpi::PhysicalPosition;
 use winit::event::MouseScrollDelta;
 
+use super::commands::CadCuboidDeleteError;
 use super::window_title::editor_window_title;
 use super::{
     CadCuboidAddError, CadCuboidAddResult, CadSceneInspection, EditorShell, SaveSource,
@@ -2312,6 +2313,31 @@ fn cad_render_meshes(shell: &EditorShell) -> Vec<rge_brep_render::RenderMesh> {
         .collect()
 }
 
+fn cad_cuboid_face_selection(entity: rge_kernel_ecs::EntityId) -> FaceSelection {
+    let owner = BRepOwnerId::from_bytes([0x42; 16]);
+    FaceSelection {
+        entity,
+        owner,
+        face_id: BRepFaceId::for_cuboid_face(owner, CuboidFaceTag::PosX),
+    }
+}
+
+fn assert_no_cad_lookup_for(shell: &EditorShell, entity: rge_kernel_ecs::EntityId) {
+    let projection = shell
+        .projection
+        .as_ref()
+        .expect("CAD shell carries projection");
+    let cad_world = shell.cad_world.as_ref().expect("CAD shell carries world");
+    assert!(
+        cad_world.entity(entity).is_none(),
+        "deleted CAD entity must not remain live in the CAD world"
+    );
+    assert!(
+        projection.render_mesh_for(entity, cad_world).is_none(),
+        "deleted CAD entity must not resolve through render_mesh_for"
+    );
+}
+
 fn fresh_empty_cad_scene_inspection() -> CadSceneInspection {
     CadSceneInspection {
         cad_graph_present: false,
@@ -2537,7 +2563,11 @@ fn bus_routed_cad_cuboid_add_undo_redo_keeps_scene_coherent_and_moves_dirty_mark
     assert!(after_redo.tracked_cad_entity_present);
     assert!(after_redo.tracked_cad_entity_live);
     assert!(after_redo.tracked_cad_entity_render_mesh_present);
-    assert_ne!(after_redo.cad_graph_head, Some(added.pre_add_head));
+    assert_eq!(
+        after_redo.cad_graph_head,
+        Some(added.committed_head),
+        "redo reuses the original add checkpoint so later stack entries can replay"
+    );
     assert!(after_redo.cad_graph_root_present);
     assert_eq!(after_redo.cad_graph_node_count, 1);
     assert_eq!(after_redo.live_brep_entity_count, 1);
@@ -2597,6 +2627,324 @@ fn bus_routed_cad_cuboid_rejected_non_empty_add_does_not_grow_bus_stack() {
         before,
         "rejected add leaves CAD inspection state unchanged"
     );
+}
+
+#[test]
+fn delete_current_cad_cuboid_deletes_tracked_entity_prunes_selection_and_moves_bus() {
+    let mut shell = EditorShell::new();
+    let added = shell
+        .add_cad_cuboid_to_empty_scene()
+        .expect("fresh shell is an empty CAD scene");
+    let selected_face = cad_cuboid_face_selection(added.entity);
+    shell.coord_mut().selection.add(added.entity);
+    shell.coord_mut().face_selection.add(selected_face);
+    assert!(
+        shell.cad_scene_inspection().selected_cad_scene_frameable,
+        "selected cuboid is frameable before delete"
+    );
+    shell.mark_saved_command();
+
+    let deleted = shell
+        .delete_current_cad_cuboid()
+        .expect("live tracked single cuboid can be deleted");
+
+    assert_eq!(deleted.from_head, added.committed_head);
+    assert_eq!(deleted.empty_parent_head, added.pre_add_head);
+    assert_eq!(deleted.deleted_entity, added.entity);
+    assert_eq!(
+        shell.command_bus().stack().len(),
+        2,
+        "delete is recorded as a second CommandBus action after add"
+    );
+    assert_eq!(shell.command_bus().stack().cursor(), 2);
+    assert!(
+        shell.command_bus().is_dirty(),
+        "delete moves away from the saved post-add cursor"
+    );
+
+    let after_delete = shell.cad_scene_inspection();
+    assert!(after_delete.cad_graph_present);
+    assert!(after_delete.cad_world_present);
+    assert!(after_delete.cad_projection_present);
+    assert!(!after_delete.tracked_cad_entity_present);
+    assert!(!after_delete.tracked_cad_entity_live);
+    assert!(!after_delete.tracked_cad_entity_render_mesh_present);
+    assert_eq!(after_delete.cad_graph_head, Some(added.pre_add_head));
+    assert!(!after_delete.cad_graph_root_present);
+    assert_eq!(after_delete.cad_graph_node_count, 0);
+    assert_eq!(after_delete.live_brep_entity_count, 0);
+    assert_eq!(after_delete.projection_render_mesh_count, 0);
+    assert!(!after_delete.current_scene_frameable);
+    assert!(!after_delete.selected_cad_scene_frameable);
+    assert!(
+        !shell.coord().selection.contains(added.entity),
+        "entity selection referencing the deleted CAD entity is pruned"
+    );
+    assert!(
+        shell.coord().face_selection.is_empty(),
+        "face selection referencing the deleted CAD entity is pruned"
+    );
+    assert_no_cad_lookup_for(&shell, added.entity);
+}
+
+#[test]
+fn delete_current_cad_cuboid_undo_redo_restores_fresh_entity_and_cleans_redo() {
+    let mut shell = EditorShell::new();
+    let added = shell
+        .add_cad_cuboid_to_empty_scene()
+        .expect("fresh shell is an empty CAD scene");
+    let deleted = shell
+        .delete_current_cad_cuboid()
+        .expect("live tracked single cuboid can be deleted");
+    shell.mark_saved_command();
+
+    shell.undo_command().expect("undo bus-routed CAD delete");
+
+    assert_eq!(shell.command_bus().stack().cursor(), 1);
+    assert!(
+        shell.command_bus().is_dirty(),
+        "undo delete moves away from the saved post-delete cursor"
+    );
+    let restored_entity = shell
+        .cad_entity
+        .expect("undo tracks the freshly respawned CAD entity");
+    assert_ne!(
+        restored_entity, deleted.deleted_entity,
+        "undo must not resurrect the old deleted entity id"
+    );
+    let after_undo = shell.cad_scene_inspection();
+    assert_eq!(after_undo.cad_graph_head, Some(deleted.from_head));
+    assert!(after_undo.cad_graph_root_present);
+    assert_eq!(after_undo.cad_graph_node_count, 1);
+    assert_eq!(after_undo.live_brep_entity_count, 1);
+    assert_eq!(after_undo.projection_render_mesh_count, 1);
+    assert!(after_undo.tracked_cad_entity_present);
+    assert!(after_undo.tracked_cad_entity_live);
+    assert!(after_undo.tracked_cad_entity_render_mesh_present);
+    assert!(after_undo.current_scene_frameable);
+    assert_no_cad_lookup_for(&shell, deleted.deleted_entity);
+    {
+        let projection = shell
+            .projection
+            .as_ref()
+            .expect("undo leaves projection installed");
+        let cad_world = shell
+            .cad_world
+            .as_ref()
+            .expect("undo leaves CAD world installed");
+        assert!(
+            projection
+                .render_mesh_for(restored_entity, cad_world)
+                .is_some(),
+            "fresh undo entity is projected"
+        );
+    }
+
+    shell.coord_mut().selection.add(restored_entity);
+    shell
+        .coord_mut()
+        .face_selection
+        .add(cad_cuboid_face_selection(restored_entity));
+    assert!(
+        shell.cad_scene_inspection().selected_cad_scene_frameable,
+        "restored cuboid selection is frameable before redo"
+    );
+
+    shell.redo_command().expect("redo bus-routed CAD delete");
+
+    assert_eq!(shell.command_bus().stack().cursor(), 2);
+    assert!(
+        !shell.command_bus().is_dirty(),
+        "redo delete returns to the saved post-delete cursor"
+    );
+    let after_redo = shell.cad_scene_inspection();
+    assert_eq!(after_redo.cad_graph_head, Some(added.pre_add_head));
+    assert!(!after_redo.tracked_cad_entity_present);
+    assert_eq!(after_redo.live_brep_entity_count, 0);
+    assert_eq!(after_redo.projection_render_mesh_count, 0);
+    assert!(!after_redo.current_scene_frameable);
+    assert!(!after_redo.selected_cad_scene_frameable);
+    assert!(
+        !shell.coord().selection.contains(restored_entity),
+        "redo prunes the fresh tracked entity selection"
+    );
+    assert!(
+        shell.coord().face_selection.is_empty(),
+        "redo prunes face selections for the fresh tracked entity"
+    );
+    assert_no_cad_lookup_for(&shell, restored_entity);
+    assert_no_cad_lookup_for(&shell, deleted.deleted_entity);
+}
+
+#[test]
+fn delete_current_cad_cuboid_redo_after_redone_add_cad_cuboid_to_empty_scene_succeeds() {
+    let mut shell = EditorShell::new();
+    let added = shell
+        .add_cad_cuboid_to_empty_scene()
+        .expect("fresh shell is an empty CAD scene");
+    let deleted = shell
+        .delete_current_cad_cuboid()
+        .expect("live tracked single cuboid can be deleted");
+
+    shell.undo_command().expect("undo bus-routed CAD delete");
+    assert_eq!(shell.command_bus().stack().cursor(), 1);
+    let undo_delete_entity = shell
+        .cad_entity
+        .expect("undo delete tracks a freshly respawned CAD entity");
+    assert_eq!(
+        shell.cad_scene_inspection().cad_graph_head,
+        Some(deleted.from_head)
+    );
+
+    shell.undo_command().expect("undo bus-routed CAD add");
+    assert_eq!(shell.command_bus().stack().cursor(), 0);
+    assert_no_cad_lookup_for(&shell, undo_delete_entity);
+    let after_undo_add = shell.cad_scene_inspection();
+    assert_eq!(after_undo_add.cad_graph_head, Some(added.pre_add_head));
+    assert!(!after_undo_add.tracked_cad_entity_present);
+    assert_eq!(after_undo_add.live_brep_entity_count, 0);
+    assert_eq!(after_undo_add.projection_render_mesh_count, 0);
+
+    shell.redo_command().expect("redo bus-routed CAD add");
+    assert_eq!(shell.command_bus().stack().cursor(), 1);
+    let redone_add_entity = shell
+        .cad_entity
+        .expect("redo add tracks the freshly respawned CAD entity");
+    let after_redo_add = shell.cad_scene_inspection();
+    assert_eq!(
+        after_redo_add.cad_graph_head,
+        Some(added.committed_head),
+        "redo add must restore the original checkpoint captured by delete"
+    );
+    assert!(after_redo_add.tracked_cad_entity_present);
+    assert!(after_redo_add.tracked_cad_entity_live);
+    assert!(after_redo_add.tracked_cad_entity_render_mesh_present);
+    assert_eq!(after_redo_add.live_brep_entity_count, 1);
+    assert_eq!(after_redo_add.projection_render_mesh_count, 1);
+
+    shell.coord_mut().selection.add(redone_add_entity);
+    shell
+        .coord_mut()
+        .face_selection
+        .add(cad_cuboid_face_selection(redone_add_entity));
+    assert!(
+        shell.cad_scene_inspection().selected_cad_scene_frameable,
+        "redone add entity is selected before final redo delete"
+    );
+
+    shell
+        .redo_command()
+        .expect("redo delete after redone add reuses the captured add checkpoint");
+
+    assert_eq!(shell.command_bus().stack().cursor(), 2);
+    assert_eq!(shell.command_bus().stack().len(), 2);
+    let after_redo_delete = shell.cad_scene_inspection();
+    assert_eq!(after_redo_delete.cad_graph_head, Some(added.pre_add_head));
+    assert!(!after_redo_delete.tracked_cad_entity_present);
+    assert!(!after_redo_delete.tracked_cad_entity_live);
+    assert!(!after_redo_delete.tracked_cad_entity_render_mesh_present);
+    assert!(!after_redo_delete.cad_graph_root_present);
+    assert_eq!(after_redo_delete.cad_graph_node_count, 0);
+    assert_eq!(after_redo_delete.live_brep_entity_count, 0);
+    assert_eq!(after_redo_delete.projection_render_mesh_count, 0);
+    assert!(!after_redo_delete.current_scene_frameable);
+    assert!(!after_redo_delete.selected_cad_scene_frameable);
+    assert!(
+        !shell.coord().selection.contains(redone_add_entity),
+        "final redo delete prunes selection for the redone add entity"
+    );
+    assert!(
+        shell.coord().face_selection.is_empty(),
+        "final redo delete prunes face selections for the redone add entity"
+    );
+    assert_no_cad_lookup_for(&shell, added.entity);
+    assert_no_cad_lookup_for(&shell, undo_delete_entity);
+    assert_no_cad_lookup_for(&shell, redone_add_entity);
+}
+
+fn assert_delete_current_cad_cuboid_rejected_without_mutation(shell: &mut EditorShell) {
+    let before = shell.cad_scene_inspection();
+    let selected_before: Vec<_> = shell.coord().selection.iter().collect();
+    let face_selected_before: Vec<_> = shell.coord().face_selection.iter().copied().collect();
+    let stack_len = shell.command_bus().stack().len();
+    let cursor = shell.command_bus().stack().cursor();
+    let dirty = shell.command_bus().is_dirty();
+
+    let err = shell
+        .delete_current_cad_cuboid()
+        .expect_err("invalid CAD state is rejected before bus stack growth");
+
+    assert!(
+        matches!(err, CadCuboidDeleteError::NotDeletable(_)),
+        "invalid CAD state should return NotDeletable, got {err:?}"
+    );
+    assert_eq!(shell.command_bus().stack().len(), stack_len);
+    assert_eq!(shell.command_bus().stack().cursor(), cursor);
+    assert_eq!(shell.command_bus().is_dirty(), dirty);
+    assert_eq!(
+        shell.cad_scene_inspection(),
+        before,
+        "rejected delete leaves CAD/render inspection unchanged"
+    );
+    assert_eq!(
+        shell.coord().selection.iter().collect::<Vec<_>>(),
+        selected_before,
+        "rejected delete leaves entity selection unchanged"
+    );
+    assert_eq!(
+        shell
+            .coord()
+            .face_selection
+            .iter()
+            .copied()
+            .collect::<Vec<_>>(),
+        face_selected_before,
+        "rejected delete leaves face selection unchanged"
+    );
+}
+
+#[test]
+fn delete_current_cad_cuboid_rejects_empty_stale_partial_and_multi_node_without_stack_growth() {
+    let mut empty = EditorShell::new();
+    assert_delete_current_cad_cuboid_rejected_without_mutation(&mut empty);
+
+    let mut stale = EditorShell::new();
+    let stale_added = stale
+        .add_cad_cuboid_to_empty_scene()
+        .expect("fresh shell is an empty CAD scene");
+    stale.coord_mut().selection.add(stale_added.entity);
+    restore_to_pre_add_head_and_despawn_cuboid(&mut stale, stale_added);
+    assert_delete_current_cad_cuboid_rejected_without_mutation(&mut stale);
+
+    let mut partial = EditorShell::new();
+    partial
+        .add_cad_cuboid_to_empty_scene()
+        .expect("fresh shell is an empty CAD scene");
+    partial.projection = None;
+    assert_delete_current_cad_cuboid_rejected_without_mutation(&mut partial);
+
+    let mut multi_node = EditorShell::new();
+    multi_node
+        .add_cad_cuboid_to_empty_scene()
+        .expect("fresh shell is an empty CAD scene");
+    {
+        let graph = multi_node
+            .cad_graph
+            .as_mut()
+            .expect("add installs a CAD graph");
+        graph
+            .begin_operation()
+            .expect("no CAD operation is in progress");
+        graph
+            .graph_mut()
+            .expect("operation is in progress")
+            .add_operator(OperatorNode::Transform(TransformOp::default()))
+            .expect("default transform operator can be inserted");
+        graph
+            .commit("issue-420-invalid-extra-node")
+            .expect("extra-node commit succeeds");
+    }
+    assert_delete_current_cad_cuboid_rejected_without_mutation(&mut multi_node);
 }
 
 #[test]

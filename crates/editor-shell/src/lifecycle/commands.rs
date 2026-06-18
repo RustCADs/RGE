@@ -45,6 +45,7 @@
 
 use std::error::Error;
 use std::fmt;
+use std::sync::OnceLock;
 
 use rge_cad_core::{
     CadGraph, CheckpointError, CheckpointId, CuboidOp, GraphBuildError, OperatorNode, Tolerance,
@@ -58,6 +59,7 @@ use rge_input::KeyCode;
 use rge_kernel_ecs::{EntityId as KernelEntityId, World as KernelWorld};
 
 use crate::audit::AuditEvent;
+use crate::coord::EditorCoord;
 use crate::lifecycle::EditorShell;
 use crate::time_scale::TimeScale;
 
@@ -156,6 +158,9 @@ const SET_TIME_SCALE_ID: &str = "set-time-scale";
 /// Stable action id for [`AddCadCuboidToEmptyScene`].
 const ADD_CAD_CUBOID_ID: &str = "add-cad-cuboid-to-empty-scene";
 
+/// Stable action id for [`DeleteCurrentCadCuboid`].
+const DELETE_CURRENT_CAD_CUBOID_ID: &str = "delete-current-cad-cuboid";
+
 fn default_cad_tolerance() -> Tolerance {
     Tolerance::new(0.001).expect("literal 0.001 tolerance is positive and finite")
 }
@@ -173,6 +178,7 @@ pub(crate) struct CadMutationState<'a> {
     cad_world: &'a mut Option<KernelWorld>,
     projection: &'a mut Option<CadProjection>,
     cad_entity: &'a mut Option<KernelEntityId>,
+    coord: &'a mut EditorCoord,
 }
 
 pub(crate) struct ShellActionContext<'a> {
@@ -181,6 +187,7 @@ pub(crate) struct ShellActionContext<'a> {
     cad_world: &'a mut Option<KernelWorld>,
     projection: &'a mut Option<CadProjection>,
     cad_entity: &'a mut Option<KernelEntityId>,
+    coord: &'a mut EditorCoord,
 }
 
 impl ActionContext for ShellActionContext<'_> {
@@ -196,6 +203,7 @@ impl ShellActionContext<'_> {
             cad_world: self.cad_world,
             projection: self.projection,
             cad_entity: self.cad_entity,
+            coord: self.coord,
         }
     }
 }
@@ -301,6 +309,17 @@ pub struct CadCuboidAddResult {
     pub entity: KernelEntityId,
 }
 
+/// Result of [`EditorShell::delete_current_cad_cuboid`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CadCuboidDeleteResult {
+    /// CAD checkpoint that was HEAD before the delete operation began.
+    pub from_head: CheckpointId,
+    /// Empty parent checkpoint restored by the delete operation.
+    pub empty_parent_head: CheckpointId,
+    /// CAD ECS entity despawned by the delete operation.
+    pub deleted_entity: KernelEntityId,
+}
+
 /// Error returned when the bounded CAD cuboid add entry point refuses or fails.
 #[derive(Debug)]
 pub enum CadCuboidAddError {
@@ -311,6 +330,19 @@ pub enum CadCuboidAddError {
     /// Error while adding or rooting the cuboid operator.
     Graph(GraphBuildError),
     /// Error while spawning or projecting the B-Rep entity.
+    Projection(ProjectionError),
+    /// Error returned by the command bus while applying the CAD action.
+    Command(BusError),
+}
+
+/// Error returned when the bounded CAD cuboid delete entry point refuses or fails.
+#[derive(Debug)]
+pub enum CadCuboidDeleteError {
+    /// The shell does not contain the exact live single-cuboid state.
+    NotDeletable(&'static str),
+    /// Error from the CAD checkpoint transaction.
+    Checkpoint(CheckpointError),
+    /// Error while despawning, spawning, or projecting the B-Rep entity.
     Projection(ProjectionError),
     /// Error returned by the command bus while applying the CAD action.
     Command(BusError),
@@ -381,7 +413,37 @@ impl Error for CadCuboidAddError {
     }
 }
 
+impl fmt::Display for CadCuboidDeleteError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotDeletable(reason) => {
+                write!(f, "current CAD cuboid is not deletable: {reason}")
+            }
+            Self::Checkpoint(error) => write!(f, "CAD checkpoint operation failed: {error}"),
+            Self::Projection(error) => write!(f, "CAD projection operation failed: {error}"),
+            Self::Command(error) => write!(f, "CAD command bus operation failed: {error}"),
+        }
+    }
+}
+
+impl Error for CadCuboidDeleteError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::NotDeletable(_) => None,
+            Self::Checkpoint(error) => Some(error),
+            Self::Projection(error) => Some(error),
+            Self::Command(error) => Some(error),
+        }
+    }
+}
+
 impl From<CheckpointError> for CadCuboidAddError {
+    fn from(error: CheckpointError) -> Self {
+        Self::Checkpoint(error)
+    }
+}
+
+impl From<CheckpointError> for CadCuboidDeleteError {
     fn from(error: CheckpointError) -> Self {
         Self::Checkpoint(error)
     }
@@ -399,7 +461,19 @@ impl From<ProjectionError> for CadCuboidAddError {
     }
 }
 
+impl From<ProjectionError> for CadCuboidDeleteError {
+    fn from(error: ProjectionError) -> Self {
+        Self::Projection(error)
+    }
+}
+
 impl From<BusError> for CadCuboidAddError {
+    fn from(error: BusError) -> Self {
+        Self::Command(error)
+    }
+}
+
+impl From<BusError> for CadCuboidDeleteError {
     fn from(error: BusError) -> Self {
         Self::Command(error)
     }
@@ -412,20 +486,115 @@ fn cad_entity_has_live_brep_handle(cad_world: &KernelWorld, cad_entity: KernelEn
         .unwrap_or(false)
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+fn graph_has_live_root(graph: &CadGraph) -> bool {
+    graph
+        .graph()
+        .root()
+        .and_then(|root| graph.graph().node(root))
+        .is_some()
+}
+
+fn cad_projection_render_mesh_count(projection: &CadProjection, cad_world: &KernelWorld) -> usize {
+    cad_world
+        .query::<BRepHandle>()
+        .filter_map(|(entity, _)| projection.render_mesh_for(entity, cad_world))
+        .count()
+}
+
+#[derive(Debug)]
 struct AddCadCuboidToEmptyScene {
     pre_add_head: CheckpointId,
+    committed_head: OnceLock<CheckpointId>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct DeleteCurrentCadCuboid {
+    from_head: CheckpointId,
+    empty_parent_head: CheckpointId,
+    entity: KernelEntityId,
+    expected_root_present: bool,
+    expected_node_count: usize,
+    expected_live_brep_entity_count: usize,
+    expected_projection_render_mesh_count: usize,
+}
+
+impl DeleteCurrentCadCuboid {
+    fn capture(shell: &EditorShell) -> Result<Self, CadCuboidDeleteError> {
+        let (Some(graph), Some(projection), Some(cad_world), Some(entity)) = (
+            shell.cad_graph.as_ref(),
+            shell.projection.as_ref(),
+            shell.cad_world.as_ref(),
+            shell.cad_entity,
+        ) else {
+            return Err(CadCuboidDeleteError::NotDeletable(
+                "CAD graph/projection/world/entity state is not fully initialized",
+            ));
+        };
+        let from_head = graph.head();
+        let checkpoint =
+            graph
+                .history()
+                .checkpoint(from_head)
+                .ok_or(CadCuboidDeleteError::NotDeletable(
+                    "current CAD checkpoint is missing from history",
+                ))?;
+        let empty_parent_head = checkpoint.parent.ok_or(CadCuboidDeleteError::NotDeletable(
+            "current CAD checkpoint has no empty parent",
+        ))?;
+        let action = Self {
+            from_head,
+            empty_parent_head,
+            entity,
+            expected_root_present: true,
+            expected_node_count: 1,
+            expected_live_brep_entity_count: 1,
+            expected_projection_render_mesh_count: 1,
+        };
+        validate_deletable_cad_cuboid_state(graph, projection, cad_world, Some(entity), action)?;
+        Ok(action)
+    }
+
+    fn result(self) -> CadCuboidDeleteResult {
+        CadCuboidDeleteResult {
+            from_head: self.from_head,
+            empty_parent_head: self.empty_parent_head,
+            deleted_entity: self.entity,
+        }
+    }
+}
+
+impl Action<EditorShellActionContext> for DeleteCurrentCadCuboid {
+    fn name(&self) -> &str {
+        "delete-current-cad-cuboid"
+    }
+
+    fn id(&self) -> ActionId {
+        ActionId::new(DELETE_CURRENT_CAD_CUBOID_ID)
+    }
+
+    fn apply(&self, context: &mut ShellActionContext<'_>) -> Result<(), ActionResult> {
+        let mut state = context.cad_mutation_state();
+        apply_delete_current_cad_cuboid(&mut state, *self)
+            .map_err(|error| ActionResult::ApplyFailed(error.to_string()))
+    }
+
+    fn revert(&self, context: &mut ShellActionContext<'_>) -> Result<(), ActionResult> {
+        let mut state = context.cad_mutation_state();
+        revert_delete_current_cad_cuboid(&mut state, *self)
+            .map_err(|error| ActionResult::RevertFailed(error.to_string()))
+    }
 }
 
 impl AddCadCuboidToEmptyScene {
     fn new() -> Self {
         Self {
             pre_add_head: CadGraph::new().head(),
+            committed_head: OnceLock::new(),
         }
     }
 
     fn result_from_shell(
-        self,
+        pre_add_head: CheckpointId,
         shell: &EditorShell,
     ) -> Result<CadCuboidAddResult, CadCuboidAddError> {
         let committed_head = shell
@@ -443,7 +612,7 @@ impl AddCadCuboidToEmptyScene {
             )))
         })?;
         Ok(CadCuboidAddResult {
-            pre_add_head: self.pre_add_head,
+            pre_add_head,
             committed_head,
             entity,
         })
@@ -461,9 +630,25 @@ impl Action<EditorShellActionContext> for AddCadCuboidToEmptyScene {
 
     fn apply(&self, context: &mut ShellActionContext<'_>) -> Result<(), ActionResult> {
         let mut state = context.cad_mutation_state();
-        apply_cad_cuboid(&mut state, self.pre_add_head)
-            .map(|_| ())
-            .map_err(|error| ActionResult::ApplyFailed(error.to_string()))
+        let result = apply_cad_cuboid(
+            &mut state,
+            self.pre_add_head,
+            self.committed_head.get().copied(),
+        )
+        .map_err(|error| ActionResult::ApplyFailed(error.to_string()))?;
+        if let Some(committed_head) = self.committed_head.get().copied() {
+            if committed_head != result.committed_head {
+                return Err(ActionResult::ApplyFailed(format!(
+                    "CAD cuboid add replay restored checkpoint {}, expected {}",
+                    result.committed_head, committed_head
+                )));
+            }
+        } else if self.committed_head.set(result.committed_head).is_err() {
+            return Err(ActionResult::ApplyFailed(
+                "CAD cuboid add action could not record committed checkpoint".to_owned(),
+            ));
+        }
+        Ok(())
     }
 
     fn revert(&self, context: &mut ShellActionContext<'_>) -> Result<(), ActionResult> {
@@ -476,6 +661,7 @@ impl Action<EditorShellActionContext> for AddCadCuboidToEmptyScene {
 fn apply_cad_cuboid(
     state: &mut CadMutationState<'_>,
     pre_add_head: CheckpointId,
+    committed_head: Option<CheckpointId>,
 ) -> Result<CadCuboidAddResult, CadCuboidAddError> {
     if state.cad_entity.is_some() {
         return Err(CadCuboidAddError::SceneNotEmpty(
@@ -526,7 +712,17 @@ fn apply_cad_cuboid(
         ));
     }
 
-    let result = add_cuboid_to_installed_cad_state(graph, projection, cad_world, pre_add_head)?;
+    let result = if let Some(committed_head) = committed_head {
+        restore_cuboid_from_committed_add_checkpoint(
+            graph,
+            projection,
+            cad_world,
+            pre_add_head,
+            committed_head,
+        )?
+    } else {
+        add_cuboid_to_installed_cad_state(graph, projection, cad_world, pre_add_head)?
+    };
     *state.cad_entity = Some(result.entity);
     Ok(result)
 }
@@ -580,6 +776,64 @@ fn add_cuboid_to_installed_cad_state(
     })
 }
 
+fn restore_cuboid_from_committed_add_checkpoint(
+    graph: &mut CadGraph,
+    projection: &mut CadProjection,
+    cad_world: &mut KernelWorld,
+    pre_add_head: CheckpointId,
+    committed_head: CheckpointId,
+) -> Result<CadCuboidAddResult, CadCuboidAddError> {
+    let checkpoint =
+        graph
+            .history()
+            .checkpoint(committed_head)
+            .ok_or(CadCuboidAddError::SceneNotEmpty(
+                "CAD cuboid add replay checkpoint is missing from history",
+            ))?;
+    if checkpoint.parent != Some(pre_add_head)
+        || checkpoint.root_at_checkpoint.is_none()
+        || checkpoint.snapshot.node_count() != 1
+    {
+        return Err(CadCuboidAddError::SceneNotEmpty(
+            "CAD cuboid add replay checkpoint does not match the original single-cuboid add",
+        ));
+    }
+
+    graph.restore_to(committed_head)?;
+    let cuboid_node = graph
+        .graph()
+        .root()
+        .filter(|root| graph.graph().node(*root).is_some())
+        .ok_or(CadCuboidAddError::SceneNotEmpty(
+            "CAD cuboid add replay checkpoint restored without a live root",
+        ))?;
+    if graph.graph().node_count() != 1 {
+        drop(graph.restore_to(pre_add_head));
+        return Err(CadCuboidAddError::SceneNotEmpty(
+            "CAD cuboid add replay restored a non-single-node graph",
+        ));
+    }
+
+    let entity = match projection.spawn_brep_entity(cad_world, cuboid_node) {
+        Ok(entity) => entity,
+        Err(error) => {
+            drop(graph.restore_to(pre_add_head));
+            return Err(error.into());
+        }
+    };
+    if let Err(error) = projection.tick(cad_world, graph, default_cad_tolerance()) {
+        projection.despawn_brep_entity(cad_world, entity);
+        drop(graph.restore_to(pre_add_head));
+        return Err(error.into());
+    }
+
+    Ok(CadCuboidAddResult {
+        pre_add_head,
+        committed_head,
+        entity,
+    })
+}
+
 fn revert_cad_cuboid(
     state: &mut CadMutationState<'_>,
     pre_add_head: CheckpointId,
@@ -606,6 +860,215 @@ fn revert_cad_cuboid(
     graph.restore_to(pre_add_head)?;
     projection.despawn_brep_entity(cad_world, entity);
     projection.tick(cad_world, graph, default_cad_tolerance())?;
+    Ok(())
+}
+
+fn validate_empty_parent_checkpoint(
+    graph: &CadGraph,
+    empty_parent_head: CheckpointId,
+) -> Result<(), CadCuboidDeleteError> {
+    let parent =
+        graph
+            .history()
+            .checkpoint(empty_parent_head)
+            .ok_or(CadCuboidDeleteError::NotDeletable(
+                "empty parent checkpoint is missing from history",
+            ))?;
+    if parent.root_at_checkpoint.is_some()
+        || parent.snapshot.node_count() != 0
+        || parent.snapshot.edge_count() != 0
+    {
+        return Err(CadCuboidDeleteError::NotDeletable(
+            "parent checkpoint is not an empty CAD scene",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_deletable_cad_cuboid_state(
+    graph: &CadGraph,
+    projection: &CadProjection,
+    cad_world: &KernelWorld,
+    cad_entity: Option<KernelEntityId>,
+    action: DeleteCurrentCadCuboid,
+) -> Result<KernelEntityId, CadCuboidDeleteError> {
+    let current_entity = cad_entity.ok_or(CadCuboidDeleteError::NotDeletable(
+        "tracked CAD entity is not set",
+    ))?;
+    if graph.head() != action.from_head {
+        return Err(CadCuboidDeleteError::NotDeletable(
+            "CAD graph head changed before delete apply",
+        ));
+    }
+    let checkpoint =
+        graph
+            .history()
+            .checkpoint(action.from_head)
+            .ok_or(CadCuboidDeleteError::NotDeletable(
+                "current CAD checkpoint is missing from history",
+            ))?;
+    if checkpoint.parent != Some(action.empty_parent_head) {
+        return Err(CadCuboidDeleteError::NotDeletable(
+            "current CAD checkpoint does not have the captured empty parent",
+        ));
+    }
+    if checkpoint.root_at_checkpoint.is_none()
+        || checkpoint.snapshot.node_count() != action.expected_node_count
+    {
+        return Err(CadCuboidDeleteError::NotDeletable(
+            "captured checkpoint is not a single-root single-node CAD scene",
+        ));
+    }
+    validate_empty_parent_checkpoint(graph, action.empty_parent_head)?;
+
+    if graph_has_live_root(graph) != action.expected_root_present
+        || graph.graph().node_count() != action.expected_node_count
+    {
+        return Err(CadCuboidDeleteError::NotDeletable(
+            "live CAD graph is not a single-root single-node scene",
+        ));
+    }
+    if cad_world.query::<BRepHandle>().count() != action.expected_live_brep_entity_count {
+        return Err(CadCuboidDeleteError::NotDeletable(
+            "CAD world does not contain exactly one live B-Rep entity",
+        ));
+    }
+    if !cad_entity_has_live_brep_handle(cad_world, current_entity) {
+        return Err(CadCuboidDeleteError::NotDeletable(
+            "tracked CAD entity is not live",
+        ));
+    }
+    if projection
+        .render_mesh_for(current_entity, cad_world)
+        .is_none()
+        || cad_projection_render_mesh_count(projection, cad_world)
+            != action.expected_projection_render_mesh_count
+    {
+        return Err(CadCuboidDeleteError::NotDeletable(
+            "tracked CAD entity does not have exactly one projection render mesh",
+        ));
+    }
+    Ok(current_entity)
+}
+
+fn validate_deleted_cad_cuboid_state(
+    graph: &CadGraph,
+    projection: &CadProjection,
+    cad_world: &KernelWorld,
+    cad_entity: Option<KernelEntityId>,
+    action: DeleteCurrentCadCuboid,
+) -> Result<(), CadCuboidDeleteError> {
+    if cad_entity.is_some() {
+        return Err(CadCuboidDeleteError::NotDeletable(
+            "CAD cuboid undo requires no currently tracked CAD entity",
+        ));
+    }
+    if graph.head() != action.empty_parent_head {
+        return Err(CadCuboidDeleteError::NotDeletable(
+            "CAD cuboid undo requires the graph at the captured empty parent",
+        ));
+    }
+    validate_empty_parent_checkpoint(graph, action.empty_parent_head)?;
+    if graph_has_live_root(graph) || graph.graph().node_count() != 0 {
+        return Err(CadCuboidDeleteError::NotDeletable(
+            "CAD cuboid undo requires an empty live graph",
+        ));
+    }
+    if cad_world.query::<BRepHandle>().next().is_some()
+        || cad_projection_render_mesh_count(projection, cad_world) != 0
+        || projection
+            .render_mesh_for(action.entity, cad_world)
+            .is_some()
+    {
+        return Err(CadCuboidDeleteError::NotDeletable(
+            "CAD cuboid undo requires no live or cached B-Rep entity",
+        ));
+    }
+    Ok(())
+}
+
+fn prune_deleted_cad_selections(coord: &mut EditorCoord, entity: KernelEntityId) {
+    coord.selection.remove(entity);
+    let (survivors, _) = coord
+        .face_selection
+        .partition(|selection| selection.entity != entity);
+    coord.face_selection = survivors;
+}
+
+fn apply_delete_current_cad_cuboid(
+    state: &mut CadMutationState<'_>,
+    action: DeleteCurrentCadCuboid,
+) -> Result<(), CadCuboidDeleteError> {
+    let (Some(graph), Some(projection), Some(cad_world)) = (
+        state.cad_graph.as_mut(),
+        state.projection.as_mut(),
+        state.cad_world.as_mut(),
+    ) else {
+        return Err(CadCuboidDeleteError::NotDeletable(
+            "CAD graph/projection/world state is not fully initialized",
+        ));
+    };
+    let entity = validate_deletable_cad_cuboid_state(
+        graph,
+        projection,
+        cad_world,
+        *state.cad_entity,
+        action,
+    )?;
+
+    graph.restore_to(action.empty_parent_head)?;
+    if !projection.despawn_brep_entity(cad_world, entity) {
+        return Err(CadCuboidDeleteError::NotDeletable(
+            "tracked CAD entity disappeared before delete apply",
+        ));
+    }
+    projection.tick(cad_world, graph, default_cad_tolerance())?;
+    *state.cad_entity = None;
+    prune_deleted_cad_selections(state.coord, entity);
+    Ok(())
+}
+
+fn revert_delete_current_cad_cuboid(
+    state: &mut CadMutationState<'_>,
+    action: DeleteCurrentCadCuboid,
+) -> Result<(), CadCuboidDeleteError> {
+    let (Some(graph), Some(projection), Some(cad_world)) = (
+        state.cad_graph.as_mut(),
+        state.projection.as_mut(),
+        state.cad_world.as_mut(),
+    ) else {
+        return Err(CadCuboidDeleteError::NotDeletable(
+            "CAD graph/projection/world state is not fully initialized",
+        ));
+    };
+    validate_deleted_cad_cuboid_state(graph, projection, cad_world, *state.cad_entity, action)?;
+
+    graph.restore_to(action.from_head)?;
+    let root = graph
+        .graph()
+        .root()
+        .filter(|root| graph.graph().node(*root).is_some())
+        .ok_or(CadCuboidDeleteError::NotDeletable(
+            "restored CAD checkpoint has no live root",
+        ))?;
+    if graph.graph().node_count() != action.expected_node_count {
+        return Err(CadCuboidDeleteError::NotDeletable(
+            "restored CAD checkpoint is not a single-node scene",
+        ));
+    }
+    let entity = match projection.spawn_brep_entity(cad_world, root) {
+        Ok(entity) => entity,
+        Err(error) => {
+            drop(graph.restore_to(action.empty_parent_head));
+            return Err(error.into());
+        }
+    };
+    if let Err(error) = projection.tick(cad_world, graph, default_cad_tolerance()) {
+        projection.despawn_brep_entity(cad_world, entity);
+        drop(graph.restore_to(action.empty_parent_head));
+        return Err(error.into());
+    }
+    *state.cad_entity = Some(entity);
     Ok(())
 }
 
@@ -738,8 +1201,33 @@ impl EditorShell {
         }
 
         let action = AddCadCuboidToEmptyScene::new();
+        let pre_add_head = action.pre_add_head;
         self.submit_shell_action(Box::new(action))?;
-        action.result_from_shell(self)
+        AddCadCuboidToEmptyScene::result_from_shell(pre_add_head, self)
+    }
+
+    /// Delete the shell-owned current CAD cuboid through the Command Bus.
+    ///
+    /// This is intentionally a headless shell entry point, not a menu route,
+    /// shortcut, or arbitrary selection delete. The only accepted target is
+    /// the live single CAD entity tracked in `self.cad_entity`, with a
+    /// single-root/single-node CAD graph whose current checkpoint has an empty
+    /// parent checkpoint. The successful mutation restores that empty parent,
+    /// despawns the tracked B-Rep entity, clears the tracked id, and prunes
+    /// entity/face selections that pointed at the deleted CAD entity.
+    pub fn delete_current_cad_cuboid(
+        &mut self,
+    ) -> Result<CadCuboidDeleteResult, CadCuboidDeleteError> {
+        if !self.prebuilt_render_meshes.is_empty() || !self.meshes.is_empty() {
+            return Err(CadCuboidDeleteError::NotDeletable(
+                "render content is already initialized",
+            ));
+        }
+
+        let action = DeleteCurrentCadCuboid::capture(self)?;
+        let result = action.result();
+        self.submit_shell_action(Box::new(action))?;
+        Ok(result)
     }
 }
 
@@ -882,6 +1370,7 @@ impl EditorShell {
     ) -> Result<(), BusError> {
         let Self {
             world,
+            coord,
             cad_world,
             projection,
             cad_graph,
@@ -895,6 +1384,7 @@ impl EditorShell {
             cad_world,
             projection,
             cad_entity,
+            coord,
         };
         command_bus.submit(action, &mut context)
     }
@@ -909,6 +1399,7 @@ impl EditorShell {
     pub fn undo_command(&mut self) -> Result<(), BusError> {
         let Self {
             world,
+            coord,
             cad_world,
             projection,
             cad_graph,
@@ -922,6 +1413,7 @@ impl EditorShell {
             cad_world,
             projection,
             cad_entity,
+            coord,
         };
         command_bus.undo(&mut context)
     }
@@ -936,6 +1428,7 @@ impl EditorShell {
     pub fn redo_command(&mut self) -> Result<(), BusError> {
         let Self {
             world,
+            coord,
             cad_world,
             projection,
             cad_graph,
@@ -949,6 +1442,7 @@ impl EditorShell {
             cad_world,
             projection,
             cad_entity,
+            coord,
         };
         command_bus.redo(&mut context)
     }
