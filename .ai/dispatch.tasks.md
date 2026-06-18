@@ -16016,7 +16016,7 @@ RESOLVED 2026-06-16 (approved via task 158) - prior NEEDS_HUMAN stale tracked-CA
    - Appending exactly one `NEEDS_HUMAN_RECORDED:` marker plus the required
      recommendation block would disturb existing task provenance.
 
-NEEDS_HUMAN_RECORDED: 2026-06-16 - stale tracked-id normalization now sits inside the first-cuboid empty-scene preflight, but the next CAD mutation boundary requires human approval because `add_cad_cuboid_to_empty_scene` remains a headless lifecycle entry point while CommandBus actions still receive only the kernel ECS world.
+RESOLVED 2026-06-16 (approved via task 160) - prior NEEDS_HUMAN CAD/CommandBus-context recommendation, kept for provenance:
 
 Recommendation for human approval:
 - Proposed next feature: approve a bounded CommandBus/CAD-context feature that lets the existing first-cuboid add operation run through editor mutation authority in a headless shell test path. The feature should keep `EditorShell::add_cad_cuboid_to_empty_scene` as the narrow empty-scene CAD operation, define only the minimal editor-owned context needed for a bus-routed CAD add, and still defer UI/menu/shortcut wiring, multi-root composition, deletion, transforms, parameter editing, save/load document policy, and render-path architecture.
@@ -16024,3 +16024,139 @@ Recommendation for human approval:
 - Risks: widening mutation authority beyond the current `Action::apply(&mut rge_kernel_ecs::World)` contract can affect undo/redo, coalescing, dirty/save-mark semantics, and error recovery for every bus-routed action. The CAD add must keep graph, projection, CAD world, tracked entity, selection, and render inspection state coherent on apply/revert without treating render-mesh absence as cleanup policy or making existing/partial CAD scenes eligible for first-cuboid add.
 - Verification: run focused `rge-editor-actions` action/bus tests for the new context, lifecycle tests for a bus-routed first-cuboid add/undo/redo round trip, the existing `add_cad_cuboid_to_empty_scene`, `clear_stale_tracked_cad_entity`, and `cad_scene_inspection` filters, `cargo check -p rge-editor-shell --lib`, `cargo +nightly fmt --all -- --check`, lifecycle/CommandBus greps proving no UI/render/Cargo scope drift, `git diff --name-only`, and `git diff --check`.
 - Why this is the smallest coherent next step: the source now has a tested empty-scene cuboid add, read-only CAD inspection, stale tracked-id cleanup, and preflight normalization, and `rg` shows the add path has no broader production caller. The remaining blocker for a real editor mutation is the explicit CommandBus authority split, so deciding the minimal CAD action context is smaller than adding UI routes, document persistence, render refresh architecture, multi-root CAD composition, deletion, transforms, or parameter editing.
+
+160. **Route add_cad_cuboid_to_empty_scene through CommandBus via a GENERIC action-context contract (editor-actions + editor-shell only).**
+   Make the existing headless `EditorShell::add_cad_cuboid_to_empty_scene` run as
+   a real, undoable `CommandBus` action by widening the editor-actions action
+   contract MINIMALLY and GENERICALLY so an action can reach editor-owned mutation
+   state beyond the kernel `World`. Crosses the deferred "CAD-state into ECS"
+   boundary (`crates/editor-shell/src/lifecycle/mod.rs:665`,
+   `crates/editor-actions/src/action.rs:87`, `crates/editor-actions/src/bus.rs:143`)
+   under operator-narrowed approval. This is an API-BOUNDARY task: the central
+   risk is expressing "generic context" in Rust while preserving the existing
+   dyn-action undo stack and type inference for current tests.
+
+   **Architecture guard (operator decision - non-negotiable):**
+   - `rge-editor-actions` grows a GENERIC / minimal action-CONTEXT contract only:
+     `Action`/`CommandBus` (apply/revert/submit/undo/redo) operate over a generic
+     context abstraction (at minimum exposing the kernel `&mut World`), defined
+     entirely within editor-actions.
+   - `rge-editor-actions` MUST NOT gain any dependency on `editor-shell`,
+     `cad-core`, `cad-projection`, or any CAD/projection types, and MUST NOT name
+     CAD concepts. It stays a generic mutation-authority layer.
+   - The CAD action, the CAD action-context (carrying editor-owned CAD
+     graph/projection/world/tracked-entity state), and the cuboid-add routing
+     live ENTIRELY in editor-shell.
+
+   **Object-safety / compatibility guard (required):**
+   - Existing `Box<dyn Action>` and the dyn-action undo stack MUST stay
+     object-safe; the generic context must not break dynamic dispatch of actions.
+   - All existing World-only call sites MUST either compile UNCHANGED or through a
+     default World-context adapter, and current tests' type inference must still
+     resolve with no added annotations. A naive generic trait that forces type
+     annotations across existing call sites/tests is NOT acceptable.
+   - Existing World-only actions, submit/undo/redo, coalescing, audit ledger,
+     dirty/save-mark, and all current editor-actions tests keep working unchanged.
+
+   **Apply-time undo metadata (required):** `Action::apply` is currently `&self`.
+   The CAD add needs pre-add undo metadata (e.g. `pre_add_head` and the spawned
+   entity id) to revert/redo. Satisfy this EITHER by capturing that undo token
+   BEFORE submit and storing it as immutable action data, OR by minimally changing
+   apply/revert mutability with focused tests. NO `unsafe`, NO global/static
+   state, and NO broad interior-mutability workaround unless it is explicitly
+   justified in the EXEC packet.
+
+   **Reversibility (the win):** the bus-routed cuboid add is undoable AND redoable
+   via the existing CommandBus undo stack - apply does graph add + projection +
+   spawn; revert does `restore_to(pre_add_head)` + `despawn_brep_entity` +
+   re-tick, leaving no stale graph/projection/world/mesh state. (Supersedes task
+   150's test-only rollback with real bus undo/redo.)
+
+   **Scope bound:** do ONLY enough to route the EXISTING add_cad_cuboid as one
+   action. No general CAD-action framework, no other CAD mutations, no
+   cad-core/projection/render changes.
+
+   **Self-re-arm (final step, required) - BRIEF-ENFORCED PAUSE (operator decision):**
+   After implementation and verification, APPEND exactly one bounded
+   source/docs-read-only AUDIT task as task 161 - an audit of the post-bus-routed
+   first-CAD-mutation boundary. Task 161 is a GATED audit: it MUST NOT append task
+   162 or any feature task, and its final step MUST record the next
+   `NEEDS_HUMAN_RECORDED: <ISO-date> - <reason>` marker plus a "Recommendation for
+   human approval" block (proposed next feature, exact edit surface, risks,
+   verification, why smallest). Carry this gated-audit instruction into the task
+   161 block it authors. Task 160 itself MUST NOT directly record a
+   `NEEDS_HUMAN_RECORDED` marker UNLESS it cannot safely append the task 161 audit
+   - appending task 161 is the required primary outcome. Edit
+   `.ai/dispatch.tasks.md` to do this.
+
+   **MAY edit:**
+   - `crates/editor-actions/src/action.rs`
+   - `crates/editor-actions/src/bus.rs`
+   - `crates/editor-actions/src/lib.rs`
+   - `crates/editor-actions/src/compound.rs`
+   - `crates/editor-actions/src/undo_stack.rs`
+   - `crates/editor-actions/src/coalesce.rs` only if the generic bounds require it
+   - `crates/editor-actions/tests/**` (focused action/bus tests)
+   - `crates/editor-shell/src/lifecycle/commands.rs`
+   - `crates/editor-shell/src/lifecycle/mod.rs`
+   - `crates/editor-shell/src/lifecycle/tests.rs`
+   - `.ai/dispatch.tasks.md` + generated ISSUE-<n> handoff/audit/log artifacts
+
+   **MUST NOT edit:**
+   - `crates/cad-core/**`, `crates/cad-projection/**`
+   - `crates/editor-shell/src/render_path.rs`,
+     `crates/editor-shell/src/lifecycle/open_request.rs`,
+     `crates/editor-shell/src/lifecycle/save_request.rs`,
+     `crates/editor-shell/src/lifecycle/save_source.rs`
+   - `crates/editor-ui/**`, `crates/editor-egui-host/**`, `editor/**`,
+     `runtime/**`, `kernel/**`, `tools/**`
+   - Cargo manifests or `Cargo.lock` (NO new dependencies; the generic contract
+     must NOT make editor-actions depend on editor-shell/CAD)
+   - workflows, dispatch automation/guard/queue/scheduler/watcher/verification/
+     health/trend scripts, schemas, ADR files, architecture-lint rules/config,
+     packet templates, or unrelated handoff/log artifacts
+   - camera/navigation, viewport hit-testing, face-pick, UI/host routing,
+     shortcut/palette, plugin runtime, OS clipboard, save/load authority
+
+   **Done criteria:**
+   - editor-actions exposes a generic action-context contract; `Action`/
+     `CommandBus` operate over it; editor-actions has NO `editor-shell`/CAD/
+     projection dependency or type reference.
+   - `Box<dyn Action>` and the undo stack remain object-safe; existing World-only
+     call sites and tests compile unchanged (or via a default World-context
+     adapter) with no new type annotations required.
+   - All pre-existing World-only actions, bus behavior, coalescing, ledger,
+     dirty/save-mark, and editor-actions tests pass unchanged.
+   - editor-shell defines a CAD action + CAD action-context and routes
+     `add_cad_cuboid_to_empty_scene` through `command_bus.submit`.
+   - Focused tests prove: bus-routed add of one cuboid; bus undo restores pre-add
+     graph/projection/world state (no stale entity/mesh); bus redo re-adds; the
+     existing empty-scene rejection + stale-id normalization still hold.
+   - Apply-time undo metadata is handled per the rule above (no unsafe/global/
+     unexplained interior mutability).
+   - Exactly one gated audit task 161 is appended (records NEEDS_HUMAN, no task
+     162); task 160 records NEEDS_HUMAN directly only if it cannot safely append
+     task 161.
+
+   **Verification:**
+   - `cargo test -p rge-editor-actions --all-targets`
+   - `cargo test -p rge-editor-shell --lib -- <the exact new bus-routed first-cuboid add / undo / redo test names>`,
+     plus the existing `add_cad_cuboid_to_empty_scene`, `clear_stale_tracked_cad_entity`,
+     and `cad_scene_inspection` filters
+   - `cargo check -p rge-editor-actions -p rge-editor-shell`
+   - `cargo +nightly fmt --all -- --check`
+   - `rg -n "editor_shell|editor-shell|cad_core|cad-core|cad_projection|cad-projection|CadGraph|CadProjection|cad_world" crates/editor-actions/src crates/editor-actions/Cargo.toml` EXPECTING NO MATCHES (the generic-context guard)
+   - `git diff --name-only`; `git diff --check`
+
+   **Halt conditions (any -> record NEEDS_HUMAN, do not force):**
+   - bus routing needs editor-actions to depend on editor-shell/cad-core/
+     cad-projection/CAD types or a new Cargo dependency.
+   - `Box<dyn Action>` / undo-stack object-safety cannot be preserved, or existing
+     World-only call sites/tests cannot compile unchanged or via a default
+     World-context adapter within the generic widening.
+   - apply-time undo metadata requires `unsafe`, global state, or an unexplained
+     broad interior-mutability workaround.
+   - it needs cad-core/cad-projection/render-path/camera/viewport/save-load/UI
+     edits.
+   - more than the minimal generic context contract + the one cuboid action is
+     required.
