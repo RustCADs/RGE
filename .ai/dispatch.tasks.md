@@ -16444,10 +16444,145 @@ Recommendation for human approval:
    - appending task 163 is the required primary outcome. Edit
    `.ai/dispatch.tasks.md` to do this.
 
-NEEDS_HUMAN_RECORDED: 2026-06-19 - source audit found the headless CAD cuboid delete CommandBus-routed and editor-actions still generic; any next feature now crosses into human-owned menu/delete behavior.
+RESOLVED 2026-06-19 (approved via task 164) - prior NEEDS_HUMAN, kept for provenance: source audit found the headless CAD cuboid delete CommandBus-routed and editor-actions still generic; any next feature now crosses into human-owned menu/delete behavior.
 Recommendation for human approval:
 - Proposed next feature: route the existing menu Delete command to the audited headless `EditorShell::delete_current_cad_cuboid` path only for the shell-owned current CAD cuboid, preserving the current wrapper-world selected-entity Delete behavior for non-CAD selections.
 - Exact edit surface: `crates/editor-shell/src/lifecycle/commands.rs` and `crates/editor-shell/src/lifecycle/tests.rs` only if the existing `Command::Delete` handoff is reused; no `rge-editor-actions`, CAD graph/projection crates, render path, Cargo metadata, docs, scripts, schemas, workflows, or task-brief expansion. If a UI enum, menu predicate, shortcut, or label change is required, halt and request a separate human-approved packet for that surface.
 - Risks: the current menu Delete path is wrapper-world selected-entity deletion while `delete_current_cad_cuboid` is shell-owned tracked-CAD deletion, so the feature must not merge arbitrary selection delete with the CAD graph/projection/world lifecycle or bypass CommandBus dirty/cursor semantics.
 - Verification: targeted lifecycle tests for menu Delete choosing the CAD path only in the single tracked CAD cuboid state, preserving existing selected-entity Delete/Cut behavior, undo/redo after the routed CAD delete, no stale `render_mesh_for` lookup, selection pruning, dirty/save-mark movement, plus the existing CAD add/delete/inspection filters, `cargo check -p rge-editor-actions -p rge-editor-shell`, `cargo +nightly fmt --all -- --check`, the editor-actions no-CAD-reference grep, and `git diff --check`.
 - Smallest coherent next step: task 162 already proved the shell-owned CAD mutation and this audit verified the generic boundary, while the allowed tests show menu Delete currently reaches only the wrapper-world selected-entity path; a narrow route decision is the first user-facing exposure point without changing CAD crates, projection, render, persistence, or the generic action contract.
+
+164. **Route menu Delete to the headless CAD-cuboid delete for the shell-owned current CAD entity only.**
+
+   Make the existing `Command::Delete` menu route choose the audited
+   `EditorShell::delete_current_cad_cuboid` CommandBus path **only** when the
+   current entity selection is exactly the shell-tracked `cad_entity`; otherwise
+   preserve the existing wrapper-world `delete_selected_entities` behavior
+   unchanged. This is the first user-facing exposure of the headless CAD delete.
+   It is a narrow routing decision at one call site - not a new command, not a new
+   selection model, not a CAD/projection/render change.
+
+   **Scope guard (operator decision - non-negotiable):**
+   - Edit ONLY: `crates/editor-shell/src/render_path.rs` (the `Command::Delete`
+     arm of `route_menu_command`), `crates/editor-shell/src/lifecycle/commands.rs`,
+     and `crates/editor-shell/src/lifecycle/tests.rs`, plus `.ai/dispatch.tasks.md`
+     and the normal generated current-dispatch handoff/audit/log artifacts.
+   - MUST NOT edit `editor-ui`, any menu registry, the `Command` enum or any other
+     command enum, menu-enable predicates, keyboard shortcuts, menu labels,
+     `crates/editor-actions`, any CAD crate (`cad-core`/`cad-graph`/`cad-projection`
+     or equivalents), the render pipeline, save/load/persistence, `Cargo.toml`/
+     `Cargo.lock`, docs, or schemas.
+   - MUST NOT add a new `Command` variant or change command routing for any command
+     other than `Command::Delete`. Reuse the existing `Command::Delete` handoff.
+   - MUST NOT widen `ShellActionContext`, the `Action` contract, or add any public
+     re-export from `lifecycle/mod.rs`. The audited `delete_current_cad_cuboid`
+     entry point and the `DeleteCurrentCadCuboid` action are FROZEN - task 164 only
+     ROUTES to the existing entry point; it does not modify the delete action,
+     its capture/apply/revert, or its immutability.
+   - MUST NOT append task 165 as a feature or task 166 of any kind.
+
+   **Routing semantics (apply at the `Command::Delete` arm):**
+   - Compute the route predicate from a direct id comparison: the wrapper-world
+     selection and the tracked `cad_entity` share one id type
+     (`crates/editor-shell/src/world.rs` re-exports `rge_kernel_ecs::EntityId`, the
+     same type as `KernelEntityId`), so NO new bridge, kernel/projection coupling,
+     or selection-model change is needed or permitted.
+   - Route to `self.delete_current_cad_cuboid()` ONLY when the entity selection
+     contains exactly one entity AND that entity equals the tracked `cad_entity`
+     (`Some(e)` and selection == `{e}`).
+   - If the selection is empty, do NOT delete the CAD cuboid just because one
+     exists - take the existing path (which no-ops on empty). Selection being empty
+     never reaches the CAD route.
+   - If the selection is non-CAD, or mixed CAD + non-CAD (more than one entity, or
+     a single entity that is not the tracked `cad_entity`), preserve the existing
+     `delete_selected_entities` wrapper-world behavior exactly and do NOT mutate the
+     CAD graph, projection, or CAD world.
+   - When the selection is exactly the tracked CAD entity but the CAD delete
+     preflight rejects (stale/partial/invalid/non-live/non-empty-parent), the
+     routed `delete_current_cad_cuboid` returns `Err(CadCuboidDeleteError)` WITHOUT
+     submitting to the bus; log/swallow it exactly as the existing `route_menu_command`
+     Undo/Redo arms swallow `BusError` (a `tracing::warn!` to
+     `target: "rge::editor-shell::menu"`). Do NOT fall back to `delete_selected_entities`,
+     do NOT clear the selection, and do NOT grow the bus stack.
+   - `Command::Cut` stays wrapper-world only - do not touch the `Command::Cut` arm
+     or `cut_selected_entities`.
+
+   **Tests (`crates/editor-shell/src/lifecycle/tests.rs`):**
+   - Menu `Command::Delete` (driven via `route_menu_command`) chooses the CAD bus
+     path when the selection is exactly the tracked CAD entity: graph restored to
+     the empty parent checkpoint, tracked B-Rep entity despawned, `cad_entity`
+     cleared, entity/face selection pruned, and the bus cursor/save-mark advanced.
+   - Undo then redo through the bus after the routed CAD delete restores a fresh
+     tracked entity and cleans the redo path (extend/reuse the existing replay
+     coverage; no resurrected old id, no stale `render_mesh_for`).
+   - No stale `render_mesh_for` lookup and no stale selection survive the routed
+     delete.
+   - Dirty/save-mark cursor moves correctly across the routed CAD delete and its
+     undo/redo.
+   - Non-CAD `Command::Delete` (wrapper-world selected entities, no tracked CAD or
+     selection != tracked CAD) deletes via the existing wrapper path and leaves the
+     CAD graph/projection/world untouched.
+   - `Command::Cut` behavior is unchanged (wrapper-world only).
+   - Mixed selection (tracked CAD entity plus a non-CAD entity) takes the wrapper
+     path and does NOT delete the CAD cuboid: CAD graph head, tracked id,
+     projection, and CAD world stay intact.
+   - Empty selection `Command::Delete` is a no-op for CAD (CAD cuboid survives).
+   - Invalid/stale selected CAD (selection == tracked `cad_entity` but the preflight
+     rejects) is a no-op: no bus-stack growth, selection NOT cleared, no fallback
+     wrapper delete.
+
+   **Verification:**
+   - `cargo test -p rge-editor-shell --lib -- delete_current_cad_cuboid`
+   - `cargo test -p rge-editor-shell --lib -- add_cad_cuboid_to_empty_scene`
+   - `cargo test -p rge-editor-shell --lib -- route_menu_command`
+   - `cargo test -p rge-editor-shell --lib -- delete_selected`
+   - `cargo test -p rge-editor-shell --lib -- cut_selected`
+   - `cargo check -p rge-editor-actions -p rge-editor-shell`
+   - `cargo +nightly fmt --all -- --check`
+   - `rg -n "editor_shell|editor-shell|cad_core|cad-core|cad_projection|cad-projection|CadGraph|CadProjection|cad_world" crates/editor-actions/src crates/editor-actions/Cargo.toml`
+     EXPECTING NO MATCHES.
+   - `git diff --name-only` EXPECTING ONLY
+     `crates/editor-shell/src/render_path.rs`,
+     `crates/editor-shell/src/lifecycle/commands.rs`,
+     `crates/editor-shell/src/lifecycle/tests.rs`, and `.ai/dispatch.tasks.md`
+     (plus generated current-dispatch artifacts).
+   - `git diff --check`
+   - `rg -n "^164\.|^165\.|^166\.|NEEDS_HUMAN_RECORDED" .ai/dispatch.tasks.md`
+     EXPECTING exactly one task 164 and exactly one task 165; no task 166; no
+     task-164 direct marker.
+
+   **Halt conditions (stop and request a separate human-approved packet; do NOT
+   widen the task mid-flight):**
+   - The route cannot be expressed without changing a `Command`/menu enum, a menu
+     registry, a menu-enable predicate, a keyboard shortcut, or a menu label.
+   - The predicate cannot be expressed without coupling to `editor-actions`, a CAD
+     crate, the projection, or the render pipeline, or without widening
+     `ShellActionContext`/the `Action` contract or adding a public re-export from
+     `lifecycle/mod.rs`.
+   - Reaching the CAD delete from the menu would require mutating the audited
+     `delete_current_cad_cuboid` entry point or the `DeleteCurrentCadCuboid` action.
+
+   **Done criteria:**
+   - Menu `Command::Delete` routes to `delete_current_cad_cuboid` only for the
+     exact single tracked-CAD selection; all other selections keep the existing
+     wrapper-world delete behavior; `Command::Cut` is unchanged.
+   - The action contract and `editor-actions` generic boundary remain frozen.
+   - All listed verification passes; the diff touches only the three allowed source
+     files plus `.ai/dispatch.tasks.md` and generated artifacts.
+
+   **Self-re-arm (final step, required) - BRIEF-ENFORCED PAUSE (operator decision):**
+   After implementation and verification, APPEND exactly one bounded
+   source/docs-read-only AUDIT task as task 165 - an audit of the menu-Delete CAD
+   routing boundary (the menu route chooses the CAD CommandBus path only for the
+   exact single tracked-CAD selection, wrapper-world Delete/Cut behavior preserved
+   for all other selections, `editor-actions` still generic, the `Action` contract
+   and `delete_current_cad_cuboid` entry point unchanged, and no UI/menu/enum/
+   shortcut/label surface touched). Task 165 is a GATED audit: it MUST NOT append
+   task 166 or any feature task, and its final step MUST record the next
+   `NEEDS_HUMAN_RECORDED: <ISO-date> - <reason>` marker plus a "Recommendation for
+   human approval" block (proposed next feature, exact edit surface, risks,
+   verification, why smallest). Carry this gated-audit instruction verbatim into
+   the task 165 block it authors. Task 164 itself MUST NOT directly record a
+   `NEEDS_HUMAN_RECORDED` marker UNLESS it cannot safely append the task 165 audit
+   - appending task 165 is the required primary outcome. Edit
+   `.ai/dispatch.tasks.md` to do this.
