@@ -6211,7 +6211,7 @@ mod menu_routing {
     }
 
     #[test]
-    fn menu_delete_command_deletes_selected_entities_and_prunes_selection() {
+    fn route_menu_command_delete_selected_entities_and_prunes_selection() {
         // Command::Delete drained from the menu handoff reaches
         // EditorShell::delete_selected_entities. This is the bounded
         // wrapper-world path only: entity/component blobs are removed and
@@ -6252,6 +6252,269 @@ mod menu_routing {
         assert!(
             s.coord().face_selection.is_empty(),
             "face selections belonging to deleted entities are pruned"
+        );
+    }
+
+    #[test]
+    fn route_menu_command_delete_current_cad_cuboid_for_exact_tracked_selection() {
+        let mut s = EditorShell::new();
+        let added = s
+            .add_cad_cuboid_to_empty_scene()
+            .expect("fresh shell is an empty CAD scene");
+        let selected_face = cad_cuboid_face_selection(added.entity);
+        s.coord_mut().selection.add(added.entity);
+        s.coord_mut().face_selection.add(selected_face);
+        s.mark_saved_command();
+
+        s.route_menu_command(Command::Delete);
+
+        assert_eq!(
+            s.command_bus().stack().len(),
+            2,
+            "routed CAD delete is recorded after the add action"
+        );
+        assert_eq!(s.command_bus().stack().cursor(), 2);
+        assert!(
+            s.command_bus().is_dirty(),
+            "routed CAD delete moves away from the saved post-add cursor"
+        );
+        let after_delete = s.cad_scene_inspection();
+        assert_eq!(after_delete.cad_graph_head, Some(added.pre_add_head));
+        assert!(!after_delete.tracked_cad_entity_present);
+        assert!(!after_delete.tracked_cad_entity_live);
+        assert!(!after_delete.tracked_cad_entity_render_mesh_present);
+        assert!(!after_delete.cad_graph_root_present);
+        assert_eq!(after_delete.cad_graph_node_count, 0);
+        assert_eq!(after_delete.live_brep_entity_count, 0);
+        assert_eq!(after_delete.projection_render_mesh_count, 0);
+        assert!(
+            !s.coord().selection.contains(added.entity),
+            "routed CAD delete prunes entity selection"
+        );
+        assert!(
+            s.coord().face_selection.is_empty(),
+            "routed CAD delete prunes face selection"
+        );
+        assert_no_cad_lookup_for(&s, added.entity);
+    }
+
+    #[test]
+    fn route_menu_command_delete_current_cad_cuboid_undo_redo_uses_fresh_entity() {
+        let mut s = EditorShell::new();
+        let added = s
+            .add_cad_cuboid_to_empty_scene()
+            .expect("fresh shell is an empty CAD scene");
+        s.coord_mut().selection.add(added.entity);
+
+        s.route_menu_command(Command::Delete);
+        s.mark_saved_command();
+
+        assert_eq!(s.command_bus().stack().cursor(), 2);
+        assert!(
+            !s.command_bus().is_dirty(),
+            "mark_saved records the post-delete cursor as clean"
+        );
+        assert_no_cad_lookup_for(&s, added.entity);
+
+        s.undo_command().expect("undo routed CAD delete");
+
+        assert_eq!(s.command_bus().stack().cursor(), 1);
+        assert!(
+            s.command_bus().is_dirty(),
+            "undo moves away from the saved post-delete cursor"
+        );
+        let restored_entity = s
+            .cad_entity
+            .expect("undo tracks a freshly respawned CAD entity");
+        assert_ne!(
+            restored_entity, added.entity,
+            "undo must not resurrect the deleted entity id"
+        );
+        assert_no_cad_lookup_for(&s, added.entity);
+        {
+            let projection = s.projection.as_ref().expect("undo leaves projection");
+            let cad_world = s.cad_world.as_ref().expect("undo leaves CAD world");
+            assert!(
+                projection
+                    .render_mesh_for(restored_entity, cad_world)
+                    .is_some(),
+                "undo projects the fresh tracked entity"
+            );
+        }
+
+        s.coord_mut().selection.add(restored_entity);
+        s.coord_mut()
+            .face_selection
+            .add(cad_cuboid_face_selection(restored_entity));
+        s.redo_command().expect("redo routed CAD delete");
+
+        assert_eq!(s.command_bus().stack().cursor(), 2);
+        assert!(
+            !s.command_bus().is_dirty(),
+            "redo returns to the saved post-delete cursor"
+        );
+        let after_redo = s.cad_scene_inspection();
+        assert_eq!(after_redo.cad_graph_head, Some(added.pre_add_head));
+        assert!(!after_redo.tracked_cad_entity_present);
+        assert_eq!(after_redo.live_brep_entity_count, 0);
+        assert_eq!(after_redo.projection_render_mesh_count, 0);
+        assert!(
+            !s.coord().selection.contains(restored_entity),
+            "redo prunes the fresh tracked entity selection"
+        );
+        assert!(
+            s.coord().face_selection.is_empty(),
+            "redo prunes the fresh tracked entity face selection"
+        );
+        assert_no_cad_lookup_for(&s, added.entity);
+        assert_no_cad_lookup_for(&s, restored_entity);
+    }
+
+    #[test]
+    fn route_menu_command_delete_selected_non_cad_preserves_tracked_cad_scene() {
+        let mut s = EditorShell::new();
+        let added = s
+            .add_cad_cuboid_to_empty_scene()
+            .expect("fresh shell is an empty CAD scene");
+        build_scene(&mut s, 1);
+        let wrapper_entity = s
+            .world()
+            .entities()
+            .next()
+            .expect("wrapper scene has one entity");
+        assert_ne!(wrapper_entity, added.entity);
+        s.coord_mut().selection.add(wrapper_entity);
+        s.mark_saved_command();
+
+        s.route_menu_command(Command::Delete);
+
+        assert_eq!(
+            s.world().entity_count(),
+            0,
+            "single non-CAD selection uses wrapper-world delete"
+        );
+        assert_eq!(s.cad_entity, Some(added.entity));
+        assert_eq!(cad_brep_entities(&s), vec![added.entity]);
+        assert_eq!(cad_render_meshes(&s).len(), 1);
+        assert_eq!(
+            s.cad_scene_inspection().cad_graph_head,
+            Some(added.committed_head)
+        );
+        assert_eq!(s.command_bus().stack().len(), 1);
+        assert_eq!(s.command_bus().stack().cursor(), 1);
+        assert!(
+            !s.command_bus().is_dirty(),
+            "wrapper-world delete does not move the CAD command bus"
+        );
+        assert!(s.coord().selection.is_empty());
+    }
+
+    #[test]
+    fn route_menu_command_delete_selected_mixed_selection_preserves_cad_scene() {
+        let mut s = EditorShell::new();
+        let added = s
+            .add_cad_cuboid_to_empty_scene()
+            .expect("fresh shell is an empty CAD scene");
+        build_scene(&mut s, 1);
+        let wrapper_entity = s
+            .world()
+            .entities()
+            .next()
+            .expect("wrapper scene has one entity");
+        s.coord_mut().selection.add(added.entity);
+        s.coord_mut().selection.add(wrapper_entity);
+        s.mark_saved_command();
+
+        s.route_menu_command(Command::Delete);
+
+        assert_eq!(
+            s.world().entity_count(),
+            0,
+            "mixed selection still uses wrapper-world delete for wrapper entities"
+        );
+        assert_eq!(s.cad_entity, Some(added.entity));
+        assert_eq!(cad_brep_entities(&s), vec![added.entity]);
+        assert_eq!(cad_render_meshes(&s).len(), 1);
+        assert_eq!(
+            s.cad_scene_inspection().cad_graph_head,
+            Some(added.committed_head)
+        );
+        assert_eq!(s.command_bus().stack().len(), 1);
+        assert_eq!(s.command_bus().stack().cursor(), 1);
+        assert!(
+            !s.command_bus().is_dirty(),
+            "mixed wrapper-world delete does not move the CAD command bus"
+        );
+        assert!(
+            s.coord().selection.is_empty(),
+            "wrapper-world delete clears the mixed selection"
+        );
+    }
+
+    #[test]
+    fn route_menu_command_delete_selected_empty_selection_preserves_tracked_cad_scene() {
+        let mut s = EditorShell::new();
+        let added = s
+            .add_cad_cuboid_to_empty_scene()
+            .expect("fresh shell is an empty CAD scene");
+        s.mark_saved_command();
+
+        s.route_menu_command(Command::Delete);
+
+        assert_eq!(s.cad_entity, Some(added.entity));
+        assert_eq!(cad_brep_entities(&s), vec![added.entity]);
+        assert_eq!(cad_render_meshes(&s).len(), 1);
+        assert_eq!(
+            s.cad_scene_inspection().cad_graph_head,
+            Some(added.committed_head)
+        );
+        assert_eq!(s.command_bus().stack().len(), 1);
+        assert_eq!(s.command_bus().stack().cursor(), 1);
+        assert!(
+            !s.command_bus().is_dirty(),
+            "empty wrapper-world delete does not move the CAD command bus"
+        );
+        assert!(s.coord().selection.is_empty());
+    }
+
+    #[test]
+    fn route_menu_command_delete_current_cad_cuboid_stale_selection_swallow_no_fallback() {
+        let mut s = EditorShell::new();
+        let added = s
+            .add_cad_cuboid_to_empty_scene()
+            .expect("fresh shell is an empty CAD scene");
+        s.coord_mut().selection.add(added.entity);
+        s.coord_mut()
+            .face_selection
+            .add(cad_cuboid_face_selection(added.entity));
+        restore_to_pre_add_head_and_despawn_cuboid(&mut s, added);
+        let before = s.cad_scene_inspection();
+        let selected_before: Vec<_> = s.coord().selection.iter().collect();
+        let face_selected_before: Vec<_> = s.coord().face_selection.iter().copied().collect();
+        s.mark_saved_command();
+
+        s.route_menu_command(Command::Delete);
+
+        assert_eq!(
+            s.cad_scene_inspection(),
+            before,
+            "rejected routed CAD delete leaves stale CAD/render state unchanged"
+        );
+        assert_eq!(s.command_bus().stack().len(), 1);
+        assert_eq!(s.command_bus().stack().cursor(), 1);
+        assert!(
+            !s.command_bus().is_dirty(),
+            "rejected routed CAD delete does not move the bus stack"
+        );
+        assert_eq!(
+            s.coord().selection.iter().collect::<Vec<_>>(),
+            selected_before,
+            "rejected routed CAD delete does not fall back and clear selection"
+        );
+        assert_eq!(
+            s.coord().face_selection.iter().copied().collect::<Vec<_>>(),
+            face_selected_before,
+            "rejected routed CAD delete does not prune face selection"
         );
     }
 
@@ -6383,7 +6646,7 @@ mod menu_routing {
     }
 
     #[test]
-    fn menu_cut_command_copies_then_deletes_selected_legacy_blobs() {
+    fn route_menu_command_cut_selected_copies_then_deletes_selected_legacy_blobs() {
         // Command::Cut is intentionally bounded to the wrapper-world substrate:
         // it copies selected legacy blobs into the shell-local clipboard, then
         // delegates deletion to the same selected-entity despawn path as Delete.
@@ -6450,6 +6713,40 @@ mod menu_routing {
             s.world().component(pasted, ComponentTypeId(2)).cloned(),
             original_position,
             "cut-pasted entity receives cloned Position blob"
+        );
+    }
+
+    #[test]
+    fn route_menu_command_cut_selected_exact_tracked_cad_stays_wrapper_world_only() {
+        let mut s = EditorShell::new();
+        let added = s
+            .add_cad_cuboid_to_empty_scene()
+            .expect("fresh shell is an empty CAD scene");
+        s.coord_mut().selection.add(added.entity);
+        s.mark_saved_command();
+
+        s.route_menu_command(Command::Cut);
+
+        assert_eq!(s.cad_entity, Some(added.entity));
+        assert_eq!(cad_brep_entities(&s), vec![added.entity]);
+        assert_eq!(cad_render_meshes(&s).len(), 1);
+        assert_eq!(
+            s.cad_scene_inspection().cad_graph_head,
+            Some(added.committed_head)
+        );
+        assert_eq!(s.command_bus().stack().len(), 1);
+        assert_eq!(s.command_bus().stack().cursor(), 1);
+        assert!(
+            !s.command_bus().is_dirty(),
+            "Cut remains wrapper-world only and does not route to CAD delete"
+        );
+        assert!(
+            s.coord().selection.is_empty(),
+            "wrapper-world Cut clears the selected CAD id without deleting CAD"
+        );
+        assert!(
+            !s.predicate_context().has_clipboard_entities,
+            "Cut of a CAD-only selection does not create wrapper-world clipboard contents"
         );
     }
 

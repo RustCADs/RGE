@@ -16586,3 +16586,87 @@ Recommendation for human approval:
    `NEEDS_HUMAN_RECORDED` marker UNLESS it cannot safely append the task 165 audit
    - appending task 165 is the required primary outcome. Edit
    `.ai/dispatch.tasks.md` to do this.
+
+165. **Audit menu Delete CAD routing boundary and record the gated human pause.**
+
+   Perform a source/docs-read-only audit of the task 164 menu-Delete CAD routing
+   boundary. Confirm that the menu route chooses the CAD CommandBus path only for
+   the exact single tracked-CAD selection; wrapper-world Delete/Cut behavior is
+   preserved for all other selections; `editor-actions` remains generic; the
+   `Action` contract and `delete_current_cad_cuboid` entry point are unchanged;
+   and no UI/menu/enum/shortcut/label surface was touched.
+
+   **Scope guard (operator decision - gated audit only):**
+   - Read only: `crates/editor-shell/src/render_path.rs`,
+     `crates/editor-shell/src/lifecycle/commands.rs`,
+     `crates/editor-shell/src/lifecycle/tests.rs`,
+     `crates/editor-actions/src`, `crates/editor-actions/Cargo.toml`,
+     `crates/editor-ui/**`, `crates/editor-egui-host/**`, and relevant
+     current-dispatch handoff packets.
+   - MAY edit `.ai/dispatch.tasks.md` only for the final
+     `NEEDS_HUMAN_RECORDED: <ISO-date> - <reason>` marker and the required
+     "Recommendation for human approval" block.
+   - MUST NOT edit production source, tests, Cargo metadata, schemas, workflows,
+     automation scripts, UI/menu registries, command enums, shortcuts, labels,
+     or any CAD/action/render/persistence implementation.
+   - MUST NOT append task 166 or any feature task. This audit is the gated pause.
+
+   **Audit checks:**
+   - Verify the `Command::Delete` route predicate is a direct ID comparison:
+     selection length is exactly one, `self.cad_entity` is `Some(e)`, and the
+     selected entity is `e`.
+   - Verify empty, non-CAD, mixed CAD plus non-CAD, and stale/invalid selected-CAD
+     cases preserve the required boundary: wrapper-world Delete for non-CAD/mixed/
+     empty selections, and log/swallow without fallback or bus growth for exact
+     stale/invalid CAD selection.
+   - Verify `Command::Cut`, `cut_selected_entities`, `delete_current_cad_cuboid`,
+     `DeleteCurrentCadCuboid`, `ShellActionContext`, the `Action` contract, and
+     `lifecycle/mod.rs` public exports are unchanged by task 164.
+   - Verify `crates/editor-actions` still has no CAD/editor-shell coupling.
+   - Verify the task 164 diff did not touch UI/menu/enum/shortcut/label surfaces
+     or append task 166.
+
+   **Verification:**
+   - `git diff --name-only`
+   - `git diff -- crates/editor-shell/src/render_path.rs crates/editor-shell/src/lifecycle/commands.rs crates/editor-shell/src/lifecycle/tests.rs .ai/dispatch.tasks.md`
+   - `rg -n "Command::Delete =>|delete_menu_selection_is_exact_tracked_cad_entity|delete_current_cad_cuboid\\(\\)|delete_selected_entities\\(\\)" crates/editor-shell/src/render_path.rs`
+   - `rg -n "struct DeleteCurrentCadCuboid|fn delete_current_cad_cuboid|fn cut_selected_entities|ShellActionContext|impl Action|pub use" crates/editor-shell/src/lifecycle/commands.rs crates/editor-shell/src/lifecycle/mod.rs`
+   - `rg -n "route_menu_command|delete_selected|cut_selected|stale_selection|mixed_selection|empty_selection|non_cad" crates/editor-shell/src/lifecycle/tests.rs`
+   - `cargo test -p rge-editor-shell --lib -- route_menu_command`
+   - `cargo test -p rge-editor-shell --lib -- delete_selected`
+   - `cargo test -p rge-editor-shell --lib -- cut_selected`
+   - `cargo check -p rge-editor-actions -p rge-editor-shell`
+   - `cargo +nightly fmt --all -- --check`
+   - `rg -n "editor_shell|editor-shell|cad_core|cad-core|cad_projection|cad-projection|CadGraph|CadProjection|cad_world" crates/editor-actions/src crates/editor-actions/Cargo.toml`
+     EXPECTING NO MATCHES.
+   - `rg -n "^164\\.|^165\\.|^166\\.|NEEDS_HUMAN_RECORDED" .ai/dispatch.tasks.md`
+     EXPECTING exactly one task 164 and exactly one task 165; no task 166; no
+     task-164 direct marker. Historical marker references in older tasks are
+     provenance, not new task 164 markers.
+
+   **Done criteria:**
+   - The audit records source-grounded findings and does not change source/tests.
+   - Exactly one `NEEDS_HUMAN_RECORDED: <ISO-date> - <reason>` marker is appended
+     for the gated pause, followed by a "Recommendation for human approval" block
+     with proposed next feature, exact edit surface, risks, verification, and why
+     smallest.
+   - No task 166 and no feature task is appended.
+
+   **Carried self-rearm instruction from task 164 (verbatim):**
+
+   **Self-re-arm (final step, required) - BRIEF-ENFORCED PAUSE (operator decision):**
+   After implementation and verification, APPEND exactly one bounded
+   source/docs-read-only AUDIT task as task 165 - an audit of the menu-Delete CAD
+   routing boundary (the menu route chooses the CAD CommandBus path only for the
+   exact single tracked-CAD selection, wrapper-world Delete/Cut behavior preserved
+   for all other selections, `editor-actions` still generic, the `Action` contract
+   and `delete_current_cad_cuboid` entry point unchanged, and no UI/menu/enum/
+   shortcut/label surface touched). Task 165 is a GATED audit: it MUST NOT append
+   task 166 or any feature task, and its final step MUST record the next
+   `NEEDS_HUMAN_RECORDED: <ISO-date> - <reason>` marker plus a "Recommendation for
+   human approval" block (proposed next feature, exact edit surface, risks,
+   verification, why smallest). Carry this gated-audit instruction verbatim into
+   the task 165 block it authors. Task 164 itself MUST NOT directly record a
+   `NEEDS_HUMAN_RECORDED` marker UNLESS it cannot safely append the task 165 audit
+   - appending task 165 is the required primary outcome. Edit
+   `.ai/dispatch.tasks.md` to do this.

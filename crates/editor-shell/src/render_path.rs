@@ -451,7 +451,17 @@ impl EditorShell {
                 self.paste_copied_entities();
             }
             Command::Delete => {
-                self.delete_selected_entities();
+                if self.delete_menu_selection_is_exact_tracked_cad_entity() {
+                    if let Err(e) = self.delete_current_cad_cuboid() {
+                        tracing::warn!(
+                            target: "rge::editor-shell::menu",
+                            error = ?e,
+                            "menu Delete selected tracked CAD entity but CAD delete was rejected"
+                        );
+                    }
+                } else {
+                    self.delete_selected_entities();
+                }
             }
             Command::Duplicate => {
                 self.duplicate_selected_entities();
@@ -476,6 +486,13 @@ impl EditorShell {
                 self.capture_extension_menu_command(extension);
             }
         }
+    }
+
+    fn delete_menu_selection_is_exact_tracked_cad_entity(&self) -> bool {
+        let Some(cad_entity) = self.cad_entity else {
+            return false;
+        };
+        self.coord.selection.len() == 1 && self.coord.selection.contains(cad_entity)
     }
 
     /// Route a Play-menu click to the PIE driver [`EditorShell::handle_button`],
