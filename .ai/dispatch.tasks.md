@@ -16670,3 +16670,12 @@ Recommendation for human approval:
    `NEEDS_HUMAN_RECORDED` marker UNLESS it cannot safely append the task 165 audit
    - appending task 165 is the required primary outcome. Edit
    `.ai/dispatch.tasks.md` to do this.
+
+NEEDS_HUMAN_RECORDED: 2026-06-19 - Task 165 verified task 164's menu Delete CAD routing boundary: only the exact single tracked-CAD selection reaches `delete_current_cad_cuboid`, stale exact CAD rejection does not fall back or grow the bus, non-CAD/mixed/empty Delete and exact tracked-CAD Cut stay wrapper-world, `editor-actions` remains generic, and no UI/menu/task 166 surface was appended.
+
+Recommendation for human approval:
+- Proposed next feature: decide whether to add a dedicated user-facing CAD delete affordance for the shell-owned current cuboid instead of broadening generic Delete beyond the verified exact-selection boundary.
+- Exact edit surface: if approved, keep the implementation scoped to `crates/editor-ui/**`, `crates/editor-egui-host/**`, `crates/editor-shell/src/render_path.rs`, and focused `crates/editor-shell/src/lifecycle/tests.rs`; touch `crates/editor-shell/src/lifecycle/commands.rs` only if a named shell entry point or CommandBus action contract needs to be exposed.
+- Risks: UI/menu predicate or label changes could accidentally imply broader CAD deletion support than the current shell-owned cuboid path, and any shared `Command::Delete` change could regress wrapper-world Cut/Delete behavior.
+- Verification: rerun the route-menu Delete/Cut tests, the editor-actions/editor-shell check, fmt check, a no-CAD-coupling `rg` over `crates/editor-actions`, and path-scoped diffs proving Cargo/docs/scripts/workflows are untouched.
+- Why it is the smallest coherent next step: this audit proves the underlying CAD CommandBus delete path is bounded and test-covered; a human decision on a visible affordance is the next narrow product boundary before any broader CAD deletion semantics are attempted.
