@@ -88,6 +88,14 @@ param(
     [ValidateRange(1, 1000)]
     [int]$SeatbeltInterval = 50,
 
+    # --- Default-OFF autonomy switches (human=codex). Absent => current behavior. ---
+    # When set, at a NEEDS_HUMAN gate Codex may auto-author the next feature task,
+    # but ONLY for a recommendation that Test-AutoApprovableRecommendation approves
+    # against -AutoRearmCeilingSurface. The ceiling defaults to empty, so the switch
+    # is inert (fail-closed) until an operator supplies the surface tokens to arm.
+    [switch]$AllowCodexSelfRearm,
+    [string[]]$AutoRearmCeilingSurface = @(),
+
     [string]$TaskBrief = '',
 
     [ValidateRange(0, 5)]
@@ -454,6 +462,160 @@ function Test-AutoApprovableRecommendation {
     }
     $result.Approvable = $true
     $result.Reason = "auto-approvable: $($proposed.Count) path(s) within the audit ceiling, opt-in present, no stop phrase"
+    return $result
+}
+
+function Get-BriefRecommendationBlock {
+    # PURE: extract the recommendation context = the text from the LAST
+    # NEEDS_HUMAN_RECORDED marker line to end-of-brief (where a gated audit records
+    # its AUTO_APPROVABLE / AUTO_APPROVE_SURFACE markers). '' when no live marker.
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$BriefText)
+    $m = [regex]::Matches([string]$BriefText, '(?im)^\s*NEEDS_HUMAN_RECORDED:.*$')
+    if ($m.Count -eq 0) { return '' }
+    $last = $m[$m.Count - 1]
+    return ([string]$BriefText).Substring($last.Index)
+}
+
+function Get-BriefTaskHeadingCount {
+    # PURE: count numbered task headings (`^<n>. `) in the brief.
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$BriefText)
+    return ([regex]::Matches([string]$BriefText, '(?m)^\s*\d+\.\s')).Count
+}
+
+function Test-SelfRearmPostConditions {
+    # PURE, FAIL-CLOSED verification of a self-rearm brief edit:
+    #   - EXACTLY one more task heading than before (one feature task appended), and
+    #   - NO line still begins with 'NEEDS_HUMAN_RECORDED:' (the marker was neutralized).
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$BeforeText,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$AfterText
+    )
+    $result = [pscustomobject]@{ Ok = $false; Reason = '' }
+    $beforeCount = Get-BriefTaskHeadingCount -BriefText $BeforeText
+    $afterCount  = Get-BriefTaskHeadingCount -BriefText $AfterText
+    if ($afterCount -ne ($beforeCount + 1)) {
+        $result.Reason = "expected exactly one new task heading ($beforeCount -> $afterCount)"
+        return $result
+    }
+    if ($AfterText -match '(?im)^\s*NEEDS_HUMAN_RECORDED:') {
+        $result.Reason = 'a live NEEDS_HUMAN_RECORDED marker still remains (not neutralized)'
+        return $result
+    }
+    $result.Ok = $true
+    $result.Reason = "one task appended ($beforeCount -> $afterCount); marker neutralized"
+    return $result
+}
+
+function Invoke-CodexSelfRearm {
+    # Default-OFF (-AllowCodexSelfRearm) auto-authoring of the next feature task from
+    # a QUALIFYING gated recommendation. FAIL-CLOSED: any miss returns Authored=$false
+    # and the caller falls back to the needs-human halt (byte-for-byte the off-path).
+    #
+    # PROMPT CONTRACT (codex exec --sandbox workspace-write --cd <repo>):
+    #   INPUT (stdin): the recommendation block + the approved surface tokens + the
+    #                  strict rules below.
+    #   CODEX MUST: (1) edit ONLY .ai/dispatch.tasks.md; (2) neutralize the
+    #     NEEDS_HUMAN_RECORDED line so NO line still begins with it (keep provenance);
+    #     (3) append EXACTLY ONE numbered feature task whose MAY-edit list is a subset
+    #     of the approved surface, MUST-NOT-edit forbids the rest, carrying a self-
+    #     re-arm instruction to append the next GATED AUDIT; (4) record no new
+    #     NEEDS_HUMAN_RECORDED and append no second task; (5) end with one line
+    #     'SELF_REARM: authored' or 'SELF_REARM: decline'.
+    #   OUTPUT CONTRACT (verified here, never trusted): git status shows ONLY the brief
+    #   modified AND Test-SelfRearmPostConditions passes AND the reply confirms
+    #   'authored'; otherwise the brief edit is reverted and Authored=$false.
+    param(
+        [Parameter(Mandatory)][string]$BriefPath,
+        [string[]]$CeilingSurface,
+        [Parameter(Mandatory)][string]$RepoRoot,
+        [string]$BriefRelativePath = '.ai/dispatch.tasks.md'
+    )
+    $result = [pscustomobject]@{ Authored = $false; Reason = '' }
+    $before = Get-Content -Raw -LiteralPath $BriefPath -ErrorAction SilentlyContinue
+    if (-not $before) { $result.Reason = 'brief unreadable'; return $result }
+    $rec = Get-BriefRecommendationBlock -BriefText $before
+    if (-not $rec) { $result.Reason = 'no live NEEDS_HUMAN_RECORDED recommendation block'; return $result }
+    $elig = Test-AutoApprovableRecommendation -RecommendationText $rec -CeilingSurfaceTokens $CeilingSurface
+    if (-not $elig.Approvable) { $result.Reason = "recommendation not auto-approvable: $($elig.Reason)"; return $result }
+
+    # Fail-closed: never author on top of unexpected local tracked changes.
+    $preStatus = (Invoke-Tool -Exe 'git' -CmdArgs @('-C', $RepoRoot, 'status', '--porcelain', '--untracked-files=no')).Text
+    $dirtyOther = @(($preStatus -split "`r?`n") | Where-Object { $_.Trim() -and ($_ -notmatch [regex]::Escape($BriefRelativePath)) })
+    if ($dirtyOther.Count -gt 0) { $result.Reason = 'working tree has unexpected tracked changes; refusing to self-rearm'; return $result }
+
+    $surfaceList = (($elig.ProposedSurface | ForEach-Object { "  - $_" }) -join "`n")
+    $prompt = @"
+You are auto-authoring the next dispatch task from an APPROVED recommendation.
+Edit ONLY the file .ai/dispatch.tasks.md. Touch no other file.
+
+Approved edit surface (the new task's MAY-edit list MUST be a subset of these, and
+its MUST-NOT-edit list must forbid everything else):
+$surfaceList
+
+Required edits to .ai/dispatch.tasks.md:
+1. Neutralize the NEEDS_HUMAN_RECORDED line so NO line still begins with
+   'NEEDS_HUMAN_RECORDED:' -- rewrite it to begin 'RESOLVED (auto-approved via
+   -AllowCodexSelfRearm) -- kept for provenance:' followed by the original text.
+2. Append EXACTLY ONE new numbered feature task implementing the recommendation,
+   with a '### MAY edit' list that is a subset of the approved surface above, a
+   MUST-NOT-edit list forbidding everything else, and a Self-re-arm instruction to
+   append the next GATED AUDIT task (NOT another feature).
+3. Do NOT record any new NEEDS_HUMAN_RECORDED marker. Do NOT append more than one task.
+
+Recommendation block (verbatim, for reference):
+$rec
+
+End your reply with exactly one line: 'SELF_REARM: authored' on success, or
+'SELF_REARM: decline' if you cannot comply within these constraints.
+"@
+
+    $promptFile = Join-Path $env:TEMP 'rge-ai-auto-rearm-prompt.txt'
+    $answerFile = Join-Path $env:TEMP 'rge-ai-auto-rearm-answer.txt'
+    $logFile    = Join-Path $env:TEMP 'rge-ai-auto-rearm.log'
+    Write-Utf8 $promptFile $prompt
+    Remove-Item -LiteralPath $answerFile -Force -ErrorAction SilentlyContinue
+
+    $codexArgs = @('exec', '--cd', $RepoRoot, '--sandbox', 'workspace-write', '--output-last-message', $answerFile, '-')
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    $global:LASTEXITCODE = 0
+    try {
+        Get-Content -Raw -LiteralPath $promptFile | & codex @codexArgs > $logFile 2>&1
+    } finally {
+        $ErrorActionPreference = $prevEap
+    }
+    $codexExit = $LASTEXITCODE
+
+    $after = Get-Content -Raw -LiteralPath $BriefPath -ErrorAction SilentlyContinue
+    if ($null -eq $after) { $after = '' }
+    $answer = (Get-Content -Raw -LiteralPath $answerFile -ErrorAction SilentlyContinue)
+    if ($null -eq $answer) { $answer = '' }
+
+    if ($codexExit -ne 0) {
+        Invoke-Tool -Exe 'git' -CmdArgs @('-C', $RepoRoot, 'checkout', '--', $BriefRelativePath) | Out-Null
+        $result.Reason = "codex exec self-rearm failed (exit $codexExit); reverted"
+        return $result
+    }
+    $postStatus = (Invoke-Tool -Exe 'git' -CmdArgs @('-C', $RepoRoot, 'status', '--porcelain', '--untracked-files=no')).Text
+    $changedOther = @(($postStatus -split "`r?`n") | Where-Object { $_.Trim() -and ($_ -notmatch [regex]::Escape($BriefRelativePath)) })
+    if ($changedOther.Count -gt 0) {
+        Invoke-Tool -Exe 'git' -CmdArgs @('-C', $RepoRoot, 'checkout', '--', $BriefRelativePath) | Out-Null
+        $result.Reason = 'self-rearm modified files beyond the brief; reverted'
+        return $result
+    }
+    $post = Test-SelfRearmPostConditions -BeforeText $before -AfterText $after
+    if (-not $post.Ok) {
+        Invoke-Tool -Exe 'git' -CmdArgs @('-C', $RepoRoot, 'checkout', '--', $BriefRelativePath) | Out-Null
+        $result.Reason = "self-rearm post-conditions failed: $($post.Reason); reverted"
+        return $result
+    }
+    if ($answer -notmatch '(?im)^\s*SELF_REARM:\s*authored\s*$') {
+        Invoke-Tool -Exe 'git' -CmdArgs @('-C', $RepoRoot, 'checkout', '--', $BriefRelativePath) | Out-Null
+        $result.Reason = 'codex did not confirm SELF_REARM: authored; reverted'
+        return $result
+    }
+    $result.Authored = $true
+    $result.Reason = "authored next task: $($post.Reason)"
     return $result
 }
 
@@ -1242,6 +1404,21 @@ verbatim in this BODY -- it keeps the loop armed and must NOT be summarized away
                 # Case 1: an executor deliberately recorded a NEEDS_HUMAN
                 # boundary instead of appending the next task.
                 $nhReason = $matches[1].Trim()
+                # Default-OFF self-rearm: try to auto-author the next task from a
+                # QUALIFYING recommendation. On success, end the tick cleanly so the
+                # NEXT tick selects the new task -- no needs-human, no halt sentinel.
+                # FAIL-CLOSED: any decline/failure falls through to the unchanged
+                # needs-human + halt below (byte-for-byte the off-path).
+                if ($AllowCodexSelfRearm) {
+                    Write-Output 'AllowCodexSelfRearm: attempting bounded auto-authoring of the next task...'
+                    $rearm = Invoke-CodexSelfRearm -BriefPath $briefPath -CeilingSurface $AutoRearmCeilingSurface -RepoRoot $script:RepoRoot
+                    if ($rearm.Authored) {
+                        Write-Output "Self-re-arm authored the next task ($($rearm.Reason)); ending tick so the next tick selects it. No needs-human, no halt."
+                        Write-TimingTrace "auto.tick: end (exit=0, self-rearmed)"
+                        exit 0
+                    }
+                    Write-Output "Self-re-arm declined ($($rearm.Reason)); falling back to the needs-human halt."
+                }
                 $nhSnippet = if ($nhReason.Length -gt 60) { $nhReason.Substring(0, 60) } else { $nhReason }
                 New-NeedsHumanIssue -RepoSlug $repoSlug `
                     -Title "AI dispatch NEEDS_HUMAN: $nhSnippet" `
