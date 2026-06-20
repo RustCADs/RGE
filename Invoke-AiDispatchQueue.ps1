@@ -81,7 +81,7 @@ param(
     [string]$PublishMode = '',
 
     [ValidateRange(0, 5)]
-    [int]$MaxPlanRevisions = 1,
+    [int]$MaxPlanRevisions = 2,
 
     [ValidateRange(0, 5)]
     [int]$MaxCorrectionRounds = 2,
@@ -1576,6 +1576,16 @@ function Get-FailureTaxonomyLabels {
     if ($text -match '(?i)timed out' -or $text -match '(?i)timeout') {
         return @('ai-dispatch-failure-timeout')
     }
+    # Plan-gate exhaustion / block (Invoke-AiDispatchLoop.ps1:1748,1753). Placed
+    # AFTER stall/timeout so a Codex stall *during* plan-fill still classifies as
+    # stall; the pure "did not approve the plan" / "blocked the plan" wording has
+    # no stall/timeout/verification/control keywords so it would otherwise fall to
+    # 'unknown' (non-recoverable). This is a flaky stochastic gate (Rule-8 NACK),
+    # so it joins the bounded-recoverable set in Invoke-AiDispatchAuto.ps1.
+    if ($text -match '(?i)did not approve the plan within maxplanrevisions' -or
+        $text -match '(?i)blocked the plan\b') {
+        return @('ai-dispatch-failure-plan-gate')
+    }
     if ($text -match '(?i)verification gate failed' -or
         $text -match '(?i)verification round \d+:\s*fail') {
         return @('ai-dispatch-failure-verification')
@@ -2294,7 +2304,7 @@ function New-DispatchLoopArguments {
         [string]$GoalFile,
 
         [ValidateRange(0, 5)]
-        [int]$MaxPlanRevisions = 1,
+        [int]$MaxPlanRevisions = 2,
 
         [ValidateRange(0, 5)]
         [int]$MaxCorrectionRounds = 2,
@@ -2658,6 +2668,7 @@ try {
         @{ Name = 'ai-dispatch-failure-blocked';      Color = 'd93f0b'; Desc = 'AI dispatch terminal failure: executor reported blocked' },
         @{ Name = 'ai-dispatch-failure-verification'; Color = 'd93f0b'; Desc = 'AI dispatch terminal failure: verification gate failed' },
         @{ Name = 'ai-dispatch-failure-control';      Color = 'd93f0b'; Desc = 'AI dispatch terminal failure: Codex control failed' },
+        @{ Name = 'ai-dispatch-failure-plan-gate';    Color = 'd93f0b'; Desc = 'AI dispatch terminal failure: plan gate not approved within revisions (flaky-recoverable)' },
         @{ Name = 'ai-dispatch-failure-publish';      Color = 'd93f0b'; Desc = 'AI dispatch terminal failure: publish pipeline failed' },
         @{ Name = 'ai-dispatch-failure-unknown';      Color = 'd93f0b'; Desc = 'AI dispatch terminal failure: class not matched' }
     )

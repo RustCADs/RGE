@@ -104,7 +104,7 @@ param(
 
     [Parameter(ParameterSetName = 'Register')]
     [ValidateRange(0, 5)]
-    [int]$MaxPlanRevisions = 1,
+    [int]$MaxPlanRevisions = 2,
 
     [Parameter(ParameterSetName = 'Register')]
     [ValidateRange(0, 5)]
