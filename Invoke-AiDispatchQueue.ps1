@@ -2596,6 +2596,35 @@ try {
         ($names -notcontains $failLabel)
     } | Sort-Object number)
 
+    # Stale-issue replay guard: drop any pending issue whose work already reached
+    # origin/main. A queued issue can carry a stale body (e.g. after a brief
+    # amendment filed a fresh issue, or a terminal relabel that never stuck);
+    # re-running it would replay/duplicate already-published work. Mirrors the
+    # orphan-recovery published-SHA check -- search origin/main for the dispatch's
+    # own commit "ai-dispatch ISSUE-N:".
+    if ($pending.Count -gt 0) {
+        $stillPending = @()
+        foreach ($p in $pending) {
+            $pIssueId = "ISSUE-$($p.number)"
+            $pubSha = (Git-Step @('log', 'origin/main', '-n', '1', '--fixed-strings',
+                "--grep=ai-dispatch ${pIssueId}:", '--format=%H')).Trim()
+            if ($pubSha) {
+                $short = $pubSha.Substring(0, [Math]::Min(8, $pubSha.Length))
+                Write-Output "Stale-replay guard: issue #$($p.number) already published as $short; marking done, not dispatching."
+                Invoke-Tool -Exe 'gh' -CmdArgs @(
+                    'issue', 'edit', "$($p.number)", '--repo', $repoSlug,
+                    '--remove-label', $QueueLabel, '--remove-label', $runLabel,
+                    '--add-label', $doneLabel) | Out-Null
+                Invoke-Tool -Exe 'gh' -CmdArgs @(
+                    'issue', 'close', "$($p.number)", '--repo', $repoSlug,
+                    '--comment', "Already published to origin/main as $short; closed by the stale-issue replay guard without re-running its (possibly stale) body.") | Out-Null
+            } else {
+                $stillPending += $p
+            }
+        }
+        $pending = @($stillPending)
+    }
+
     if ($pending.Count -eq 0) {
         Write-Output "No queued '$QueueLabel' issues to process in $repoSlug."
         Finish 0

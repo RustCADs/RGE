@@ -386,7 +386,8 @@ function Get-RecoveryDecision {
         [string]$RecoverLabel,
         [string]$FlakyRecoverLabel,
         [string[]]$TransientLabels,
-        [string[]]$FlakyLabels
+        [string[]]$FlakyLabels,
+        [int]$LatestAutoIssueNumber = 0
     )
     $decision = [pscustomobject]@{
         Eligible         = $false
@@ -408,6 +409,17 @@ function Get-RecoveryDecision {
         return $decision
     }
     $cand = $list[0]
+    # Stale-issue replay guard: if a NEWER autonomous issue exists, this failed
+    # issue's body is a stale snapshot the loop has already moved past -- the
+    # classic "brief was amended and a fresh task was filed" case. Auto never
+    # files a new issue while a failure blocks the loop, so a higher issue number
+    # can only mean human/external supersession. Re-running the old body would
+    # replay outdated instructions, so decline recovery and let the halt / fresh
+    # selection from the current brief take over.
+    if ($LatestAutoIssueNumber -gt [int]$cand.number) {
+        $decision.Reason = "issue #$($cand.number) is superseded by a newer autonomous issue (#$LatestAutoIssueNumber); its body is stale (likely a brief amendment), not requeuing"
+        return $decision
+    }
     $labels = @()
     if ($cand.labels) {
         $labels = @($cand.labels | ForEach-Object {
@@ -769,11 +781,22 @@ $openFailedAuto = Get-IssuesJson @(
     'issue', 'list', '--repo', $repoSlug, '--label', $autoLabel,
     '--label', $failLabel, '--state', 'open', '--limit', '100',
     '--json', 'number,title,labels')
+# Highest autonomous issue number across all states. A failed issue numbered
+# below this has been superseded (a newer task was filed, e.g. after a brief
+# amendment), so Get-RecoveryDecision must not requeue its stale body.
+$allAutoIssues = Get-IssuesJson @(
+    'issue', 'list', '--repo', $repoSlug, '--label', $autoLabel,
+    '--state', 'all', '--limit', '200', '--json', 'number')
+$latestAutoIssueNumber = 0
+if (@($allAutoIssues).Count -gt 0) {
+    $latestAutoIssueNumber = (@($allAutoIssues) | ForEach-Object { [int]$_.number } | Measure-Object -Maximum).Maximum
+}
 $decision = Get-RecoveryDecision -Issues $openFailedAuto `
     -FailLabel $failLabel -QueueLabel $queueLabel -DoneLabel $doneLabel `
     -RetryLabel $retryLabel -RecoverLabel $recoverLabel `
     -FlakyRecoverLabel $flakyRecoverLabel `
-    -TransientLabels $transientLabels -FlakyLabels $flakyLabels
+    -TransientLabels $transientLabels -FlakyLabels $flakyLabels `
+    -LatestAutoIssueNumber $latestAutoIssueNumber
 
 if ($decision.Eligible) {
     $cand = $decision.Issue

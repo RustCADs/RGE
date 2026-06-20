@@ -125,4 +125,22 @@ Describe 'Get-RecoveryDecision eligibility' {
         $d.Eligible | Should -BeTrue
         $d.LabelsToRemove | Should -Contain 'ai-dispatch-done'
     }
+
+    It 'declines recovery of a SUPERSEDED issue (a newer autonomous issue exists -> stale body after brief amendment)' {
+        $d = Get-RecoveryDecision -Issues @((NewIssue 5 @('ai-dispatch-failed', 'ai-dispatch-failure-stall'))) -LatestAutoIssueNumber 10 @Std
+        $d.Eligible | Should -BeFalse
+        $d.Reason | Should -Match 'superseded'
+    }
+
+    It 'still recovers when the failed issue IS the latest autonomous issue (normal transient retry)' {
+        $d = Get-RecoveryDecision -Issues @((NewIssue 10 @('ai-dispatch-failed', 'ai-dispatch-failure-stall'))) -LatestAutoIssueNumber 10 @Std
+        $d.Eligible | Should -BeTrue
+        $d.Tier | Should -Be 'transient'
+    }
+
+    It 'supersession beats flaky-recoverability: a stale plan-gate body is never replayed after amendment' {
+        $d = Get-RecoveryDecision -Issues @((NewIssue 5 @('ai-dispatch-failed', 'ai-dispatch-failure-plan-gate'))) -LatestAutoIssueNumber 7 @Std
+        $d.Eligible | Should -BeFalse
+        $d.Reason | Should -Match 'superseded'
+    }
 }
