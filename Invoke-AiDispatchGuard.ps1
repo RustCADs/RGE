@@ -206,6 +206,7 @@ $script:CommandForbiddenPatterns = @(
 )
 $script:SignalForbiddenPatterns = @(
     'VERIFY (FAILED|FAIL)\b',                          # the gate's own failure line
+    'VERIFY SKIPPED\b',                                # build/test gate bypassed (skip-main) -- a skipped gate is NOT a real pass; unverified code must never auto-merge
     'GATE_EXIT=[^0\s]',                                # a non-zero gate exit
     'HANDOFF_STATUS:\s*(BLOCKED|FAILED|NEEDS_HUMAN)',  # a block / human verdict
     '\bverdict\s*[:=]\s*block\b',                      # Codex control says block

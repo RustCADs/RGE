@@ -241,7 +241,7 @@ if ($env:RGE_AI_DISPATCH_VERIFY_SKIP_MAIN -eq '1') {
     # or autonomous run can SEE that the gate was skipped instead of silently
     # treating exit 0 as a real green pass. This escape is for interactive
     # debugging ONLY; the guard treats a 'VERIFY SKIPPED' signal as a hard-rule
-    # abort under -PublishMode main so unverified code can never auto-merge.
+    # abort (any posture) so unverified code can never reach publish.
     Write-Output 'VERIFY SKIPPED: RGE_AI_DISPATCH_VERIFY_SKIP_MAIN=1 -- the build/test gate did NOT run. Interactive-debug only; MUST NOT be set on an autonomous or main-publish run. This is NOT a real pass.'
     return
 }

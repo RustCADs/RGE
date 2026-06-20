@@ -119,6 +119,7 @@ Describe 'Test-HardRule command patterns (review #1/#2: broadened protected-ref 
 Describe 'Test-HardRule signal patterns' {
     It 'trips on failure signal: <Sig>' -ForEach @(
         @{ Sig = 'VERIFY FAILED: gate' }
+        @{ Sig = 'VERIFY SKIPPED: RGE_AI_DISPATCH_VERIFY_SKIP_MAIN=1 -- the build/test gate did NOT run. This is NOT a real pass.' }
         @{ Sig = 'GATE_EXIT=101' }
         @{ Sig = 'HANDOFF_STATUS: NEEDS_HUMAN' }
         @{ Sig = 'control verdict=block' }
