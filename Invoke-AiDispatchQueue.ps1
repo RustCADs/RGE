@@ -3139,7 +3139,10 @@ $(
     # main push, so this routing cannot by itself land unverified work on main.
     if ($SurfaceSplitPublish -and $eligibleForPublish) {
         $ssChanged = @()
-        $ssDiff = Git-Step @('diff', '--name-only', 'origin/main...HEAD')
+        # Diff the dispatch BRANCH (not HEAD): Git-Step runs in the primary checkout's
+        # cwd, whose HEAD is the parked origin/main -> 'origin/main...HEAD' would be empty.
+        # The branch ref resolves correctly from any cwd (worktrees share the object store).
+        $ssDiff = Git-Step @('diff', '--name-only', "origin/main...$branch")
         if ($ssDiff) { $ssChanged = @(($ssDiff -split "`r?`n") | Where-Object { $_.Trim() }) }
         $ssRouting = Get-DispatchSurfaceRouting -ChangedPaths $ssChanged
         if ($script:ResolvedPublishMode -ne $ssRouting.Routing) {
@@ -3152,7 +3155,10 @@ $(
     # downgraded to a human-merged PR (fail-closed: a large OR uncomputable diff
     # always gets human review). No-op when both caps are 0 (disabled).
     if ($eligibleForPublish -and $script:ResolvedPublishMode -eq 'main' -and ($MaxDiffFiles -gt 0 -or $MaxDiffLines -gt 0)) {
-        $numstat = Git-Step @('diff', '--numstat', 'origin/main...HEAD')
+        # Diff the dispatch BRANCH (see surface-split note above): computing against the
+        # primary checkout's HEAD would see 0 files/0 lines and FAIL OPEN (any diff judged
+        # "within cap"), letting an oversized change auto-publish to main.
+        $numstat = Git-Step @('diff', '--numstat', "origin/main...$branch")
         $dcFiles = 0; $dcLines = 0; $dcParseOk = $true
         if ($numstat) {
             foreach ($nl in ($numstat -split "`r?`n")) {
