@@ -1609,6 +1609,20 @@ function Get-FailureTaxonomyLabels {
     return @('ai-dispatch-failure-unknown')
 }
 
+function Test-PendingIssueSuperseded {
+    # PURE: a pending dispatch issue is SUPERSEDED when a newer ai-auto issue exists
+    # (a higher number, any state). The self-rearm loop files one task at a time, so a
+    # pending issue that is not the newest carries a STALE body (the brief was amended /
+    # a fresh task filed after it was queued). Mirrors Get-RecoveryDecision's
+    # supersession guard for the selection path. MaxAutoIssueNumber 0 => unknown =>
+    # not superseded (the published-SHA guard remains the backstop).
+    param(
+        [Parameter(Mandatory)][int]$IssueNumber,
+        [int]$MaxAutoIssueNumber = 0
+    )
+    return [bool]($MaxAutoIssueNumber -gt $IssueNumber)
+}
+
 function Get-DispatchSurfaceRouting {
     # PURE classifier for surface-split publishing (default-OFF autonomy feature).
     # Given the changed paths of a dispatch, decide whether the change is low-risk
@@ -2712,8 +2726,39 @@ try {
     # orphan-recovery published-SHA check -- search origin/main for the dispatch's
     # own commit "ai-dispatch ISSUE-N:".
     if ($pending.Count -gt 0) {
+        # Highest ai-auto issue number across ALL states. The self-rearm loop files one
+        # task at a time, so a pending issue below this is superseded -- its body is
+        # stale after a brief amendment filed a newer task. Best-effort: if the lookup
+        # fails, fall back to the max pending number, which still drops the older
+        # pending issues (the common race) and leaves the published-SHA guard as the
+        # cross-state backstop.
+        $maxAuto = (@($pending) | Measure-Object -Property number -Maximum).Maximum
+        $allAuto = Invoke-Tool -Exe 'gh' -CmdArgs @('issue', 'list', '--repo', $repoSlug,
+            '--label', 'ai-auto', '--state', 'all', '--limit', '200', '--json', 'number')
+        if ($allAuto.Code -eq 0 -and $allAuto.Text) {
+            try {
+                $gMax = ((@($allAuto.Text | ConvertFrom-Json) | ForEach-Object { [int]$_.number }) |
+                    Measure-Object -Maximum).Maximum
+                if ($gMax -gt $maxAuto) { $maxAuto = $gMax }
+            } catch {
+                Write-Output "Stale-replay guard: could not parse ai-auto issue list; using pending-max (#$maxAuto)."
+            }
+        } else {
+            Write-Output "Stale-replay guard: ai-auto issue lookup failed (exit $($allAuto.Code)); using pending-max (#$maxAuto)."
+        }
         $stillPending = @()
         foreach ($p in $pending) {
+            if (Test-PendingIssueSuperseded -IssueNumber $p.number -MaxAutoIssueNumber $maxAuto) {
+                Write-Output "Stale-replay guard: issue #$($p.number) superseded by a newer ai-auto issue (#$maxAuto); marking done, not dispatching its (possibly stale) body."
+                Invoke-Tool -Exe 'gh' -CmdArgs @(
+                    'issue', 'edit', "$($p.number)", '--repo', $repoSlug,
+                    '--remove-label', $QueueLabel, '--remove-label', $runLabel,
+                    '--add-label', $doneLabel) | Out-Null
+                Invoke-Tool -Exe 'gh' -CmdArgs @(
+                    'issue', 'close', "$($p.number)", '--repo', $repoSlug,
+                    '--comment', "Superseded by a newer ai-auto issue (#$maxAuto); closed by the stale-issue replay guard without re-running its (possibly stale) body.") | Out-Null
+                continue
+            }
             $pIssueId = "ISSUE-$($p.number)"
             $pubSha = (Git-Step @('log', 'origin/main', '-n', '1', '--fixed-strings',
                 "--grep=ai-dispatch ${pIssueId}:", '--format=%H')).Trim()

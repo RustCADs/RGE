@@ -102,6 +102,23 @@ Describe 'Test-SeatbeltReviewContinue (fail-closed)' {
     }
 }
 
+Describe 'Test-SeatbeltEvidenceSufficient (fail-closed seatbelt evidence)' {
+    It 'is sufficient for a non-empty, non-truncated window' {
+        $d = Test-SeatbeltEvidenceSufficient -ReturnedCount 7 -Limit 100
+        $d.Sufficient | Should -BeTrue
+    }
+    It 'is INSUFFICIENT on empty evidence (0 issues -> HOLD)' {
+        $d = Test-SeatbeltEvidenceSufficient -ReturnedCount 0 -Limit 100
+        $d.Sufficient | Should -BeFalse
+        $d.Reason | Should -Match 'no recent autonomous issues'
+    }
+    It 'is INSUFFICIENT when the window is truncated at the limit (more exist than shown)' {
+        $d = Test-SeatbeltEvidenceSufficient -ReturnedCount 100 -Limit 100
+        $d.Sufficient | Should -BeFalse
+        $d.Reason | Should -Match 'truncated'
+    }
+}
+
 Describe 'Test-AuthoredTaskScope (fail-closed authored-task scope gate)' {
     BeforeAll {
         $script:Ceiling = @('crates/editor-ui/tests', 'crates/editor-egui-host/src/menu_tests.rs', 'ai_handoffs')

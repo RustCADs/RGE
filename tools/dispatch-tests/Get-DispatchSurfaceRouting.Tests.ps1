@@ -105,3 +105,15 @@ Describe 'Test-DiffSizeWithinCap' {
         (Test-DiffSizeWithinCap -FilesChanged 10 -LinesChanged 200 -MaxFiles 10 -MaxLines 200).Within | Should -BeTrue
     }
 }
+
+Describe 'Test-PendingIssueSuperseded (stale-body selection guard)' {
+    It 'is superseded when a newer ai-auto issue exists (higher number)' {
+        Test-PendingIssueSuperseded -IssueNumber 100 -MaxAutoIssueNumber 101 | Should -BeTrue
+    }
+    It 'is NOT superseded when it is the newest ai-auto issue' {
+        Test-PendingIssueSuperseded -IssueNumber 101 -MaxAutoIssueNumber 101 | Should -BeFalse
+    }
+    It 'is NOT superseded when the max is unknown (0 -> fall back to the published-SHA guard)' {
+        Test-PendingIssueSuperseded -IssueNumber 100 -MaxAutoIssueNumber 0 | Should -BeFalse
+    }
+}

@@ -720,6 +720,23 @@ function Test-SeatbeltReviewContinue {
     return [bool]([string]$AnswerText -match '(?im)^\s*SEATBELT_REVIEW:\s*continue\s*$')
 }
 
+function Test-SeatbeltEvidenceSufficient {
+    # PURE, FAIL-CLOSED: a seatbelt CONTINUE is only meaningful when the reviewer
+    # actually sees the window. Empty evidence (0 closed issues) or a truncated slice
+    # (returned >= limit, so more exist than were fetched) is INSUFFICIENT -> HOLD.
+    param(
+        [Parameter(Mandatory)][int]$ReturnedCount,
+        [Parameter(Mandatory)][int]$Limit
+    )
+    if ($ReturnedCount -le 0) {
+        return [pscustomobject]@{ Sufficient = $false; Reason = 'no recent autonomous issues found in the window' }
+    }
+    if ($Limit -gt 0 -and $ReturnedCount -ge $Limit) {
+        return [pscustomobject]@{ Sufficient = $false; Reason = "evidence truncated at the $Limit-issue limit; the full window is not visible" }
+    }
+    return [pscustomobject]@{ Sufficient = $true; Reason = "$ReturnedCount recent autonomous issue(s) visible" }
+}
+
 function Invoke-CodexSeatbeltReview {
     # Default-OFF (-DelegateSeatbeltReview) bounded READ-ONLY review standing in for
     # the seatbelt human checkpoint. FAIL-CLOSED: any failure/ambiguity => Continue=$false
@@ -739,22 +756,30 @@ function Invoke-CodexSeatbeltReview {
         [int]$Count
     )
     $result = [pscustomobject]@{ Continue = $false; Reason = '' }
+    $evidenceLimit = 100
     try {
-        $recent = Get-IssuesJson @('issue', 'list', '--repo', $RepoSlug, '--label', $AutoLabel,
-            '--state', 'closed', '--limit', '30', '--json', 'number,title')
+        $recent = @(Get-IssuesJson @('issue', 'list', '--repo', $RepoSlug, '--label', $AutoLabel,
+            '--state', 'closed', '--limit', "$evidenceLimit", '--json', 'number,title'))
     } catch {
         $result.Reason = 'could not list recent autonomous issues; HOLD'
         return $result
     }
+    # FAIL-CLOSED: do not call the reviewer on empty or truncated evidence -- a
+    # CONTINUE rubber-stamped against an empty/partial window is exactly the fail-soft
+    # a bounded checkpoint must avoid.
+    $evi = Test-SeatbeltEvidenceSufficient -ReturnedCount $recent.Count -Limit $evidenceLimit
+    if (-not $evi.Sufficient) {
+        $result.Reason = "insufficient seatbelt evidence: $($evi.Reason); HOLD"
+        return $result
+    }
     $titles = ((@($recent) | ForEach-Object { "  #$($_.number): $($_.title)" }) -join "`n")
-    if (-not $titles) { $titles = '  (none found)' }
     $prompt = @"
 You are performing a bounded SAFETY review standing in for a periodic human
 checkpoint of an autonomous dispatch loop. Make NO edits. Review the recent
 autonomous tasks below for scope drift, wrong direction, or runaway, and decide
 whether the loop may continue another interval.
 
-Recent closed autonomous tasks (seatbelt window of $Count):
+Recent closed autonomous tasks ($($recent.Count) shown; seatbelt window of $Count):
 $titles
 
 Reply with exactly one final line:
@@ -806,6 +831,26 @@ function Test-HaltClearAnswer {
     # PURE, FAIL-CLOSED: $true ONLY when a line is exactly 'HALT_CLEAR: clear'.
     param([Parameter(Mandatory)][AllowEmptyString()][string]$AnswerText)
     return [bool]([string]$AnswerText -match '(?im)^\s*HALT_CLEAR:\s*clear\s*$')
+}
+
+function Test-HaltClearGuard {
+    # PURE, FAIL-CLOSED re-validation done IMMEDIATELY before deleting the sentinel,
+    # after the codex adjudication returns "clear". The codex call is not atomic with
+    # the read that fed it: another tick / a human could have rewritten the sentinel
+    # (e.g. a human-only consec-fail halt) in the meantime. Deleting is safe ONLY if
+    # the sentinel still exists AND still carries the SAME class that was adjudicated.
+    param(
+        [Parameter(Mandatory)][bool]$StillExists,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$AdjudicatedClass,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$CurrentClass
+    )
+    if (-not $StillExists) {
+        return [pscustomobject]@{ SafeToClear = $false; Reason = 'sentinel no longer present at delete time' }
+    }
+    if ([string]$CurrentClass -ne [string]$AdjudicatedClass) {
+        return [pscustomobject]@{ SafeToClear = $false; Reason = "sentinel class changed during adjudication ('$AdjudicatedClass' -> '$CurrentClass')" }
+    }
+    return [pscustomobject]@{ SafeToClear = $true; Reason = "sentinel unchanged (class='$AdjudicatedClass')" }
 }
 
 function Invoke-CodexHaltClear {
@@ -1290,10 +1335,27 @@ if (Test-Path -LiteralPath $haltSentinel) {
         if ($elig.Clearable) {
             $adj = Invoke-CodexHaltClear -SentinelText $haltText -RepoRoot $script:RepoRoot
             if ($adj.Clear) {
-                Remove-Item -LiteralPath $haltSentinel -Force -ErrorAction SilentlyContinue
-                Write-Output "AllowCodexClearHalt: auto-cleared self-resolved halt (class=$haltClass): $($adj.Reason). Resuming this tick."
-                Write-TimingTrace "auto.halt-checks: auto-cleared (class=$haltClass)"
-                $haltCleared = $true
+                # FAIL-CLOSED re-validation before deletion: re-read the sentinel and
+                # confirm it still exists with the SAME class that was adjudicated. A
+                # vanished sentinel or a class change (e.g. a human-only consec-fail
+                # halt written during the codex call) must NOT be auto-deleted.
+                $stillExists  = Test-Path -LiteralPath $haltSentinel
+                $recheckText  = if ($stillExists) { (Get-Content -Raw -LiteralPath $haltSentinel -ErrorAction SilentlyContinue) } else { '' }
+                $recheckClass = Get-HaltSentinelClass -SentinelText $recheckText
+                $guard = Test-HaltClearGuard -StillExists $stillExists -AdjudicatedClass $haltClass -CurrentClass $recheckClass
+                if (-not $guard.SafeToClear) {
+                    Write-Output "AllowCodexClearHalt: refusing to clear -- $($guard.Reason). Halt preserved."
+                } else {
+                    Remove-Item -LiteralPath $haltSentinel -Force -ErrorAction SilentlyContinue
+                    if (Test-Path -LiteralPath $haltSentinel) {
+                        # Deletion did not take (locked / permission); keep the halt.
+                        Write-Output "AllowCodexClearHalt: sentinel deletion failed (file still present); halt preserved."
+                    } else {
+                        Write-Output "AllowCodexClearHalt: auto-cleared self-resolved halt (class=$haltClass): $($adj.Reason). Resuming this tick."
+                        Write-TimingTrace "auto.halt-checks: auto-cleared (class=$haltClass)"
+                        $haltCleared = $true
+                    }
+                }
             } else {
                 Write-Output "AllowCodexClearHalt: codex held the halt (class=$haltClass): $($adj.Reason)."
             }

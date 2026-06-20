@@ -87,3 +87,20 @@ Describe 'Test-HaltClearAnswer (fail-closed)' {
         Test-HaltClearAnswer -AnswerText $Ans | Should -BeFalse
     }
 }
+
+Describe 'Test-HaltClearGuard (re-validate before deleting the sentinel)' {
+    It 'is safe to clear only when the sentinel still exists with the SAME adjudicated class' {
+        $d = Test-HaltClearGuard -StillExists $true -AdjudicatedClass 'seatbelt' -CurrentClass 'seatbelt'
+        $d.SafeToClear | Should -BeTrue
+    }
+    It 'refuses when the sentinel vanished during the codex call' {
+        $d = Test-HaltClearGuard -StillExists $false -AdjudicatedClass 'seatbelt' -CurrentClass ''
+        $d.SafeToClear | Should -BeFalse
+        $d.Reason | Should -Match 'no longer present'
+    }
+    It 'refuses when the class changed mid-call (e.g. a human-only consec-fail halt was written)' {
+        $d = Test-HaltClearGuard -StillExists $true -AdjudicatedClass 'seatbelt' -CurrentClass 'consec-fail'
+        $d.SafeToClear | Should -BeFalse
+        $d.Reason | Should -Match 'class changed'
+    }
+}
