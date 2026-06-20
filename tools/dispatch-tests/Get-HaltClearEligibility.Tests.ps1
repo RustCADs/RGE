@@ -53,3 +53,37 @@ Describe 'Get-HaltClearEligibility' {
         (Get-HaltClearEligibility -HaltClass 'Recovery').Clearable | Should -BeTrue
     }
 }
+
+Describe 'Get-HaltSentinelClass' {
+    It 'extracts the class from a CLASS: line' {
+        (Get-HaltSentinelClass -SentinelText "CLASS: seatbelt`r`nSeatbelt: 50 tasks...") | Should -Be 'seatbelt'
+    }
+    It 'lowercases the class' {
+        (Get-HaltSentinelClass -SentinelText "CLASS: SeatBelt`nmsg") | Should -Be 'seatbelt'
+    }
+    It 'returns empty for an untagged sentinel (fail-closed to human-only)' {
+        (Get-HaltSentinelClass -SentinelText 'Autonomous loop idle: ...') | Should -BeNullOrEmpty
+    }
+    It 'an untagged sentinel is therefore not auto-clearable' {
+        $cls = Get-HaltSentinelClass -SentinelText 'some queue-exit fault text'
+        (Get-HaltClearEligibility -HaltClass $cls).Clearable | Should -BeFalse
+    }
+    It 'the tagged seatbelt sentinel resolves to a clearable class end-to-end' {
+        $cls = Get-HaltSentinelClass -SentinelText "CLASS: seatbelt`r`nSeatbelt: 50 autonomous tasks filed since last review."
+        (Get-HaltClearEligibility -HaltClass $cls).Clearable | Should -BeTrue
+    }
+}
+
+Describe 'Test-HaltClearAnswer (fail-closed)' {
+    It 'is true only for an exact clear line' {
+        Test-HaltClearAnswer -AnswerText "reasoning`nHALT_CLEAR: clear" | Should -BeTrue
+    }
+    It 'is false for hold / prose / empty: <Ans>' -ForEach @(
+        @{ Ans = 'HALT_CLEAR: hold' }
+        @{ Ans = 'clear' }
+        @{ Ans = 'HALT_CLEAR: clear-ish' }
+        @{ Ans = '' }
+    ) {
+        Test-HaltClearAnswer -AnswerText $Ans | Should -BeFalse
+    }
+}

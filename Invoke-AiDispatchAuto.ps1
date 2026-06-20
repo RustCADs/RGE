@@ -98,6 +98,10 @@ param(
     # When set, a bounded read-only Codex review may stand in for the seatbelt human
     # checkpoint (CONTINUE/HOLD). Fail-closed: HOLD / any failure keeps the human pause.
     [switch]$DelegateSeatbeltReview,
+    # When set, the top-of-tick halt sentinel may auto-clear, but ONLY for a
+    # self-resolved class (Get-HaltClearEligibility: seatbelt/recovery) AND a codex
+    # read-only 'HALT_CLEAR: clear'. Fail-closed: every other class / any failure halts.
+    [switch]$AllowCodexClearHalt,
 
     [string]$TaskBrief = '',
 
@@ -700,6 +704,79 @@ When uncertain, choose hold.
     return $result
 }
 
+function Get-HaltSentinelClass {
+    # PURE: extract the halt class from a sentinel whose first content includes a
+    # 'CLASS: <token>' line. Returns '' when absent (=> Get-HaltClearEligibility
+    # fail-closes to human-only). Only the seatbelt sentinel is tagged today; every
+    # other (untagged) sentinel therefore stays human-only.
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$SentinelText)
+    $m = [regex]::Match([string]$SentinelText, '(?im)^\s*CLASS:\s*([A-Za-z0-9_-]+)\s*$')
+    if ($m.Success) { return $m.Groups[1].Value.Trim().ToLowerInvariant() }
+    return ''
+}
+
+function Test-HaltClearAnswer {
+    # PURE, FAIL-CLOSED: $true ONLY when a line is exactly 'HALT_CLEAR: clear'.
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$AnswerText)
+    return [bool]([string]$AnswerText -match '(?im)^\s*HALT_CLEAR:\s*clear\s*$')
+}
+
+function Invoke-CodexHaltClear {
+    # Default-OFF (-AllowCodexClearHalt) adjudication of whether a SELF-RESOLVED halt
+    # may auto-clear. Called ONLY after Get-HaltClearEligibility passes. READ-ONLY,
+    # no edits. FAIL-CLOSED: any failure/ambiguity => Clear=$false (halt stays).
+    #
+    # PROMPT CONTRACT (codex exec --sandbox read-only --cd <repo>):
+    #   INPUT (stdin): the sentinel text + the rules. CODEX decides if resuming one
+    #     interval is safe, ending with exactly one line 'HALT_CLEAR: clear' or
+    #     'HALT_CLEAR: hold' (uncertain => hold). It makes no edits.
+    #   OUTPUT CONTRACT (verified by Test-HaltClearAnswer, never trusted): 'clear'
+    #     => delete the sentinel and resume; anything else / failure => keep the halt.
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$SentinelText,
+        [Parameter(Mandatory)][string]$RepoRoot
+    )
+    $result = [pscustomobject]@{ Clear = $false; Reason = '' }
+    $prompt = @"
+An autonomous dispatch loop is paused by a SELF-RESOLVED halt sentinel (a periodic
+checkpoint or a recovered transient). Make NO edits. Decide whether it is safe to
+clear the halt and resume one interval.
+
+Sentinel contents:
+$SentinelText
+
+Reply with exactly one final line: 'HALT_CLEAR: clear' to resume, or
+'HALT_CLEAR: hold' to keep the pause. When uncertain, choose hold.
+"@
+    $promptFile = Join-Path $env:TEMP 'rge-ai-haltclear-prompt.txt'
+    $answerFile = Join-Path $env:TEMP 'rge-ai-haltclear-answer.txt'
+    $logFile    = Join-Path $env:TEMP 'rge-ai-haltclear.log'
+    Write-Utf8 $promptFile $prompt
+    Remove-Item -LiteralPath $answerFile -Force -ErrorAction SilentlyContinue
+    $codexArgs = @('exec', '--cd', $RepoRoot, '--sandbox', 'read-only', '--output-last-message', $answerFile, '-')
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    $global:LASTEXITCODE = 0
+    try {
+        Get-Content -Raw -LiteralPath $promptFile | & codex @codexArgs > $logFile 2>&1
+    } finally {
+        $ErrorActionPreference = $prevEap
+    }
+    if ($LASTEXITCODE -ne 0) {
+        $result.Reason = "codex exec halt-clear failed (exit $LASTEXITCODE); HOLD"
+        return $result
+    }
+    $answer = (Get-Content -Raw -LiteralPath $answerFile -ErrorAction SilentlyContinue)
+    if ($null -eq $answer) { $answer = '' }
+    if (Test-HaltClearAnswer -AnswerText $answer) {
+        $result.Clear = $true
+        $result.Reason = 'codex adjudication: clear'
+    } else {
+        $result.Reason = 'codex adjudication: hold or unparseable'
+    }
+    return $result
+}
+
 function Get-RecoveryDecision {
     # Pure decision helper for bounded one-shot recovery. Given the list of OPEN
     # failed autonomous issues plus the label set this loop uses, return the
@@ -1074,14 +1151,37 @@ try {
 Write-TimingTrace "auto.halt-checks: start"
 $haltSentinel = Join-Path $script:RepoRoot '.ai\dispatch.auto-halt'
 if (Test-Path -LiteralPath $haltSentinel) {
-    Write-Output ''
-    Write-Output "HALTED: a prior tick recorded a fault in $haltSentinel."
     $haltText = (Get-Content -Raw -LiteralPath $haltSentinel -ErrorAction SilentlyContinue)
-    if ($haltText) { Write-Output "  $($haltText.Trim())" }
-    Write-Output "Investigate, then delete that file to resume."
-    Write-TimingTrace "auto.halt-checks: halted (sentinel=$haltSentinel)"
-    Write-TimingTrace "auto.tick: end (exit=0, halted=true)"
-    exit 0
+    # Default-OFF auto-clear: ONLY a self-resolved class (Get-HaltClearEligibility)
+    # AND a codex read-only 'HALT_CLEAR: clear' may remove the sentinel and resume.
+    # FAIL-CLOSED: every other class / any failure leaves the unchanged halt below.
+    $haltCleared = $false
+    if ($AllowCodexClearHalt) {
+        $haltClass = Get-HaltSentinelClass -SentinelText $haltText
+        $elig = Get-HaltClearEligibility -HaltClass $haltClass
+        if ($elig.Clearable) {
+            $adj = Invoke-CodexHaltClear -SentinelText $haltText -RepoRoot $script:RepoRoot
+            if ($adj.Clear) {
+                Remove-Item -LiteralPath $haltSentinel -Force -ErrorAction SilentlyContinue
+                Write-Output "AllowCodexClearHalt: auto-cleared self-resolved halt (class=$haltClass): $($adj.Reason). Resuming this tick."
+                Write-TimingTrace "auto.halt-checks: auto-cleared (class=$haltClass)"
+                $haltCleared = $true
+            } else {
+                Write-Output "AllowCodexClearHalt: codex held the halt (class=$haltClass): $($adj.Reason)."
+            }
+        } else {
+            Write-Output "AllowCodexClearHalt: halt is not auto-clearable ($($elig.Reason))."
+        }
+    }
+    if (-not $haltCleared) {
+        Write-Output ''
+        Write-Output "HALTED: a prior tick recorded a fault in $haltSentinel."
+        if ($haltText) { Write-Output "  $($haltText.Trim())" }
+        Write-Output "Investigate, then delete that file to resume."
+        Write-TimingTrace "auto.halt-checks: halted (sentinel=$haltSentinel)"
+        Write-TimingTrace "auto.tick: end (exit=0, halted=true)"
+        exit 0
+    }
 }
 
 # --- 1b. Bounded one-shot recovery (two taxonomy-specific tiers) -----------
@@ -1376,7 +1476,7 @@ if ($openQueue.Count -gt 0) {
         # pause holds even if issue filing fails, then file the review issue,
         # then reset the counter LAST so a resume (sentinel deleted) starts a
         # fresh interval. New-NeedsHumanIssue is gh-failure-tolerant (never throws).
-        Write-Utf8 $haltSentinel ("Seatbelt: {0} autonomous tasks filed since last review. Review the recent batch, then delete this file to resume the next {1}." -f $filedSinceReview, $SeatbeltInterval)
+        Write-Utf8 $haltSentinel ("CLASS: seatbelt`r`nSeatbelt: {0} autonomous tasks filed since last review. Review the recent batch, then delete this file to resume the next {1}." -f $filedSinceReview, $SeatbeltInterval)
         New-NeedsHumanIssue -RepoSlug $repoSlug `
             -Title "AI dispatch seatbelt: review last $filedSinceReview autonomous tasks" `
             -Body "The autonomous dispatch loop reached its periodic seatbelt: $filedSinceReview new autonomous tasks have been filed since the last human review.`r`n`r`nReview the recent batch (merged work, drift, direction), then delete the halt sentinel ``.ai/dispatch.auto-halt`` to resume the next $SeatbeltInterval-task interval. The counter has been reset, so resuming will not immediately re-pause."
