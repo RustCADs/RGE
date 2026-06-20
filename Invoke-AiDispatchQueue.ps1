@@ -80,6 +80,12 @@ param(
     [ValidateSet('', 'main', 'branch', 'pr')]
     [string]$PublishMode = '',
 
+    # Default-OFF surface-split publishing: when set, a control-passed run's effective
+    # publish mode is derived from its changed paths (Get-DispatchSurfaceRouting) --
+    # low-risk auto-merges to main, any high-risk path opens a PR for human merge.
+    # Absent => the resolved -PublishMode is used unchanged (current behavior).
+    [switch]$SurfaceSplitPublish,
+
     [ValidateRange(0, 5)]
     [int]$MaxPlanRevisions = 2,
 
@@ -3092,6 +3098,23 @@ $(
     $prNumber = 0
     $prUrl = ''
     $eligibleForPublish = ($committed -and $loopExit -eq 0 -and $verdict -eq 'pass')
+
+    # Default-OFF surface-split routing: when armed and the run is publishable, derive
+    # the effective publish mode from the changed paths -- low-risk (docs/tests/
+    # artifacts) auto-merges to main; ANY high-risk path opens a PR for human merge.
+    # FAIL-CLOSED: an empty or uncomputable diff routes to PR, never main. The guard's
+    # publish-confirmation (Test-PublishConfirmation) independently gates the actual
+    # main push, so this routing cannot by itself land unverified work on main.
+    if ($SurfaceSplitPublish -and $eligibleForPublish) {
+        $ssChanged = @()
+        $ssDiff = Git-Step @('diff', '--name-only', 'origin/main...HEAD')
+        if ($ssDiff) { $ssChanged = @(($ssDiff -split "`r?`n") | Where-Object { $_.Trim() }) }
+        $ssRouting = Get-DispatchSurfaceRouting -ChangedPaths $ssChanged
+        if ($script:ResolvedPublishMode -ne $ssRouting.Routing) {
+            Write-Output "Surface-split: routing this dispatch to '$($ssRouting.Routing)' (was '$($script:ResolvedPublishMode)') -- $($ssRouting.Reason)"
+        }
+        $script:ResolvedPublishMode = $ssRouting.Routing
+    }
 
     # Progress comment: publish decision. Best-effort; failures warn only.
     # The five-way mode mirrors the publish if/elseif chain below so the
