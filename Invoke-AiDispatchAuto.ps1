@@ -359,6 +359,33 @@ function Get-BlockText {
     return ''
 }
 
+function Get-HaltClearEligibility {
+    # PURE policy for default-OFF -AllowCodexClearHalt: given the CLASS recorded in
+    # the auto-halt sentinel, decide whether an automated/Codex actor may clear it,
+    # or it must stay human-only. FAIL-CLOSED: only the explicitly self-resolved
+    # classes are clearable; every other class (including unknown/blank) is held.
+    #   Clearable (self-resolved): seatbelt, recovery
+    #   Human-only (HOLD):         queue-exit, seatbelt-corrupt, consec-fail,
+    #                              idle, needs-human, fault, manual, <unknown/blank>
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$HaltClass
+    )
+    $class = ([string]$HaltClass).Trim().ToLowerInvariant()
+    $clearable = @('seatbelt', 'recovery')
+    $result = [pscustomobject]@{ Clearable = $false; Class = $class; Reason = '' }
+    if (-not $class) {
+        $result.Reason = 'no halt class recorded; human-only (fail-closed)'
+        return $result
+    }
+    if ($clearable -contains $class) {
+        $result.Clearable = $true
+        $result.Reason = "halt class '$class' is self-resolved; an automated actor may clear it"
+    } else {
+        $result.Reason = "halt class '$class' is human-only; not auto-clearable"
+    }
+    return $result
+}
+
 function Test-AutoApprovableRecommendation {
     # PURE eligibility check for default-OFF Codex self-re-arm. A gated audit's
     # "Recommendation for human approval" block may be AUTO-AUTHORED into the next
