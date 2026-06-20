@@ -51,6 +51,14 @@ fail-closed are preserved throughout.
 New test seam: `RGE_AI_DISPATCH_GUARD_SKIP_OOB_SHA=1` keeps the guard's all-posture
 publish-confirmation offline in hermetic mock runs.
 
+A **second** review pass found three residuals, all now closed:
+
+| Commit | Sev | Fix |
+|---|---|---|
+| `0c5520d` | High | Self-rearm scope gate now also requires the authored task carry the **gated-audit continuation** (self-re-arm → next AUDIT); without it the alternating feature→audit chain could break. |
+| `0c5520d` | Med | Delegated seatbelt review queries **all states** (work stays open in pr/branch) and must **cover the window** (`returned ≥ Count`), not just be non-empty. |
+| `89b6f16` | Med | Brief routing is **strict by default** (any brief change → PR); `-AllowBriefRideAlong` (default-OFF, plumbed end-to-end) opts back into ride-along auto-merge. |
+
 ---
 
 ## 2. How to review
@@ -82,7 +90,7 @@ $cfg.Run.Path = 'tools/dispatch-tests'                    # whole dispatch-test 
 $cfg.Output.Verbosity = 'Detailed'
 Invoke-Pester -Configuration $cfg
 ```
-Current result: **599 pass, 1 fail** (the review-fix round added ~23 tests) — the
+Current result: **604 pass, 1 fail** (two review-fix rounds added ~28 tests) — the
 single failure (`sweeps a dead queue-owned claim before its TTL expires`) is the
 same **pre-existing flaky timing test** in `AutonomousCodexExecutorDryRun.Tests.ps1`
 (passes isolated + on baseline; not touched by this branch). Each `.ps1` also parses
@@ -109,7 +117,7 @@ clean via `[System.Management.Automation.Language.Parser]::ParseFile`.
 | `.ai/dispatch.auto-halt` with `CLASS: consec-fail` | Written after `-MaxConsecutiveFailures` consecutive failed ticks. **Human-only** — `-AllowCodexClearHalt` refuses to clear it. | Investigate the recurring failure, then delete the file. |
 | `.ai/dispatch.auto-consecutive-failures.json` | The consec-fail counter (increments on a failed tick, resets on a clean one). Only written when `-MaxConsecutiveFailures > 0`. | Delete to reset (or let a clean tick reset it). |
 
-**Default-OFF autonomy switches** (all inert unless explicitly passed; off-path = current behavior): `-AllowCodexSelfRearm` + `-AutoRearmCeilingSurface` (Auto), `-DelegateSeatbeltReview` (Auto), `-AllowCodexClearHalt` (Auto), `-SurfaceSplitPublish` + `-MaxDiffFiles`/`-MaxDiffLines` (Queue), `-MaxConsecutiveFailures` (Auto). Only `-AllowCodexClearHalt` ever auto-clears a sentinel, and only the `seatbelt`/`recovery` classes.
+**Default-OFF autonomy switches** (all inert unless explicitly passed; off-path = current behavior): `-AllowCodexSelfRearm` + `-AutoRearmCeilingSurface` (Auto), `-DelegateSeatbeltReview` (Auto), `-AllowCodexClearHalt` (Auto), `-SurfaceSplitPublish` + `-MaxDiffFiles`/`-MaxDiffLines` + `-AllowBriefRideAlong` (Queue), `-MaxConsecutiveFailures` (Auto). All are now plumbed end-to-end (Register → Guard → Auto → Queue). Only `-AllowCodexClearHalt` ever auto-clears a sentinel, and only the `seatbelt`/`recovery` classes. Brief routing is strict by default (a re-arm → PR); `-AllowBriefRideAlong` is the only switch that lets a brief change reach main, and only riding along with low-risk work.
 
 ---
 
