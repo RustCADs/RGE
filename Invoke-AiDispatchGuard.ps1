@@ -605,6 +605,9 @@ function Get-OriginMainSha {
     # itself. Localizes EAP to 'Continue' so git's stderr progress cannot trip the
     # PS 5.1 native-error trap; returns '' on any failure (treated as "no publish"
     # by Test-PublishConfirmation -> fail-safe, never a false anomaly).
+    # Test seam: RGE_AI_DISPATCH_GUARD_SKIP_OOB_SHA=1 short-circuits to '' so hermetic
+    # mock-driver runs never invoke git fetch / network.
+    if ($env:RGE_AI_DISPATCH_GUARD_SKIP_OOB_SHA -eq '1') { return '' }
     $old = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
@@ -698,9 +701,12 @@ function Invoke-GuardLiveRun {
         Write-GuardLine -Kind 'WARN' -Message 'PublishMode=main: driver may auto-publish to origin/main on a control pass'
     }
 
-    # Out-of-band publish detection (main posture only, so pr/branch runs -- incl.
-    # the mock-driver tests -- never invoke git): record origin/main BEFORE launch.
-    $preSha = if ($PublishMode -eq 'main') { Get-OriginMainSha } else { '' }
+    # Out-of-band publish detection (ALL postures): record origin/main BEFORE launch.
+    # main may legitimately advance (confirmed by the real signals); a non-main
+    # posture must NEVER advance origin/main -- if it does, Test-PublishConfirmation
+    # flags it. Get-OriginMainSha returns '' on any failure or under the
+    # RGE_AI_DISPATCH_GUARD_SKIP_OOB_SHA test seam, so hermetic mock runs stay offline.
+    $preSha = Get-OriginMainSha
 
     $proc = Start-Process -FilePath 'powershell.exe' -ArgumentList $driverArgs `
         -RedirectStandardOutput $driverOut -RedirectStandardError $driverErr -NoNewWindow -PassThru
@@ -771,10 +777,12 @@ function Invoke-GuardLiveRun {
                 Stop-GuardRun -Trigger 'driver-exit' -Reason "driver exited non-zero ($exit)" -ChildPid 0 -RecentText $recentText
                 return 'aborted'
             }
-            # Publish confirmation (main posture only): a clean exit may have pushed
-            # to origin/main. Confirm by out-of-band SHA advance + the real latched
-            # signals; an unconfirmed advance is a hard abort.
-            if ($PublishMode -eq 'main') {
+            # Publish confirmation (ALL postures): a clean exit may have advanced
+            # origin/main. A main publish is confirmed by the real latched signals;
+            # ANY advance under a non-main posture is an anomaly. Skipped only when
+            # preSha was not captured (no origin / test seam) -- nothing to compare,
+            # so no false abort.
+            if ($preSha) {
                 $postSha = Get-OriginMainSha
                 $pubConf = Test-PublishConfirmation -PreSha $preSha -PostSha $postSha `
                     -SawVerifyOk $sawVerifyOk -SawControlPass $sawControlPass -PublishMode $PublishMode

@@ -7,6 +7,10 @@
 
 BeforeAll {
     $env:RGE_AI_DISPATCH_GUARD_SKIP_MAIN = '1'
+    # Out-of-band SHA capture now runs for ALL publish postures; this seam keeps the
+    # live child-guard mock runs hermetic (no git fetch / network). Child processes
+    # spawned via Start-Process inherit it from this parent process.
+    $env:RGE_AI_DISPATCH_GUARD_SKIP_OOB_SHA = '1'
     $guard = Join-Path $PSScriptRoot '..\..\Invoke-AiDispatchGuard.ps1'
     . $guard -DispatchId 'PESTER' -WatchRoot $TestDrive
     $ErrorActionPreference = 'Continue'
@@ -14,6 +18,7 @@ BeforeAll {
 
 AfterAll {
     Remove-Item Env:RGE_AI_DISPATCH_GUARD_SKIP_MAIN -ErrorAction SilentlyContinue
+    Remove-Item Env:RGE_AI_DISPATCH_GUARD_SKIP_OOB_SHA -ErrorAction SilentlyContinue
 }
 
 Describe 'New-GuardDriverArguments forwards autonomy + surface-split flags to the driver' {
@@ -610,5 +615,15 @@ Describe 'Test-PublishConfirmation (real-signal + out-of-band SHA)' {
 
     It 'treats empty/unknown SHAs as no publish (fail-safe, no false anomaly)' {
         (Test-PublishConfirmation -PreSha '' -PostSha '' -SawVerifyOk $false -SawControlPass $false -PublishMode 'main').Anomaly | Should -BeFalse
+    }
+}
+
+Describe 'Get-OriginMainSha out-of-band test seam' {
+    It 'returns empty under RGE_AI_DISPATCH_GUARD_SKIP_OOB_SHA so hermetic runs never fetch' {
+        # The seam is set for this suite (top BeforeAll). Under it the guard captures
+        # no SHA -> publish-confirmation is skipped (no git/network, no false anomaly),
+        # while the all-posture confirmation wiring is exercised by the pure
+        # Test-PublishConfirmation cases above.
+        Get-OriginMainSha | Should -BeNullOrEmpty
     }
 }
