@@ -534,3 +534,42 @@ exit 0
             Should -Match 'stop sentinel'
     }
 }
+
+Describe 'Test-PublishConfirmation (real-signal + out-of-band SHA)' {
+    It 'confirms a main publish when origin/main advanced and both real signals were seen' {
+        $d = Test-PublishConfirmation -PreSha 'aaaa' -PostSha 'bbbb' -SawVerifyOk $true -SawControlPass $true -PublishMode 'main'
+        $d.Published | Should -BeTrue
+        $d.Confirmed | Should -BeTrue
+        $d.Anomaly | Should -BeFalse
+    }
+
+    It 'flags an anomaly when origin/main advanced under main but <Missing> was not observed' -ForEach @(
+        @{ Vok = $false; Cok = $true;  Missing = 'VERIFY OK' }
+        @{ Vok = $true;  Cok = $false; Missing = 'Codex control passed' }
+        @{ Vok = $false; Cok = $false; Missing = 'both signals' }
+    ) {
+        $d = Test-PublishConfirmation -PreSha 'aaaa' -PostSha 'bbbb' -SawVerifyOk $Vok -SawControlPass $Cok -PublishMode 'main'
+        $d.Anomaly | Should -BeTrue
+        $d.Confirmed | Should -BeFalse
+    }
+
+    It 'flags an anomaly when origin/main advances under a non-main publish posture' {
+        $d = Test-PublishConfirmation -PreSha 'aaaa' -PostSha 'bbbb' -SawVerifyOk $true -SawControlPass $true -PublishMode 'pr'
+        $d.Anomaly | Should -BeTrue
+        $d.Reason | Should -Match "must NOT push to main"
+    }
+
+    It 'is a no-op (confirmed, not published) when origin/main did not advance: <Mode>' -ForEach @(
+        @{ Mode = 'main' }
+        @{ Mode = 'pr' }
+    ) {
+        $d = Test-PublishConfirmation -PreSha 'aaaa' -PostSha 'aaaa' -SawVerifyOk $false -SawControlPass $false -PublishMode $Mode
+        $d.Published | Should -BeFalse
+        $d.Anomaly | Should -BeFalse
+        $d.Confirmed | Should -BeTrue
+    }
+
+    It 'treats empty/unknown SHAs as no publish (fail-safe, no false anomaly)' {
+        (Test-PublishConfirmation -PreSha '' -PostSha '' -SawVerifyOk $false -SawControlPass $false -PublishMode 'main').Anomaly | Should -BeFalse
+    }
+}

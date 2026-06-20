@@ -583,6 +583,54 @@ function Test-GuardStopRequested {
     return [bool]($Path -and (Test-Path -LiteralPath $Path -PathType Leaf))
 }
 
+function Test-PublishConfirmation {
+    # PURE confirmation for an auto-publish to origin/main. The guard CANNOT see the
+    # push command (the dispatch scripts capture git, they do not echo it), so a
+    # publish is detected OUT-OF-BAND by an origin/main SHA advance and confirmed by
+    # the REAL guard-visible signals the gate/loop emit:
+    #   VERIFY OK: ...                  (.ai/dispatch.verify.ps1:375)
+    #   Codex control passed; ...       (Invoke-AiDispatchQueue.ps1:3138 / :3222)
+    # A main-mode origin/main advance WITHOUT both signals -- or ANY origin/main
+    # advance under a non-main publish posture -- is an anomaly the guard aborts on.
+    param(
+        [AllowEmptyString()][string]$PreSha,
+        [AllowEmptyString()][string]$PostSha,
+        [bool]$SawVerifyOk,
+        [bool]$SawControlPass,
+        [string]$PublishMode = 'pr'
+    )
+    $pre  = ([string]$PreSha).Trim()
+    $post = ([string]$PostSha).Trim()
+    $published = [bool]($pre -and $post -and ($pre -ne $post))
+    $result = [pscustomobject]@{
+        Published = $published
+        Confirmed = $true
+        Anomaly   = $false
+        Reason    = ''
+    }
+    if (-not $published) {
+        $result.Reason = 'origin/main did not advance; no publish to confirm'
+        return $result
+    }
+    if ($PublishMode -ne 'main') {
+        $result.Confirmed = $false
+        $result.Anomaly   = $true
+        $result.Reason = "origin/main advanced ($pre -> $post) under PublishMode='$PublishMode', which must NOT push to main"
+        return $result
+    }
+    if ($SawVerifyOk -and $SawControlPass) {
+        $result.Reason = "confirmed main publish ($pre -> $post): VERIFY OK + Codex control passed both observed"
+        return $result
+    }
+    $missing = @()
+    if (-not $SawVerifyOk)   { $missing += 'VERIFY OK' }
+    if (-not $SawControlPass) { $missing += 'Codex control passed' }
+    $result.Confirmed = $false
+    $result.Anomaly   = $true
+    $result.Reason = "origin/main advanced ($pre -> $post) WITHOUT required signal(s): " + ($missing -join ', ')
+    return $result
+}
+
 function Invoke-GuardLiveRun {
     [CmdletBinding()]
     param([int]$TickIndex = 1)
