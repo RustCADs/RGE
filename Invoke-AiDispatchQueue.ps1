@@ -1644,6 +1644,16 @@ function Get-DispatchSurfaceRouting {
         $result.Reason = 'no changed paths; nothing to auto-merge'
         return $result
     }
+    # The dispatch brief is the loop's CONTROL surface: a change to it can re-arm the
+    # loop (author the next task), so it is NOT a low-risk green light on its own. It is
+    # excluded from the low/high decision -- a changeset that is ONLY the brief (a
+    # re-arm with no substantive work) fails closed to a PR, while a brief re-arm
+    # riding along with genuine low-risk work (docs/tests/artifacts) still auto-merges.
+    $isControl = {
+        param($p)
+        ($p -like '.ai/dispatch.tasks.md') -or
+        ($p -like '.ai/dispatch.tasks.archive.md')
+    }
     $isLowRisk = {
         param($p)
         ($p -like '*.md') -or
@@ -1652,13 +1662,20 @@ function Get-DispatchSurfaceRouting {
         ($p -like 'ai_handoffs/*') -or
         ($p -like 'ai_dispatch_logs/*')
     }
-    $high = @($paths | Where-Object { -not (& $isLowRisk $_) })
-    if ($high.Count -eq 0) {
-        $result.Routing = 'main'
-        $result.Reason  = "all $($paths.Count) changed path(s) are low-risk (docs/tests/artifacts); eligible for auto-merge"
-    } else {
+    $control = @($paths | Where-Object { & $isControl $_ })
+    $rest    = @($paths | Where-Object { -not (& $isControl $_) })
+    $high    = @($rest | Where-Object { -not (& $isLowRisk $_) })
+    if ($high.Count -gt 0) {
         $result.HighRiskPaths = $high
         $result.Reason = "$($high.Count) high-risk path(s) require a human-merged PR: " + (($high | Select-Object -First 5) -join ', ')
+    } elseif ($rest.Count -eq 0) {
+        # Only the control brief changed -> a re-arm with no substantive work; the
+        # loop's own controller does not auto-merge itself.
+        $result.Reason = 'only the dispatch brief (control surface) changed; routing to a human-merged PR'
+    } else {
+        $result.Routing = 'main'
+        $riderNote = if ($control.Count -gt 0) { ' plus the brief re-arm' } else { '' }
+        $result.Reason  = "all $($rest.Count) substantive change(s) are low-risk (docs/tests/artifacts)$riderNote; eligible for auto-merge"
     }
     return $result
 }
@@ -3137,7 +3154,11 @@ $(
     # FAIL-CLOSED: an empty or uncomputable diff routes to PR, never main. The guard's
     # publish-confirmation (Test-PublishConfirmation) independently gates the actual
     # main push, so this routing cannot by itself land unverified work on main.
-    if ($SurfaceSplitPublish -and $eligibleForPublish) {
+    # Surface-split applies ONLY to a main posture: it may DOWNGRADE a main publish to a
+    # human-merged PR (any high-risk path, or a brief-only changeset), but it must never
+    # PROMOTE an explicit branch/-NoPublish or pr posture up to main. Gating on 'main'
+    # keeps the operator's lower-trust intent authoritative (fail-closed).
+    if ($SurfaceSplitPublish -and $eligibleForPublish -and $script:ResolvedPublishMode -eq 'main') {
         $ssChanged = @()
         # Diff the dispatch BRANCH (not HEAD): Git-Step runs in the primary checkout's
         # cwd, whose HEAD is the parked origin/main -> 'origin/main...HEAD' would be empty.

@@ -22,7 +22,6 @@ BeforeAll {
 Describe 'Get-DispatchSurfaceRouting' {
     It 'auto-merges when every path is low-risk: <Why>' -ForEach @(
         @{ Paths = @('README.md');                                              Why = 'a doc' }
-        @{ Paths = @('.ai/dispatch.tasks.md');                                   Why = 'the brief (markdown)' }
         @{ Paths = @('tools/dispatch-tests/Foo.Tests.ps1');                      Why = 'a dispatch test' }
         @{ Paths = @('crates/editor-ui/src/Bar.Tests.ps1');                      Why = 'a .Tests.ps1 anywhere' }
         @{ Paths = @('ai_handoffs/ISSUE-1_TASK.md', 'ai_dispatch_logs/log.md');  Why = 'generated artifacts' }
@@ -56,6 +55,27 @@ Describe 'Get-DispatchSurfaceRouting' {
         $r = Get-DispatchSurfaceRouting -ChangedPaths @()
         $r.Routing | Should -Be 'pr'
         $r.Reason | Should -Match 'no changed paths'
+    }
+
+    It 'routes a brief-ONLY changeset to PR (the control surface does not auto-merge itself)' -ForEach @(
+        @{ Paths = @('.ai/dispatch.tasks.md');                          Why = 'a re-arm with no other work' }
+        @{ Paths = @('.ai/dispatch.tasks.archive.md');                  Why = 'a brief-archive op' }
+        @{ Paths = @('.ai/dispatch.tasks.md', '.ai/dispatch.tasks.archive.md'); Why = 'brief + archive only' }
+    ) {
+        $r = Get-DispatchSurfaceRouting -ChangedPaths $Paths
+        $r.Routing | Should -Be 'pr'
+        $r.Reason | Should -Match 'brief'
+    }
+
+    It 'auto-merges when the brief re-arm rides along with genuine low-risk work' {
+        $r = Get-DispatchSurfaceRouting -ChangedPaths @('.ai/dispatch.tasks.md', 'Status.md', 'ai_handoffs/ISSUE-9_EXEC.md')
+        $r.Routing | Should -Be 'main'
+        $r.Reason | Should -Match 'brief re-arm'
+    }
+
+    It 'still routes to PR when the brief rides along with a high-risk source change' {
+        (Get-DispatchSurfaceRouting -ChangedPaths @('.ai/dispatch.tasks.md', 'crates/editor-ui/src/menus/default_menu.rs')).Routing |
+            Should -Be 'pr'
     }
 
     It 'normalizes backslash paths before matching' {
