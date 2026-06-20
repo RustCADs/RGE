@@ -580,8 +580,17 @@ function Test-AuthoredTaskScope {
         $result.Reason = 'authored MAY-edit path(s) outside the approved ceiling: ' + (($bad | Select-Object -First 5) -join ', ')
         return $result
     }
+    # The authored FEATURE task MUST carry the gated chain forward: a self-re-arm
+    # instruction to append the next GATED AUDIT. Without it the alternating
+    # feature -> audit chain breaks (a feature could be followed by an un-gated
+    # feature, skipping the source-read-only audit checkpoint). Fail-closed if either
+    # the self-re-arm cue or the audit continuation is absent.
+    if (($block -notmatch '(?is)self[\s-]*re-?arm') -or ($block -notmatch '(?im)\baudit\b')) {
+        $result.Reason = 'authored task is missing the required self-re-arm -> next GATED AUDIT continuation'
+        return $result
+    }
     $result.Ok = $true
-    $result.Reason = "authored MAY-edit surface ($($tokens.Count) path(s)) within the approved ceiling"
+    $result.Reason = "authored MAY-edit surface ($($tokens.Count) path(s)) within ceiling; gated-audit continuation present"
     return $result
 }
 
@@ -642,9 +651,11 @@ Required edits to .ai/dispatch.tasks.md:
        EVERY path MUST be within the approved surface above (the brief
        `.ai/dispatch.tasks.md` is always allowed); list NO path outside it.
      - a line '### MUST NOT edit' that forbids everything else.
-   Also include a Self-re-arm instruction to append the next GATED AUDIT task (NOT
-   another feature). The harness rejects (reverts) the edit if any MAY-edit path
-   falls outside the approved surface or the MUST-NOT-edit section is missing.
+   Also include a '### Self-re-arm' section instructing the appended task to, as its
+   final step, append the next GATED AUDIT task (NOT another feature). The harness
+   rejects (reverts) the edit if any MAY-edit path falls outside the approved surface,
+   the MUST-NOT-edit section is missing, or the self-re-arm -> next GATED AUDIT
+   continuation is absent.
 3. Do NOT record any new NEEDS_HUMAN_RECORDED marker. Do NOT append more than one task.
 
 Recommendation block (verbatim, for reference):
@@ -722,17 +733,24 @@ function Test-SeatbeltReviewContinue {
 
 function Test-SeatbeltEvidenceSufficient {
     # PURE, FAIL-CLOSED: a seatbelt CONTINUE is only meaningful when the reviewer
-    # actually sees the window. Empty evidence (0 closed issues) or a truncated slice
-    # (returned >= limit, so more exist than were fetched) is INSUFFICIENT -> HOLD.
+    # actually sees the whole window. INSUFFICIENT (-> HOLD) when:
+    #   - empty (0 issues),
+    #   - truncated (returned >= limit, so more exist than were fetched), or
+    #   - does not COVER the window (returned < WindowCount, i.e. fewer ai-auto issues
+    #     are visible than the loop says it filed since the last checkpoint).
     param(
         [Parameter(Mandatory)][int]$ReturnedCount,
-        [Parameter(Mandatory)][int]$Limit
+        [Parameter(Mandatory)][int]$Limit,
+        [int]$WindowCount = 0
     )
     if ($ReturnedCount -le 0) {
         return [pscustomobject]@{ Sufficient = $false; Reason = 'no recent autonomous issues found in the window' }
     }
     if ($Limit -gt 0 -and $ReturnedCount -ge $Limit) {
         return [pscustomobject]@{ Sufficient = $false; Reason = "evidence truncated at the $Limit-issue limit; the full window is not visible" }
+    }
+    if ($WindowCount -gt 0 -and $ReturnedCount -lt $WindowCount) {
+        return [pscustomobject]@{ Sufficient = $false; Reason = "evidence covers only $ReturnedCount of the $WindowCount-task seatbelt window" }
     }
     return [pscustomobject]@{ Sufficient = $true; Reason = "$ReturnedCount recent autonomous issue(s) visible" }
 }
@@ -743,7 +761,7 @@ function Invoke-CodexSeatbeltReview {
     # (HOLD => the existing human pause runs). Makes NO source edits (read-only sandbox).
     #
     # PROMPT CONTRACT (codex exec --sandbox read-only --cd <repo>):
-    #   INPUT (stdin): the titles of the last closed ai-auto issues + the rules.
+    #   INPUT (stdin): the titles of the recent ai-auto issues (ALL states) + the rules.
     #   CODEX MUST review for scope drift / wrong direction / runaway and end with
     #     exactly one line 'SEATBELT_REVIEW: continue' or 'SEATBELT_REVIEW: hold'
     #     (when uncertain, hold). It makes no edits.
@@ -756,18 +774,21 @@ function Invoke-CodexSeatbeltReview {
         [int]$Count
     )
     $result = [pscustomobject]@{ Continue = $false; Reason = '' }
-    $evidenceLimit = 100
+    # Fetch enough to COVER the window, and across ALL states: in pr/branch mode a
+    # completed dispatch leaves its issue OPEN, so a closed-only query would hide the
+    # very work being reviewed.
+    $evidenceLimit = [Math]::Max(100, $Count + 25)
     try {
         $recent = @(Get-IssuesJson @('issue', 'list', '--repo', $RepoSlug, '--label', $AutoLabel,
-            '--state', 'closed', '--limit', "$evidenceLimit", '--json', 'number,title'))
+            '--state', 'all', '--limit', "$evidenceLimit", '--json', 'number,title'))
     } catch {
         $result.Reason = 'could not list recent autonomous issues; HOLD'
         return $result
     }
-    # FAIL-CLOSED: do not call the reviewer on empty or truncated evidence -- a
-    # CONTINUE rubber-stamped against an empty/partial window is exactly the fail-soft
-    # a bounded checkpoint must avoid.
-    $evi = Test-SeatbeltEvidenceSufficient -ReturnedCount $recent.Count -Limit $evidenceLimit
+    # FAIL-CLOSED: do not call the reviewer on empty, truncated, or window-incomplete
+    # evidence -- a CONTINUE rubber-stamped against a partial window is exactly the
+    # fail-soft a bounded checkpoint must avoid.
+    $evi = Test-SeatbeltEvidenceSufficient -ReturnedCount $recent.Count -Limit $evidenceLimit -WindowCount $Count
     if (-not $evi.Sufficient) {
         $result.Reason = "insufficient seatbelt evidence: $($evi.Reason); HOLD"
         return $result
@@ -779,7 +800,7 @@ checkpoint of an autonomous dispatch loop. Make NO edits. Review the recent
 autonomous tasks below for scope drift, wrong direction, or runaway, and decide
 whether the loop may continue another interval.
 
-Recent closed autonomous tasks ($($recent.Count) shown; seatbelt window of $Count):
+Recent autonomous tasks, all states ($($recent.Count) shown; seatbelt window of $Count):
 $titles
 
 Reply with exactly one final line:

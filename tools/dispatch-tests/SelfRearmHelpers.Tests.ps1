@@ -117,6 +117,14 @@ Describe 'Test-SeatbeltEvidenceSufficient (fail-closed seatbelt evidence)' {
         $d.Sufficient | Should -BeFalse
         $d.Reason | Should -Match 'truncated'
     }
+    It 'is INSUFFICIENT when the evidence does not cover the full seatbelt window' {
+        $d = Test-SeatbeltEvidenceSufficient -ReturnedCount 5 -Limit 100 -WindowCount 50
+        $d.Sufficient | Should -BeFalse
+        $d.Reason | Should -Match 'covers only 5 of the 50'
+    }
+    It 'is sufficient when the returned evidence covers the window' {
+        (Test-SeatbeltEvidenceSufficient -ReturnedCount 50 -Limit 100 -WindowCount 50).Sufficient | Should -BeTrue
+    }
 }
 
 Describe 'Test-AuthoredTaskScope (fail-closed authored-task scope gate)' {
@@ -180,5 +188,19 @@ RESOLVED (auto-approved via -AllowCodexSelfRearm) -- kept for provenance: audit 
         $d = Test-AuthoredTaskScope -AfterText $after -CeilingSurface $script:Ceiling
         $d.Ok | Should -BeFalse
         $d.Reason | Should -Match 'no backtick-quoted MAY-edit paths'
+    }
+
+    It 'fails closed when the gated-audit self-re-arm continuation is missing' {
+        # In policy on MAY/MUST-NOT/ceiling, but no self-re-arm -> next-audit instruction.
+        $after = @'
+167. Add the next thing (feature).
+### MAY edit
+- `crates/editor-ui/tests/menus_ordering.rs`
+### MUST NOT edit
+- everything else (crates/**/src, Cargo.*, automation scripts)
+'@
+        $d = Test-AuthoredTaskScope -AfterText $after -CeilingSurface $script:Ceiling
+        $d.Ok | Should -BeFalse
+        $d.Reason | Should -Match 'self-re-arm'
     }
 }
