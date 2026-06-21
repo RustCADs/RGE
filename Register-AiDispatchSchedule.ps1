@@ -275,8 +275,12 @@ $principal = New-ScheduledTaskPrincipal -UserId $currentUser `
     -LogonType Interactive -RunLevel Limited
 
 try {
+    # -ErrorAction Stop is REQUIRED: Register-ScheduledTask reports a permission
+    # failure (e.g. 'Access is denied', 0x80070005, when an elevated shell is needed)
+    # as a NON-terminating CimException, which the catch would otherwise miss -- the
+    # script would then print "registered" on a registration that never happened.
     Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger `
-        -Settings $settings -Principal $principal -Force `
+        -Settings $settings -Principal $principal -Force -ErrorAction Stop `
         -Description "RGE AI dispatch automation - $modeLine, every $IntervalMinutes min." | Out-Null
 } catch {
     Fail "Could not register scheduled task '$TaskName': $($_.Exception.Message)"
